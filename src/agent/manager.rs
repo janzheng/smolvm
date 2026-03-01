@@ -7,7 +7,6 @@ use crate::error::{Error, Result};
 use crate::process::{self, ChildProcess};
 use crate::storage::{OverlayDisk, StorageDisk};
 use parking_lot::Mutex;
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -31,6 +30,28 @@ const AGENT_STOP_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Timeout when waiting for agent to stop.
 const WAIT_FOR_STOP_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// RAII guard for raw file descriptors (kqueue, inotify).
+/// Automatically closes the fd on drop, eliminating manual `libc::close` calls.
+struct FdGuard(libc::c_int);
+
+impl FdGuard {
+    fn new(fd: libc::c_int) -> Self {
+        Self(fd)
+    }
+
+    fn raw(&self) -> libc::c_int {
+        self.0
+    }
+}
+
+impl Drop for FdGuard {
+    fn drop(&mut self) {
+        if self.0 >= 0 {
+            unsafe { libc::close(self.0) };
+        }
+    }
+}
 
 /// Running VM configuration persisted to disk so new CLI invocations
 /// can restore the actual config of a detached VM.
@@ -1089,6 +1110,10 @@ impl AgentManager {
     }
 
     /// Wait for the agent to be ready.
+    ///
+    /// Uses kqueue (macOS) or inotify (Linux) to detect the vsock socket file
+    /// instantly when it appears, avoiding up to 10ms of poll latency.
+    /// Once the socket exists, tries to ping the agent in a tight loop.
     fn wait_for_ready(&self) -> Result<()> {
         let timeout = AGENT_READY_TIMEOUT;
         let start = Instant::now();
@@ -1098,22 +1123,36 @@ impl AgentManager {
         // Track timing for each phase
         let mut socket_appeared_at: Option<Duration> = None;
         let mut first_connect_at: Option<Duration> = None;
-        let mut poll_count: u32 = 0;
 
+        // Phase 1: Wait for socket file to appear using OS file watching.
+        // Falls back to polling if the watch setup fails.
+        if !self.vsock_socket.exists() {
+            match self.wait_for_socket_file(&start, timeout) {
+                Ok(()) => {}
+                Err(e) => {
+                    // If we timed out or the child died, propagate the error.
+                    // Otherwise the socket may have appeared during fallback polling.
+                    if !self.vsock_socket.exists() {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        if self.vsock_socket.exists() {
+            let elapsed = start.elapsed();
+            socket_appeared_at = Some(elapsed);
+            tracing::debug!(elapsed_ms = elapsed.as_millis(), "vsock socket appeared");
+        }
+
+        // Phase 2: Socket exists — try to connect and ping in a tight loop.
+        // Agent init is ~30ms after socket appears, so we use 1ms sleeps.
         while start.elapsed() < timeout {
-            // Use aggressive polling at first, then back off
-            let poll_interval = if poll_count < FAST_POLL_COUNT {
-                FAST_POLL_INTERVAL // 10ms
-            } else {
-                Duration::from_millis(100) // Back off to 100ms
-            };
-            poll_count += 1;
             // Check if child process is still alive
             {
                 let mut inner = self.inner.lock();
                 if let Some(ref mut child) = inner.child {
                     if !child.is_running() {
-                        // Child exited
                         return Err(Error::agent(
                             "monitor agent",
                             "agent process exited during startup",
@@ -1122,20 +1161,17 @@ impl AgentManager {
                 }
             }
 
-            // Try to connect to vsock socket
             if self.vsock_socket.exists() {
-                // Log when socket first appears
                 if socket_appeared_at.is_none() {
                     let elapsed = start.elapsed();
                     socket_appeared_at = Some(elapsed);
                     tracing::debug!(elapsed_ms = elapsed.as_millis(), "vsock socket appeared");
                 }
 
-                match UnixStream::connect(&self.vsock_socket) {
-                    Ok(stream) => {
-                        drop(stream);
-
-                        // Log when first connect succeeds
+                // Try to connect and ping directly (single connection per attempt)
+                let ping_start = std::time::Instant::now();
+                match super::AgentClient::connect_with_short_timeout(&self.vsock_socket) {
+                    Ok(mut client) => {
                         if first_connect_at.is_none() {
                             let elapsed = start.elapsed();
                             first_connect_at = Some(elapsed);
@@ -1145,34 +1181,36 @@ impl AgentManager {
                             );
                         }
 
-                        // Try to ping
-                        match super::AgentClient::connect(&self.vsock_socket) {
-                            Ok(mut client) => {
-                                if client.ping().is_ok() {
-                                    let total = start.elapsed();
-                                    tracing::info!(
-                                        total_ms = total.as_millis(),
-                                        socket_wait_ms =
-                                            socket_appeared_at.map(|d| d.as_millis()).unwrap_or(0),
-                                        connect_wait_ms =
-                                            first_connect_at.map(|d| d.as_millis()).unwrap_or(0),
-                                        "agent ready - timing breakdown"
-                                    );
-                                    return Ok(());
-                                }
-                            }
-                            Err(e) => {
-                                tracing::trace!("ping failed: {}", e);
-                            }
+                        if client.ping().is_ok() {
+                            let total = start.elapsed();
+                            tracing::info!(
+                                total_ms = total.as_millis(),
+                                socket_wait_ms =
+                                    socket_appeared_at.map(|d| d.as_millis()).unwrap_or(0),
+                                connect_wait_ms =
+                                    first_connect_at.map(|d| d.as_millis()).unwrap_or(0),
+                                "agent ready - timing breakdown"
+                            );
+                            return Ok(());
+                        } else {
+                            tracing::trace!(
+                                ping_ms = ping_start.elapsed().as_millis(),
+                                "ping failed (connected ok)"
+                            );
                         }
                     }
                     Err(e) => {
-                        tracing::trace!("connect failed: {}", e);
+                        tracing::trace!(
+                            ping_ms = ping_start.elapsed().as_millis(),
+                            "connect failed: {}",
+                            e
+                        );
                     }
                 }
             }
 
-            std::thread::sleep(poll_interval);
+            // Short sleep between ping retries — agent init is ~30ms
+            std::thread::sleep(Duration::from_millis(1));
         }
 
         Err(Error::agent(
@@ -1182,6 +1220,249 @@ impl AgentManager {
                 timeout.as_secs()
             ),
         ))
+    }
+
+    /// Check common loop preconditions: socket existence, timeout, and child liveness.
+    ///
+    /// Returns `Ok(Some(remaining))` if the loop should continue with the given remaining time,
+    /// `Ok(None)` if the socket appeared (caller should return `Ok(())`),
+    /// or `Err` if the timeout expired or the child died.
+    fn check_socket_wait_status(
+        &self,
+        start: &Instant,
+        timeout: Duration,
+    ) -> Result<Option<Duration>> {
+        if self.vsock_socket.exists() {
+            return Ok(None);
+        }
+
+        let remaining = timeout.checked_sub(start.elapsed()).unwrap_or_default();
+        if remaining.is_zero() {
+            return Err(Error::agent(
+                "wait for ready",
+                format!(
+                    "agent did not become ready within {} seconds",
+                    timeout.as_secs()
+                ),
+            ));
+        }
+
+        // Check child is alive
+        {
+            let mut inner = self.inner.lock();
+            if let Some(ref mut child) = inner.child {
+                if !child.is_running() {
+                    return Err(Error::agent(
+                        "monitor agent",
+                        "agent process exited during startup",
+                    ));
+                }
+            }
+        }
+
+        Ok(Some(remaining))
+    }
+
+    /// Wait for the vsock socket file to appear using OS-native file watching.
+    ///
+    /// Uses kqueue on macOS and inotify on Linux to get notified instantly
+    /// when the socket file is created, instead of polling every 10ms.
+    fn wait_for_socket_file(&self, start: &Instant, timeout: Duration) -> Result<()> {
+        let parent_dir = self.vsock_socket.parent().ok_or_else(|| {
+            Error::agent("wait for socket", "socket path has no parent directory")
+        })?;
+
+        // Ensure the parent directory exists (it should, we created it)
+        if !parent_dir.exists() {
+            return Err(Error::agent(
+                "wait for socket",
+                format!("parent directory does not exist: {}", parent_dir.display()),
+            ));
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            self.wait_for_socket_kqueue(parent_dir, start, timeout)
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            self.wait_for_socket_inotify(parent_dir, start, timeout)
+        }
+    }
+
+    /// macOS: Use kqueue to watch the parent directory for new files.
+    #[cfg(target_os = "macos")]
+    fn wait_for_socket_kqueue(
+        &self,
+        parent_dir: &Path,
+        start: &Instant,
+        timeout: Duration,
+    ) -> Result<()> {
+        use std::os::unix::io::AsRawFd;
+
+        // Open the directory for kqueue watching
+        let dir_fd = match std::fs::File::open(parent_dir) {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::debug!(error = %e, "kqueue: failed to open dir, falling back to poll");
+                return self.wait_for_socket_poll(start, timeout);
+            }
+        };
+
+        // Create kqueue (FdGuard ensures cleanup on all exit paths)
+        let kq = FdGuard::new(unsafe { libc::kqueue() });
+        if kq.raw() < 0 {
+            tracing::debug!("kqueue: failed to create, falling back to poll");
+            return self.wait_for_socket_poll(start, timeout);
+        }
+
+        // Watch for writes to the directory (file creation triggers NOTE_WRITE)
+        let changelist = libc::kevent {
+            ident: dir_fd.as_raw_fd() as usize,
+            filter: libc::EVFILT_VNODE,
+            flags: libc::EV_ADD | libc::EV_ENABLE | libc::EV_CLEAR,
+            fflags: libc::NOTE_WRITE,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        };
+
+        let mut eventlist = [libc::kevent {
+            ident: 0,
+            filter: 0,
+            flags: 0,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        }];
+
+        // Register the event
+        let ret = unsafe {
+            libc::kevent(
+                kq.raw(),
+                &changelist,
+                1,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null(),
+            )
+        };
+        if ret < 0 {
+            tracing::debug!("kqueue: failed to register event, falling back to poll");
+            return self.wait_for_socket_poll(start, timeout);
+        }
+
+        // Wait for events with timeout checks
+        loop {
+            let remaining = match self.check_socket_wait_status(start, timeout)? {
+                None => return Ok(()),
+                Some(r) => r,
+            };
+
+            // Wait up to 100ms per iteration (to recheck child liveness)
+            let wait_ms = remaining.as_millis().min(100) as i64;
+            let timespec = libc::timespec {
+                tv_sec: wait_ms / 1000,
+                tv_nsec: (wait_ms % 1000) * 1_000_000,
+            };
+
+            let nev = unsafe {
+                libc::kevent(
+                    kq.raw(),
+                    std::ptr::null(),
+                    0,
+                    eventlist.as_mut_ptr(),
+                    1,
+                    &timespec,
+                )
+            };
+
+            if nev > 0 && self.vsock_socket.exists() {
+                return Ok(());
+            }
+            // nev == 0 means timeout, nev < 0 means error — loop and retry
+        }
+    }
+
+    /// Linux: Use inotify to watch the parent directory for new files.
+    #[cfg(target_os = "linux")]
+    fn wait_for_socket_inotify(
+        &self,
+        parent_dir: &Path,
+        start: &Instant,
+        timeout: Duration,
+    ) -> Result<()> {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        // FdGuard ensures cleanup on all exit paths
+        let ifd =
+            FdGuard::new(unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) });
+        if ifd.raw() < 0 {
+            tracing::debug!("inotify: failed to create, falling back to poll");
+            return self.wait_for_socket_poll(start, timeout);
+        }
+
+        let dir_path = CString::new(parent_dir.as_os_str().as_bytes())
+            .map_err(|_| Error::agent("wait for socket", "invalid directory path"))?;
+
+        let wd = unsafe { libc::inotify_add_watch(ifd.raw(), dir_path.as_ptr(), libc::IN_CREATE) };
+        if wd < 0 {
+            tracing::debug!("inotify: failed to add watch, falling back to poll");
+            return self.wait_for_socket_poll(start, timeout);
+        }
+
+        // Use poll() to wait on the inotify fd with timeout
+        let mut pollfd = libc::pollfd {
+            fd: ifd.raw(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+
+        loop {
+            let remaining = match self.check_socket_wait_status(start, timeout)? {
+                None => return Ok(()),
+                Some(r) => r,
+            };
+
+            let wait_ms = remaining.as_millis().min(100) as i32;
+            let ret = unsafe { libc::poll(&mut pollfd, 1, wait_ms) };
+
+            if ret > 0 {
+                // Drain inotify events (handle EINTR/EAGAIN via loop)
+                let mut buf = [0u8; 4096];
+                loop {
+                    let n = unsafe {
+                        libc::read(ifd.raw(), buf.as_mut_ptr() as *mut libc::c_void, buf.len())
+                    };
+                    if n <= 0 {
+                        break; // EAGAIN (no more events) or error
+                    }
+                }
+
+                if self.vsock_socket.exists() {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    /// Fallback: poll for socket file existence with 10ms intervals.
+    fn wait_for_socket_poll(&self, start: &Instant, timeout: Duration) -> Result<()> {
+        let mut poll_count: u32 = 0;
+        loop {
+            if self.check_socket_wait_status(start, timeout)?.is_none() {
+                return Ok(());
+            }
+
+            let interval = if poll_count < FAST_POLL_COUNT {
+                FAST_POLL_INTERVAL
+            } else {
+                Duration::from_millis(100)
+            };
+            poll_count += 1;
+            std::thread::sleep(interval);
+        }
     }
 
     /// Wait for the agent to stop.

@@ -45,9 +45,11 @@ const INTERACTIVE_TIMEOUT_SECS: u64 = 3600;
 /// timeout to allow for protocol overhead and response transmission.
 const TIMEOUT_BUFFER_SECS: u64 = 5;
 
-/// Short read timeout for status checks (5 seconds).
-/// Used when checking agent status where we want to fail fast.
-const STATUS_CHECK_TIMEOUT_SECS: u64 = 5;
+/// Timeout for shutdown acknowledgment (5 seconds).
+/// sync() + ack transmission is typically <100ms, but heavy writes or
+/// large journals may take longer. If no ack within 5s, the VM has
+/// likely already torn down — safe to proceed with SIGTERM.
+const SHUTDOWN_ACK_TIMEOUT_SECS: u64 = 5;
 
 // ============================================================================
 // I/O Constants
@@ -230,6 +232,19 @@ impl<F: FnMut(usize, usize, &str)> PullOptions<F> {
     }
 }
 
+/// Check if a shutdown receive error is a benign race condition.
+///
+/// During shutdown the VM may tear down before the ack response is flushed,
+/// causing EAGAIN, connection reset, or similar errors. These are expected
+/// and don't indicate a problem — sync() has likely already completed.
+fn is_benign_shutdown_error(error_str: &str) -> bool {
+    error_str.contains("os error 35") // EAGAIN on macOS
+        || error_str.contains("os error 11") // EAGAIN on Linux
+        || error_str.contains("temporarily unavailable")
+        || error_str.contains("Connection reset")
+        || error_str.contains("connection reset")
+}
+
 /// Client for communicating with the smolvm-agent.
 pub struct AgentClient {
     stream: UnixStream,
@@ -330,29 +345,32 @@ impl AgentClient {
         )
     }
 
+    /// Connect with a short timeout, for use during startup ping probes.
+    /// Uses 1-second read timeout instead of 30s to fail fast during boot.
+    pub fn connect_with_short_timeout(socket_path: impl AsRef<Path>) -> Result<Self> {
+        Self::connect_with_timeouts(socket_path.as_ref(), 1, 1)
+    }
+
     /// Internal connect implementation (single attempt).
     fn connect_once(socket_path: &Path) -> Result<Self> {
+        Self::connect_with_timeouts(
+            socket_path,
+            DEFAULT_READ_TIMEOUT_SECS,
+            DEFAULT_WRITE_TIMEOUT_SECS,
+        )
+    }
+
+    /// Connect to the agent socket and configure read/write timeouts.
+    fn connect_with_timeouts(socket_path: &Path, read_secs: u64, write_secs: u64) -> Result<Self> {
         let stream = UnixStream::connect(socket_path)
             .map_err(|e| Error::agent("connect to agent", e.to_string()))?;
 
-        // Set timeouts - fail early if we can't set them to prevent indefinite hangs
         stream
-            .set_read_timeout(Some(Duration::from_secs(DEFAULT_READ_TIMEOUT_SECS)))
-            .map_err(|e| {
-                Error::agent(
-                    "set read timeout",
-                    format!("{} (prevents indefinite hangs)", e),
-                )
-            })?;
-
+            .set_read_timeout(Some(Duration::from_secs(read_secs)))
+            .map_err(|e| Error::agent("set read timeout", e.to_string()))?;
         stream
-            .set_write_timeout(Some(Duration::from_secs(DEFAULT_WRITE_TIMEOUT_SECS)))
-            .map_err(|e| {
-                Error::agent(
-                    "set write timeout",
-                    format!("{} (prevents indefinite hangs)", e),
-                )
-            })?;
+            .set_write_timeout(Some(Duration::from_secs(write_secs)))
+            .map_err(|e| Error::agent("set write timeout", e.to_string()))?;
 
         Ok(Self { stream })
     }
@@ -654,11 +672,13 @@ impl AgentClient {
     /// may be killed before ext4 journal commits are flushed, causing layer
     /// corruption on next boot.
     pub fn shutdown(&mut self) -> Result<()> {
-        // Set a short timeout for shutdown acknowledgment
-        // The agent just needs to call sync() which is fast
+        // Set a timeout for shutdown acknowledgment.
+        // The agent calls sync() then sends the ack — typically <100ms,
+        // but heavy writes or large journals may take longer.
+        // If no ack within 5s, the VM has likely already torn down.
         let _ = self
             .stream
-            .set_read_timeout(Some(Duration::from_secs(STATUS_CHECK_TIMEOUT_SECS)));
+            .set_read_timeout(Some(Duration::from_secs(SHUTDOWN_ACK_TIMEOUT_SECS)));
 
         let data = encode_message(&AgentRequest::Shutdown)
             .map_err(|e| Error::agent("encode message", e.to_string()))?;
@@ -667,32 +687,25 @@ impl AgentClient {
             .map_err(|e| Error::agent("send shutdown", e.to_string()))?;
 
         // Wait for acknowledgment - this confirms sync() completed.
-        // If the agent crashes or times out, we proceed anyway since
-        // the sync() happens before the response is sent.
-        //
-        // Note: EAGAIN (os error 35) is common here because the VM may be
-        // torn down before the response arrives - this is benign since
-        // sync() has already completed by that point.
+        // Returns Ok only when the ack is actually received, so callers
+        // can distinguish "sync confirmed" from "sync unknown".
         match self.receive() {
             Ok(_) => {
                 tracing::debug!("agent acknowledged shutdown (sync complete)");
+                Ok(())
             }
             Err(e) => {
-                // Check if this is EAGAIN/EWOULDBLOCK - a common benign race
                 let error_str = e.to_string();
-                if error_str.contains("os error 35")
-                    || error_str.contains("temporarily unavailable")
-                {
+                if is_benign_shutdown_error(&error_str) {
                     tracing::debug!(
-                        "shutdown ack not received (connection closed) - sync likely completed"
+                        "shutdown ack not received (connection closed) - sync may have completed"
                     );
                 } else {
-                    tracing::warn!(error = %e, "shutdown acknowledgment failed, proceeding anyway");
+                    tracing::warn!(error = %e, "shutdown acknowledgment failed");
                 }
+                Err(Error::agent("shutdown ack", error_str))
             }
         }
-
-        Ok(())
     }
 
     // ========================================================================
