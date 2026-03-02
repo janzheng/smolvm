@@ -1237,8 +1237,7 @@ impl AgentManager {
                         let total = start.elapsed();
                         tracing::info!(
                             total_ms = total.as_millis(),
-                            socket_wait_ms =
-                                socket_appeared_at.map(|d| d.as_millis()).unwrap_or(0),
+                            socket_wait_ms = socket_appeared_at.map(|d| d.as_millis()).unwrap_or(0),
                             "agent ready (socket fallback)"
                         );
                         return Ok(());
@@ -1270,9 +1269,10 @@ impl AgentManager {
         timeout: Duration,
     ) -> Result<()> {
         let rootfs_dir = &self.rootfs_path;
-        let socket_dir = self.vsock_socket.parent().ok_or_else(|| {
-            Error::agent("wait for ready", "socket path has no parent directory")
-        })?;
+        let socket_dir = self
+            .vsock_socket
+            .parent()
+            .ok_or_else(|| Error::agent("wait for ready", "socket path has no parent directory"))?;
 
         #[cfg(target_os = "linux")]
         {

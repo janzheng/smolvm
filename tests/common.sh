@@ -196,7 +196,15 @@ ensure_data_dir_deleted() {
 }
 
 # Ensure microvm is running
+# If net=true, recreate with --net (needed for container image pulls)
 ensure_microvm_running() {
+    local with_net="${1:-false}"
+    if [[ "$with_net" == "true" ]]; then
+        # Stop and delete existing default VM, recreate with --net
+        $SMOLVM microvm stop 2>/dev/null || true
+        $SMOLVM microvm delete default -f 2>/dev/null || true
+        $SMOLVM microvm create default --net 2>/dev/null || true
+    fi
     $SMOLVM microvm start 2>/dev/null || true
 }
 

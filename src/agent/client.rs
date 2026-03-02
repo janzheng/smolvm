@@ -368,11 +368,7 @@ impl AgentClient {
     }
 
     /// Connect to the agent socket and configure read/write timeouts (in milliseconds).
-    fn connect_with_timeouts_ms(
-        socket_path: &Path,
-        read_ms: u64,
-        write_ms: u64,
-    ) -> Result<Self> {
+    fn connect_with_timeouts_ms(socket_path: &Path, read_ms: u64, write_ms: u64) -> Result<Self> {
         let stream = UnixStream::connect(socket_path)
             .map_err(|e| Error::agent("connect to agent", e.to_string()))?;
 

@@ -436,9 +436,11 @@ impl PackCmd {
                 .ok()
                 .and_then(|p| p.parent().and_then(|d| d.parent()).map(|d| d.join("lib"))),
             // Source tree dev builds: <exe_dir>/../../lib/linux-<arch>/
-            std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().and_then(|d| d.parent()).map(|d| d.join(&platform_lib))),
+            std::env::current_exe().ok().and_then(|p| {
+                p.parent()
+                    .and_then(|d| d.parent())
+                    .map(|d| d.join(&platform_lib))
+            }),
             // Source tree (CWD)
             Some(PathBuf::from("lib")),
             Some(PathBuf::from("./lib")),
