@@ -7,7 +7,7 @@
 //! - OCI image layers
 //! - Configuration manifest
 
-use clap::Args;
+use clap::{Args, Subcommand};
 use smolvm::agent::{AgentClient, AgentManager, PullOptions, VmResources};
 
 /// Default memory for packed VMs (lower than sandbox/microvm because
@@ -24,6 +24,25 @@ use smolvm_protocol::AgentResponse;
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
+/// Package and run self-contained VM executables.
+#[derive(Subcommand, Debug)]
+pub enum PackCmd {
+    /// Package an OCI image or VM snapshot into a self-contained executable
+    Create(PackCreateCmd),
+
+    /// Run a VM from a packed .smolmachine sidecar file
+    Run(super::pack_run::PackRunCmd),
+}
+
+impl PackCmd {
+    pub fn run(self) -> smolvm::Result<()> {
+        match self {
+            PackCmd::Create(cmd) => cmd.run(),
+            PackCmd::Run(cmd) => cmd.run(),
+        }
+    }
+}
+
 /// Package an OCI image or VM snapshot into a self-contained executable.
 ///
 /// Creates a single binary that can be distributed and run without smolvm installed.
@@ -34,12 +53,12 @@ use tracing::{debug, info, warn};
 /// - Default configuration
 ///
 /// Examples:
-///   smolvm pack alpine:latest -o my-alpine
-///   smolvm pack python:3.11-slim -o my-python --cpus 2 --mem 1024
-///   smolvm pack myapp:latest -o myapp --entrypoint /app/run.sh
-///   smolvm pack --from-vm myvm -o my-devenv
+///   smolvm pack create alpine:latest -o my-alpine
+///   smolvm pack create python:3.11-slim -o my-python --cpus 2 --mem 1024
+///   smolvm pack create myapp:latest -o myapp --entrypoint /app/run.sh
+///   smolvm pack create --from-vm myvm -o my-devenv
 #[derive(Args, Debug)]
-pub struct PackCmd {
+pub struct PackCreateCmd {
     /// Container image to pack (e.g., alpine:latest, python:3.11-slim)
     #[arg(
         value_name = "IMAGE",
@@ -100,7 +119,7 @@ pub struct PackCmd {
     pub rootfs_dir: Option<PathBuf>,
 }
 
-impl PackCmd {
+impl PackCreateCmd {
     pub fn run(self) -> smolvm::Result<()> {
         if let Some(vm_name) = self.from_vm.clone() {
             info!(vm = %vm_name, output = %self.output.display(), "packing from VM");

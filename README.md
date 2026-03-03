@@ -24,12 +24,12 @@ smolvm microvm exec -it -- /bin/sh   # interactive shell (exit with Ctrl+D)
 smolvm microvm stop
 
 # pack - build a portable, executable virtual machine.
-smolvm pack alpine:latest -o ./my-sandbox        # creates ./my-sandbox + ./my-sandbox.smolmachine
-smolvm pack alpine:latest -o ./my-sandbox --single-file  # single executable, no sidecar
+smolvm pack create alpine:latest -o ./my-sandbox        # creates ./my-sandbox + ./my-sandbox.smolmachine
+smolvm pack create alpine:latest -o ./my-sandbox --single-file  # single executable, no sidecar
 
 ./my-sandbox uname -a # this will return results of running sys info within the guest linux vm
 
-smolvm pack python:3.12-alpine -o ./my-pythonvm
+smolvm pack create python:3.12-alpine -o ./my-pythonvm
 ./my-pythonvm python3 -c "import sys; print(sys.version)"
 
 # uninstall

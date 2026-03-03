@@ -53,7 +53,7 @@ test_sandbox_run_platform_flag() {
 test_pack_platform_flag() {
     # Verify --oci-platform flag exists in pack help
     local output
-    output=$($SMOLVM pack --help 2>&1)
+    output=$($SMOLVM pack create --help 2>&1)
     [[ "$output" == *"--oci-platform"* ]] && \
     [[ "$output" == *"linux/arm64"* ]] && \
     [[ "$output" == *"linux/amd64"* ]]
