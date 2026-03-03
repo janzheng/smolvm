@@ -353,6 +353,13 @@ impl AgentClient {
         Self::connect_with_timeouts_ms(socket_path.as_ref(), 100, 100)
     }
 
+    /// Connect with a very short timeout for boot-time probe cycles.
+    /// Uses 5ms timeout to minimize blocking between ready-marker checks.
+    /// Only used in the fallback path (old agents without ready markers).
+    pub fn connect_with_boot_probe_timeout(socket_path: impl AsRef<Path>) -> Result<Self> {
+        Self::connect_with_timeouts_ms(socket_path.as_ref(), 5, 5)
+    }
+
     /// Internal connect implementation (single attempt).
     fn connect_once(socket_path: &Path) -> Result<Self> {
         Self::connect_with_timeouts(

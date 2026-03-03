@@ -790,10 +790,6 @@ impl AgentManager {
             inner.config_state = ConfigState::Known;
         }
 
-        // Write running config early so it's available if the process
-        // gets detached before wait_for_ready completes.
-        self.save_running_config(&mounts, &ports, &resources);
-
         tracing::info!(
             rootfs = %self.rootfs_path.display(),
             storage = %self.storage_disk.path().display(),
@@ -856,6 +852,10 @@ impl AgentManager {
         // Clean up stale ready marker from previous boot
         let ready_marker = self.rootfs_path.join(READY_MARKER_FILENAME);
         let _ = std::fs::remove_file(&ready_marker);
+
+        // Clone mounts/ports for save_running_config (originals move into fork closure)
+        let mounts_for_config = mounts.clone();
+        let ports_for_config = ports.clone();
 
         // Clone paths for the child process (owned copies)
         let rootfs_path = self.rootfs_path.clone();
@@ -938,7 +938,7 @@ impl AgentManager {
             }
         };
 
-        // Parent process continues here
+        // Parent process continues here — child is now booting the VM in parallel.
         tracing::debug!(pid = child_pid, "forked agent VM process");
 
         // Store child process
@@ -946,6 +946,10 @@ impl AgentManager {
             let mut inner = self.inner.lock();
             inner.child = Some(ChildProcess::new(child_pid));
         }
+
+        // Write running config while child boots (overlaps with VM startup).
+        // This is needed for future CLI invocations to detect config changes.
+        self.save_running_config(&mounts_for_config, &ports_for_config, &resources);
 
         // Write PID file so future CLI invocations can find this process.
         // Include start time on second line for PID reuse detection.
@@ -1150,39 +1154,17 @@ impl AgentManager {
             }
         }
 
-        // If ready marker appeared, agent is fully initialized — connect directly.
+        // If ready marker appeared, agent is fully initialized.
+        // The marker is written after the vsock listener is active, so we can
+        // trust it without a verification ping.
         if ready_marker.exists() {
             let elapsed = start.elapsed();
             tracing::info!(
                 elapsed_ms = elapsed.as_millis(),
-                "ready marker detected, agent fully initialized"
+                "agent ready (via ready marker)"
             );
-
-            // Connect and ping — should succeed immediately since agent is ready.
-            // Short retry loop as a safety net (max 500ms).
-            let ping_deadline = start + Duration::from_millis(elapsed.as_millis() as u64 + 500);
-            while Instant::now() < ping_deadline {
-                if self.vsock_socket.exists() {
-                    if let Ok(mut client) =
-                        super::AgentClient::connect_with_short_timeout(&self.vsock_socket)
-                    {
-                        if client.ping().is_ok() {
-                            let total = start.elapsed();
-                            tracing::info!(
-                                total_ms = total.as_millis(),
-                                "agent ready (via ready marker)"
-                            );
-                            // Clean up marker
-                            let _ = std::fs::remove_file(&ready_marker);
-                            return Ok(());
-                        }
-                    }
-                }
-                std::thread::sleep(Duration::from_millis(1));
-            }
-
-            // Ready marker exists but ping failed — clean up and fall through
             let _ = std::fs::remove_file(&ready_marker);
+            return Ok(());
         }
 
         // Fallback: socket-based detection with short timeout ping loop.
@@ -1206,21 +1188,13 @@ impl AgentManager {
 
             // Check ready marker again (might appear during fallback)
             if ready_marker.exists() {
+                let total = start.elapsed();
+                tracing::info!(
+                    total_ms = total.as_millis(),
+                    "agent ready (late marker detection)"
+                );
                 let _ = std::fs::remove_file(&ready_marker);
-                if self.vsock_socket.exists() {
-                    if let Ok(mut client) =
-                        super::AgentClient::connect_with_short_timeout(&self.vsock_socket)
-                    {
-                        if client.ping().is_ok() {
-                            let total = start.elapsed();
-                            tracing::info!(
-                                total_ms = total.as_millis(),
-                                "agent ready (late marker detection)"
-                            );
-                            return Ok(());
-                        }
-                    }
-                }
+                return Ok(());
             }
 
             if self.vsock_socket.exists() {
@@ -1231,7 +1205,7 @@ impl AgentManager {
                 }
 
                 if let Ok(mut client) =
-                    super::AgentClient::connect_with_short_timeout(&self.vsock_socket)
+                    super::AgentClient::connect_with_boot_probe_timeout(&self.vsock_socket)
                 {
                     if client.ping().is_ok() {
                         let total = start.elapsed();
@@ -1243,9 +1217,19 @@ impl AgentManager {
                         return Ok(());
                     }
                 }
-            }
 
-            std::thread::sleep(Duration::from_millis(1));
+                // Check marker again after connect+ping (might have appeared
+                // during the 10ms timeout)
+                if ready_marker.exists() {
+                    let total = start.elapsed();
+                    tracing::info!(
+                        total_ms = total.as_millis(),
+                        "agent ready (late marker detection)"
+                    );
+                    let _ = std::fs::remove_file(&ready_marker);
+                    return Ok(());
+                }
+            }
         }
 
         Err(Error::agent(
