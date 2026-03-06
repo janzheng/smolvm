@@ -496,8 +496,12 @@ impl StorageDisk {
 // Overlay Disk
 // ============================================================================
 
-/// Default size for the rootfs overlay disk (2 GB sparse).
-pub const DEFAULT_OVERLAY_SIZE_GB: u64 = 2;
+/// Default size for the rootfs overlay disk (10 GB sparse).
+///
+/// This is a sparse file — only actually-written data consumes host disk space.
+/// 10 GB provides headroom for package installation (`apk add`, `pip install`, etc.)
+/// without hitting "No space left on device" during typical development workflows.
+pub const DEFAULT_OVERLAY_SIZE_GB: u64 = 10;
 
 /// Overlay disk filename.
 pub const OVERLAY_DISK_FILENAME: &str = "overlay.raw";

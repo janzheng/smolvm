@@ -280,7 +280,7 @@ impl AgentManager {
     /// Get the default agent manager.
     ///
     /// Uses default paths for rootfs and storage.
-    /// `storage_gb` and `overlay_gb` override the default disk sizes (20 GiB / 2 GiB).
+    /// `storage_gb` and `overlay_gb` override the default disk sizes (20 GiB / 10 GiB).
     ///
     /// Canonicalized to `for_vm_with_sizes("default", ...)` so that all
     /// lifecycle commands (start/stop/exec/status) use consistent paths.
@@ -302,7 +302,7 @@ impl AgentManager {
     /// Get an agent manager for a named VM.
     ///
     /// Each named VM gets its own isolated storage and socket.
-    /// `storage_gb` and `overlay_gb` override the default disk sizes (20 GiB / 2 GiB).
+    /// `storage_gb` and `overlay_gb` override the default disk sizes (20 GiB / 10 GiB).
     pub fn for_vm_with_sizes(
         name: impl Into<String>,
         storage_gb: Option<u64>,

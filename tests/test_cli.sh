@@ -92,6 +92,42 @@ test_sandbox_run_missing_image() {
 }
 
 # =============================================================================
+# Disk Size Flags
+# =============================================================================
+
+test_microvm_create_overlay_flag() {
+    # Verify --overlay flag exists in microvm create help
+    local output
+    output=$($SMOLVM microvm create --help 2>&1)
+    [[ "$output" == *"--overlay"* ]] && \
+    [[ "$output" == *"GiB"* ]]
+}
+
+test_microvm_create_storage_flag() {
+    # Verify --storage flag exists in microvm create help
+    local output
+    output=$($SMOLVM microvm create --help 2>&1)
+    [[ "$output" == *"--storage"* ]] && \
+    [[ "$output" == *"GiB"* ]]
+}
+
+test_sandbox_create_overlay_flag() {
+    # Verify --overlay flag exists in sandbox create help
+    local output
+    output=$($SMOLVM sandbox create --help 2>&1)
+    [[ "$output" == *"--overlay"* ]] && \
+    [[ "$output" == *"GiB"* ]]
+}
+
+test_sandbox_run_overlay_flag() {
+    # Verify --overlay flag exists in sandbox run help
+    local output
+    output=$($SMOLVM sandbox run --help 2>&1)
+    [[ "$output" == *"--overlay"* ]] && \
+    [[ "$output" == *"GiB"* ]]
+}
+
+# =============================================================================
 # Run Tests
 # =============================================================================
 
@@ -104,5 +140,9 @@ run_test "Microvm help" test_microvm_help || true
 run_test "Container help" test_container_help || true
 run_test "Invalid subcommand fails" test_invalid_subcommand || true
 run_test "Sandbox run without image fails" test_sandbox_run_missing_image || true
+run_test "Microvm create --overlay flag" test_microvm_create_overlay_flag || true
+run_test "Microvm create --storage flag" test_microvm_create_storage_flag || true
+run_test "Sandbox create --overlay flag" test_sandbox_create_overlay_flag || true
+run_test "Sandbox run --overlay flag" test_sandbox_run_overlay_flag || true
 
 print_summary "CLI Tests"

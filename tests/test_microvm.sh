@@ -570,6 +570,39 @@ test_microvm_port_mapping_http() {
 }
 
 # =============================================================================
+# Overlay Size
+# =============================================================================
+
+test_microvm_overlay_size() {
+    local vm_name="test-vm-overlay-size"
+
+    $SMOLVM microvm stop "$vm_name" 2>/dev/null || true
+    $SMOLVM microvm delete "$vm_name" -f 2>/dev/null || true
+
+    # Create VM with custom overlay size (4 GiB)
+    $SMOLVM microvm create "$vm_name" --overlay 4 2>&1 || return 1
+    $SMOLVM microvm start "$vm_name" 2>&1 || {
+        $SMOLVM microvm delete "$vm_name" -f 2>/dev/null
+        return 1
+    }
+
+    # Check the overlay disk size inside the VM via df
+    local df_output
+    df_output=$($SMOLVM microvm exec --name "$vm_name" -- df -m / 2>&1)
+
+    # Cleanup
+    $SMOLVM microvm stop "$vm_name" 2>/dev/null || true
+    $SMOLVM microvm delete "$vm_name" -f 2>/dev/null || true
+    ensure_data_dir_deleted "$vm_name"
+
+    # The 4GB overlay should show ~3800-4096 MB total (ext4 overhead)
+    # Just verify it's > 3000 MB (not the old 2GB default)
+    local total_mb
+    total_mb=$(echo "$df_output" | tail -1 | awk '{print $2}')
+    [[ "$total_mb" -gt 3000 ]]
+}
+
+# =============================================================================
 # Run Tests
 # =============================================================================
 
@@ -596,5 +629,6 @@ run_test "Overlay: root is overlayfs" test_microvm_overlay_root_active || true
 run_test "Overlay: rootfs persists across reboot" test_microvm_rootfs_persists_across_reboot || true
 run_test "Volume: mount visible to exec" test_microvm_volume_mount_visible_to_exec || true
 run_test "Port: mapping host to guest HTTP" test_microvm_port_mapping_http || true
+run_test "Overlay: custom size via --overlay" test_microvm_overlay_size || true
 
 print_summary "MicroVM Tests"
