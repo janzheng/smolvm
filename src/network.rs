@@ -15,6 +15,7 @@ pub fn get_dns_server(policy: &NetworkPolicy) -> Option<IpAddr> {
     match policy {
         NetworkPolicy::None => None,
         NetworkPolicy::Egress { dns } => Some(dns.unwrap_or(DEFAULT_DNS_ADDR)),
+        NetworkPolicy::Filtered { dns, .. } => Some(dns.unwrap_or(DEFAULT_DNS_ADDR)),
     }
 }
 

@@ -174,6 +174,17 @@ pub enum NetworkPolicy {
         /// Custom DNS server (default: inherit from host).
         dns: Option<IpAddr>,
     },
+
+    /// Outbound internet with domain allowlist.
+    /// Only connections to the specified domains are permitted.
+    /// Note: Actual enforcement requires VMM-level support (future work).
+    /// This variant stores the configuration for when enforcement is available.
+    Filtered {
+        /// Custom DNS server (default: inherit from host).
+        dns: Option<IpAddr>,
+        /// Domains allowed for outbound connections.
+        allowed_domains: Vec<String>,
+    },
 }
 
 /// Host directory mount.

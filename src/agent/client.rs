@@ -14,6 +14,22 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::Duration;
 
+/// Input messages for interactive WebSocket terminal sessions.
+#[derive(Debug)]
+pub enum InteractiveInput {
+    /// Raw stdin data to send to the VM.
+    Data(Vec<u8>),
+    /// Terminal resize event.
+    Resize {
+        /// Terminal columns.
+        cols: u16,
+        /// Terminal rows.
+        rows: u16,
+    },
+    /// End of stdin (client disconnected).
+    Eof,
+}
+
 // ============================================================================
 // Socket Timeout Constants
 // ============================================================================
@@ -45,9 +61,11 @@ const INTERACTIVE_TIMEOUT_SECS: u64 = 3600;
 /// timeout to allow for protocol overhead and response transmission.
 const TIMEOUT_BUFFER_SECS: u64 = 5;
 
-/// Short read timeout for status checks (5 seconds).
-/// Used when checking agent status where we want to fail fast.
-const STATUS_CHECK_TIMEOUT_SECS: u64 = 5;
+/// Timeout for shutdown acknowledgment (5 seconds).
+/// sync() + ack transmission is typically <100ms, but heavy writes or
+/// large journals may take longer. If no ack within 5s, the VM has
+/// likely already torn down — safe to proceed with SIGTERM.
+const SHUTDOWN_ACK_TIMEOUT_SECS: u64 = 5;
 
 // ============================================================================
 // I/O Constants
@@ -230,6 +248,19 @@ impl<F: FnMut(usize, usize, &str)> PullOptions<F> {
     }
 }
 
+/// Check if a shutdown receive error is a benign race condition.
+///
+/// During shutdown the VM may tear down before the ack response is flushed,
+/// causing EAGAIN, connection reset, or similar errors. These are expected
+/// and don't indicate a problem — sync() has likely already completed.
+fn is_benign_shutdown_error(error_str: &str) -> bool {
+    error_str.contains("os error 35") // EAGAIN on macOS
+        || error_str.contains("os error 11") // EAGAIN on Linux
+        || error_str.contains("temporarily unavailable")
+        || error_str.contains("Connection reset")
+        || error_str.contains("connection reset")
+}
+
 /// Client for communicating with the smolvm-agent.
 pub struct AgentClient {
     stream: UnixStream,
@@ -330,29 +361,46 @@ impl AgentClient {
         )
     }
 
+    /// Connect with a short timeout, for use during startup ping probes.
+    /// Uses 100ms read timeout instead of 30s to fail fast during boot.
+    /// The agent completes init in ~130ms of guest uptime, so 100ms is enough
+    /// to detect a ready agent without wasting time on a full 1s timeout.
+    pub fn connect_with_short_timeout(socket_path: impl AsRef<Path>) -> Result<Self> {
+        Self::connect_with_timeouts_ms(socket_path.as_ref(), 100, 100)
+    }
+
+    /// Connect with a very short timeout for boot-time probe cycles.
+    /// Uses 5ms timeout to minimize blocking between ready-marker checks.
+    /// Only used in the fallback path (old agents without ready markers).
+    pub fn connect_with_boot_probe_timeout(socket_path: impl AsRef<Path>) -> Result<Self> {
+        Self::connect_with_timeouts_ms(socket_path.as_ref(), 5, 5)
+    }
+
     /// Internal connect implementation (single attempt).
     fn connect_once(socket_path: &Path) -> Result<Self> {
+        Self::connect_with_timeouts(
+            socket_path,
+            DEFAULT_READ_TIMEOUT_SECS,
+            DEFAULT_WRITE_TIMEOUT_SECS,
+        )
+    }
+
+    /// Connect to the agent socket and configure read/write timeouts (in seconds).
+    fn connect_with_timeouts(socket_path: &Path, read_secs: u64, write_secs: u64) -> Result<Self> {
+        Self::connect_with_timeouts_ms(socket_path, read_secs * 1000, write_secs * 1000)
+    }
+
+    /// Connect to the agent socket and configure read/write timeouts (in milliseconds).
+    fn connect_with_timeouts_ms(socket_path: &Path, read_ms: u64, write_ms: u64) -> Result<Self> {
         let stream = UnixStream::connect(socket_path)
             .map_err(|e| Error::agent("connect to agent", e.to_string()))?;
 
-        // Set timeouts - fail early if we can't set them to prevent indefinite hangs
         stream
-            .set_read_timeout(Some(Duration::from_secs(DEFAULT_READ_TIMEOUT_SECS)))
-            .map_err(|e| {
-                Error::agent(
-                    "set read timeout",
-                    format!("{} (prevents indefinite hangs)", e),
-                )
-            })?;
-
+            .set_read_timeout(Some(Duration::from_millis(read_ms)))
+            .map_err(|e| Error::agent("set read timeout", e.to_string()))?;
         stream
-            .set_write_timeout(Some(Duration::from_secs(DEFAULT_WRITE_TIMEOUT_SECS)))
-            .map_err(|e| {
-                Error::agent(
-                    "set write timeout",
-                    format!("{} (prevents indefinite hangs)", e),
-                )
-            })?;
+            .set_write_timeout(Some(Duration::from_millis(write_ms)))
+            .map_err(|e| Error::agent("set write timeout", e.to_string()))?;
 
         Ok(Self { stream })
     }
@@ -654,11 +702,13 @@ impl AgentClient {
     /// may be killed before ext4 journal commits are flushed, causing layer
     /// corruption on next boot.
     pub fn shutdown(&mut self) -> Result<()> {
-        // Set a short timeout for shutdown acknowledgment
-        // The agent just needs to call sync() which is fast
+        // Set a timeout for shutdown acknowledgment.
+        // The agent calls sync() then sends the ack — typically <100ms,
+        // but heavy writes or large journals may take longer.
+        // If no ack within 5s, the VM has likely already torn down.
         let _ = self
             .stream
-            .set_read_timeout(Some(Duration::from_secs(STATUS_CHECK_TIMEOUT_SECS)));
+            .set_read_timeout(Some(Duration::from_secs(SHUTDOWN_ACK_TIMEOUT_SECS)));
 
         let data = encode_message(&AgentRequest::Shutdown)
             .map_err(|e| Error::agent("encode message", e.to_string()))?;
@@ -667,32 +717,25 @@ impl AgentClient {
             .map_err(|e| Error::agent("send shutdown", e.to_string()))?;
 
         // Wait for acknowledgment - this confirms sync() completed.
-        // If the agent crashes or times out, we proceed anyway since
-        // the sync() happens before the response is sent.
-        //
-        // Note: EAGAIN (os error 35) is common here because the VM may be
-        // torn down before the response arrives - this is benign since
-        // sync() has already completed by that point.
+        // Returns Ok only when the ack is actually received, so callers
+        // can distinguish "sync confirmed" from "sync unknown".
         match self.receive() {
             Ok(_) => {
                 tracing::debug!("agent acknowledged shutdown (sync complete)");
+                Ok(())
             }
             Err(e) => {
-                // Check if this is EAGAIN/EWOULDBLOCK - a common benign race
                 let error_str = e.to_string();
-                if error_str.contains("os error 35")
-                    || error_str.contains("temporarily unavailable")
-                {
+                if is_benign_shutdown_error(&error_str) {
                     tracing::debug!(
-                        "shutdown ack not received (connection closed) - sync likely completed"
+                        "shutdown ack not received (connection closed) - sync may have completed"
                     );
                 } else {
-                    tracing::warn!(error = %e, "shutdown acknowledgment failed, proceeding anyway");
+                    tracing::warn!(error = %e, "shutdown acknowledgment failed");
                 }
+                Err(Error::agent("shutdown ack", error_str))
             }
         }
-
-        Ok(())
     }
 
     // ========================================================================
@@ -721,6 +764,20 @@ impl AgentClient {
         workdir: Option<String>,
         timeout: Option<Duration>,
     ) -> Result<(i32, String, String)> {
+        self.vm_exec_as(command, env, workdir, timeout, None)
+    }
+
+    /// Execute a command in the VM as a specific user.
+    /// If `user` is None, runs as root. If specified, the agent uses
+    /// setuid/setgid to switch to the target user before exec.
+    pub fn vm_exec_as(
+        &mut self,
+        command: Vec<String>,
+        env: Vec<(String, String)>,
+        workdir: Option<String>,
+        timeout: Option<Duration>,
+        user: Option<String>,
+    ) -> Result<(i32, String, String)> {
         let _timeout_guard = self.set_exec_timeout(timeout)?;
         let timeout_ms = timeout.map(|t| t.as_millis() as u64);
 
@@ -731,6 +788,7 @@ impl AgentClient {
             timeout_ms,
             interactive: false,
             tty: false,
+            user,
         })?;
 
         expect_completed(resp, "vm exec")
@@ -892,10 +950,242 @@ impl AgentClient {
                 timeout_ms,
                 interactive: true,
                 tty,
+                user: None,
             },
             tty,
             "vm exec interactive",
         )
+    }
+
+    /// Execute a command in the VM with streaming output via a channel.
+    ///
+    /// Instead of forwarding to stdout/stderr, sends `AgentResponse` messages
+    /// through the provided channel. Used by the WebSocket exec endpoint.
+    pub fn vm_exec_streaming(
+        &mut self,
+        command: Vec<String>,
+        env: Vec<(String, String)>,
+        workdir: Option<String>,
+        timeout: Option<Duration>,
+        tx: std::sync::mpsc::Sender<AgentResponse>,
+    ) -> Result<i32> {
+        let timeout_ms = timeout.map(|t| t.as_millis() as u64);
+
+        // Disable socket read timeout for streaming session
+        self.stream
+            .set_read_timeout(None)
+            .map_err(|e| Error::agent("set read timeout", e.to_string()))?;
+
+        self.send(&AgentRequest::VmExec {
+            command,
+            env,
+            workdir,
+            timeout_ms,
+            interactive: true,
+            tty: false,
+            user: None,
+        })?;
+
+        // Wait for Started response
+        match self.receive()? {
+            AgentResponse::Started => {}
+            AgentResponse::Error { message, .. } => {
+                return Err(Error::agent("vm exec streaming", message));
+            }
+            _ => {
+                return Err(Error::agent("vm exec streaming", "expected Started response"));
+            }
+        }
+
+        // Send EOF on stdin immediately (no interactive input)
+        self.send(&AgentRequest::Stdin { data: Vec::new() })?;
+
+        // Read responses until Exited
+        loop {
+            match self.receive() {
+                Ok(resp @ AgentResponse::Stdout { .. }) => {
+                    if tx.send(resp).is_err() {
+                        break Ok(1); // Receiver dropped (WebSocket closed)
+                    }
+                }
+                Ok(resp @ AgentResponse::Stderr { .. }) => {
+                    if tx.send(resp).is_err() {
+                        break Ok(1);
+                    }
+                }
+                Ok(AgentResponse::Exited { exit_code }) => {
+                    let _ = tx.send(AgentResponse::Exited { exit_code });
+                    break Ok(exit_code);
+                }
+                Ok(AgentResponse::Error { message, .. }) => {
+                    return Err(Error::agent("vm exec streaming", message));
+                }
+                Ok(_) => {} // Ignore other responses
+                Err(e) => {
+                    if e.is_io()
+                        && matches!(
+                            e.source_io_error_kind(),
+                            Some(std::io::ErrorKind::WouldBlock)
+                        )
+                    {
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    /// Execute a command in the VM with bidirectional streaming via channels.
+    ///
+    /// Stdin data is received from `stdin_rx`, stdout/stderr/exit are sent
+    /// to `output_tx`. Used by the interactive WebSocket terminal endpoint.
+    ///
+    /// Uses two threads: a reader thread (blocking socket reads → output channel)
+    /// and the caller thread drains stdin_rx → socket writes. The socket stays
+    /// blocking — concurrent read+write is safe on stream sockets.
+    pub fn vm_exec_interactive_streaming(
+        &mut self,
+        command: Vec<String>,
+        env: Vec<(String, String)>,
+        workdir: Option<String>,
+        timeout: Option<Duration>,
+        tty: bool,
+        output_tx: std::sync::mpsc::Sender<AgentResponse>,
+        stdin_rx: std::sync::mpsc::Receiver<InteractiveInput>,
+    ) -> Result<i32> {
+        let timeout_ms = timeout.map(|t| t.as_millis() as u64);
+
+        // Disable socket read timeout for interactive session
+        self.stream
+            .set_read_timeout(None)
+            .map_err(|e| Error::agent("set read timeout", e.to_string()))?;
+
+        self.send(&AgentRequest::VmExec {
+            command,
+            env,
+            workdir,
+            timeout_ms,
+            interactive: true,
+            tty,
+            user: None,
+        })?;
+
+        // Wait for Started response
+        match self.receive()? {
+            AgentResponse::Started => {}
+            AgentResponse::Error { message, .. } => {
+                return Err(Error::agent("vm exec interactive streaming", message));
+            }
+            _ => {
+                return Err(Error::agent(
+                    "vm exec interactive streaming",
+                    "expected Started response",
+                ));
+            }
+        }
+
+        // Send initial terminal size if TTY
+        if tty {
+            // Default 80x24 — client will send actual size via resize message
+            self.send(&AgentRequest::Resize {
+                cols: 80,
+                rows: 24,
+            })?;
+        }
+
+        // Clone the socket fd for the reader thread. We use try_clone() to get
+        // a second handle to the same socket — reads happen on the clone,
+        // writes happen on the original.
+        let reader_stream = self
+            .stream
+            .try_clone()
+            .map_err(|e| Error::agent("clone socket", e.to_string()))?;
+
+        // Spawn reader thread — blocking reads from socket, forwards to output channel
+        let output_tx_clone = output_tx.clone();
+        let reader = std::thread::spawn(move || -> i32 {
+            // Create a temporary client wrapper for the cloned stream to use receive()
+            // We can't easily reuse AgentClient, so we'll read frames directly.
+            let mut stream = reader_stream;
+            stream.set_read_timeout(None).ok();
+
+            loop {
+                // Read frame: 4-byte length prefix + msgpack payload
+                let mut len_buf = [0u8; 4];
+                match std::io::Read::read_exact(&mut stream, &mut len_buf) {
+                    Ok(()) => {}
+                    Err(e) => {
+                        tracing::debug!(error = %e, "reader thread: socket read error");
+                        break 1;
+                    }
+                }
+                let len = u32::from_be_bytes(len_buf) as usize;
+                if len > MAX_FRAME_SIZE as usize {
+                    tracing::error!(len, "reader thread: frame too large");
+                    break 1;
+                }
+                let mut buf = vec![0u8; len];
+                match std::io::Read::read_exact(&mut stream, &mut buf) {
+                    Ok(()) => {}
+                    Err(e) => {
+                        tracing::debug!(error = %e, "reader thread: payload read error");
+                        break 1;
+                    }
+                }
+                let resp: AgentResponse = match serde_json::from_slice(&buf) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::error!(error = %e, "reader thread: decode error");
+                        break 1;
+                    }
+                };
+
+                match resp {
+                    AgentResponse::Exited { exit_code } => {
+                        let _ = output_tx_clone.send(AgentResponse::Exited { exit_code });
+                        break exit_code;
+                    }
+                    resp => {
+                        if output_tx_clone.send(resp).is_err() {
+                            break 1; // Receiver dropped
+                        }
+                    }
+                }
+            }
+        });
+
+        // Main thread: drain stdin channel and write to socket
+        loop {
+            match stdin_rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(InteractiveInput::Data(data)) => {
+                    if self.send(&AgentRequest::Stdin { data }).is_err() {
+                        break;
+                    }
+                }
+                Ok(InteractiveInput::Eof) => {
+                    let _ = self.send(&AgentRequest::Stdin { data: Vec::new() });
+                    break;
+                }
+                Ok(InteractiveInput::Resize { cols, rows }) => {
+                    let _ = self.send(&AgentRequest::Resize { cols, rows });
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    // Check if reader thread is done
+                    if reader.is_finished() {
+                        break;
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    // WebSocket client disconnected — send EOF
+                    let _ = self.send(&AgentRequest::Stdin { data: Vec::new() });
+                    break;
+                }
+            }
+        }
+
+        let exit_code = reader.join().unwrap_or(1);
+        Ok(exit_code)
     }
 
     /// Run a command in an image's rootfs.
@@ -967,6 +1257,20 @@ impl AgentClient {
         mounts: Vec<(String, String, bool)>,
         timeout: Option<Duration>,
     ) -> Result<(i32, String, String)> {
+        self.run_with_mounts_timeout_and_user(image, command, env, workdir, mounts, timeout, None)
+    }
+
+    /// Run a command in an image's rootfs as a specific user.
+    pub fn run_with_mounts_timeout_and_user(
+        &mut self,
+        image: &str,
+        command: Vec<String>,
+        env: Vec<(String, String)>,
+        workdir: Option<String>,
+        mounts: Vec<(String, String, bool)>,
+        timeout: Option<Duration>,
+        user: Option<String>,
+    ) -> Result<(i32, String, String)> {
         let _timeout_guard = self.set_exec_timeout(timeout)?;
         let timeout_ms = timeout.map(|t| t.as_millis() as u64);
 
@@ -979,6 +1283,7 @@ impl AgentClient {
             timeout_ms,
             interactive: false,
             tty: false,
+            user,
         })?;
 
         expect_completed(resp, "run command")
@@ -1009,6 +1314,7 @@ impl AgentClient {
                 timeout_ms,
                 interactive: true,
                 tty,
+                user: None,
             },
             tty,
             "run interactive",
@@ -1148,6 +1454,7 @@ impl AgentClient {
             timeout_ms,
             interactive: false,
             tty: false,
+            user: None,
         })?;
 
         expect_completed(resp, "exec command")
@@ -1189,6 +1496,7 @@ impl AgentClient {
                 timeout_ms,
                 interactive: true,
                 tty,
+                user: None,
             },
             tty,
             "exec interactive",

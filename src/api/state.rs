@@ -2,10 +2,12 @@
 
 use crate::agent::{AgentManager, HostMount, PortMapping, VmResources};
 use crate::api::error::ApiError;
-use crate::api::types::{MountSpec, PortSpec, ResourceSpec, RestartSpec, SandboxInfo};
+use crate::api::types::{ExecResponse, JobInfo, JobStatus, McpServerConfig, MountSpec, PortSpec, ResourceSpec, RestartSpec, SandboxInfo, SandboxPermission, SandboxRole};
 use crate::config::{RecordState, RestartConfig, RestartPolicy, VmRecord};
 use crate::db::SmolvmDb;
 use crate::mount::MountBinding;
+use crate::proxy::{ProxyConfig, SecretService};
+use metrics_exporter_prometheus::PrometheusHandle;
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -19,12 +21,24 @@ pub struct ApiState {
     reserved_names: RwLock<HashSet<String>>,
     /// Database for persistent state.
     db: SmolvmDb,
+    /// Prometheus metrics handle for rendering /metrics endpoint.
+    pub metrics_handle: PrometheusHandle,
+    /// Secret proxy configuration (None if no secrets configured).
+    /// Wrapped in RwLock to allow hot-reloading secrets at runtime.
+    pub proxy_config: RwLock<Option<ProxyConfig>>,
+    /// Registry of all known service definitions (built-in + custom).
+    /// Used when building per-sandbox proxy configs and for the services API.
+    service_registry: RwLock<HashMap<String, SecretService>>,
+    /// In-memory work queue for job dispatch.
+    jobs: RwLock<Vec<JobInfo>>,
 }
 
 /// Internal sandbox entry with manager and configuration.
 pub struct SandboxEntry {
     /// The agent manager for this sandbox.
-    pub manager: AgentManager,
+    /// Wrapped in Arc so it can be used without holding the SandboxEntry lock
+    /// (AgentManager has its own internal locking via Arc<Mutex<AgentInner>>).
+    pub manager: Arc<AgentManager>,
     /// Host mounts configured for this sandbox.
     pub mounts: Vec<MountSpec>,
     /// Port mappings configured for this sandbox.
@@ -35,6 +49,18 @@ pub struct SandboxEntry {
     pub restart: RestartConfig,
     /// Whether outbound network access is enabled.
     pub network: bool,
+    /// Allowed domains for egress filtering (None = no filtering).
+    pub allowed_domains: Option<Vec<String>>,
+    /// Secret names enabled for this sandbox (e.g., ["anthropic", "openai"]).
+    pub secrets: Vec<String>,
+    /// Default env vars to inject into every exec call (e.g., BASE_URL overrides).
+    pub default_env: Vec<(String, String)>,
+    /// Hash of the token that created this sandbox (Owner).
+    pub owner_token_hash: Option<String>,
+    /// Additional permission grants for this sandbox.
+    pub permissions: Vec<SandboxPermission>,
+    /// MCP server configurations for this sandbox.
+    pub mcp_servers: Vec<McpServerConfig>,
 }
 
 /// Parameters for registering a new sandbox.
@@ -51,6 +77,16 @@ pub struct SandboxRegistration {
     pub restart: RestartConfig,
     /// Whether outbound network access is enabled.
     pub network: bool,
+    /// Allowed domains for egress filtering (None = no filtering).
+    pub allowed_domains: Option<Vec<String>>,
+    /// Secret names enabled for this sandbox.
+    pub secrets: Vec<String>,
+    /// Default env vars to inject into every exec call.
+    pub default_env: Vec<(String, String)>,
+    /// Hash of the token that created this sandbox (Owner).
+    pub owner_token_hash: Option<String>,
+    /// MCP server configurations for this sandbox.
+    pub mcp_servers: Vec<McpServerConfig>,
 }
 
 /// RAII guard for sandbox name reservation.
@@ -119,10 +155,19 @@ impl ApiState {
     pub fn new() -> Result<Self, ApiError> {
         let db = SmolvmDb::open()
             .map_err(|e| ApiError::internal(format!("failed to open database: {}", e)))?;
+        // Ensure tables exist at server startup (CLI paths handle this lazily).
+        db.init_tables().map_err(|e| {
+            ApiError::internal(format!("failed to initialize database tables: {}", e))
+        })?;
+        let metrics_handle = crate::api::metrics::init();
         Ok(Self {
             sandboxes: RwLock::new(HashMap::new()),
             reserved_names: RwLock::new(HashSet::new()),
             db,
+            metrics_handle,
+            proxy_config: RwLock::new(None),
+            service_registry: RwLock::new(crate::proxy::services::builtin_services()),
+            jobs: RwLock::new(Vec::new()),
         })
     }
 
@@ -130,11 +175,89 @@ impl ApiState {
     ///
     /// Useful for testing with temporary databases.
     pub fn with_db(db: SmolvmDb) -> Self {
+        let metrics_handle = crate::api::metrics::init();
         Self {
             sandboxes: RwLock::new(HashMap::new()),
             reserved_names: RwLock::new(HashSet::new()),
             db,
+            metrics_handle,
+            proxy_config: RwLock::new(None),
+            service_registry: RwLock::new(crate::proxy::services::builtin_services()),
+            jobs: RwLock::new(Vec::new()),
         }
+    }
+
+    /// Set the proxy configuration for secret injection.
+    pub fn set_proxy_config(&mut self, config: ProxyConfig) {
+        *self.proxy_config.write() = Some(config);
+    }
+
+    /// Replace the service registry (e.g., after loading from config file).
+    pub fn set_service_registry(&mut self, services: HashMap<String, SecretService>) {
+        *self.service_registry.write() = services;
+    }
+
+    /// List all registered service definitions (no secrets exposed).
+    pub fn list_services(&self) -> Vec<crate::api::types::ServiceInfo> {
+        let registry = self.service_registry.read();
+        let mut services: Vec<_> = registry
+            .values()
+            .map(|svc| crate::api::types::ServiceInfo {
+                name: svc.name.clone(),
+                base_url: svc.base_url.clone(),
+                auth_header: svc.auth_header.clone(),
+                auth_prefix: svc.auth_prefix.clone(),
+                env_key_name: svc.env_key_name.clone(),
+                env_url_name: svc.env_url_name.clone(),
+            })
+            .collect();
+        services.sort_by(|a, b| a.name.cmp(&b.name));
+        services
+    }
+
+    /// Register a new service definition at runtime.
+    pub fn register_service(&self, service: SecretService) {
+        let mut registry = self.service_registry.write();
+        registry.insert(service.name.clone(), service);
+    }
+
+    /// Get the current service registry (for building per-sandbox proxy configs).
+    pub fn get_service_registry(&self) -> HashMap<String, SecretService> {
+        self.service_registry.read().clone()
+    }
+
+    /// Update secrets in the proxy configuration at runtime (hot-reload).
+    ///
+    /// Merges the provided secrets into the existing ProxyConfig, updating
+    /// existing keys and adding new ones. Returns the list of updated secret names.
+    ///
+    /// Returns `None` if no proxy config exists (server started without --secrets).
+    pub fn update_secrets(&self, new_secrets: HashMap<String, String>) -> Option<Vec<String>> {
+        let mut config_guard = self.proxy_config.write();
+        let config = config_guard.as_mut()?;
+        let updated: Vec<String> = new_secrets.keys().cloned().collect();
+        for (name, value) in new_secrets {
+            config.secrets.insert(name, value);
+        }
+        // Rebuild services to include any newly-added secret names
+        let all_services = crate::proxy::services::builtin_services();
+        config.services = all_services
+            .into_iter()
+            .filter(|(name, _)| config.secrets.contains_key(name))
+            .map(|(name, svc)| (name.to_string(), svc))
+            .collect();
+        Some(updated)
+    }
+
+    /// Get the list of configured secret names (not values) and service names.
+    ///
+    /// Returns `None` if no proxy config exists.
+    pub fn list_secret_names(&self) -> Option<(Vec<String>, Vec<String>)> {
+        let config_guard = self.proxy_config.read();
+        let config = config_guard.as_ref()?;
+        let secrets: Vec<String> = config.secrets.keys().cloned().collect();
+        let services: Vec<String> = config.services.keys().cloned().collect();
+        Some((secrets, services))
     }
 
     /// Load existing sandboxes from persistent database.
@@ -186,6 +309,7 @@ impl ApiState {
                 network: Some(record.network),
                 storage_gb: record.storage_gb,
                 overlay_gb: record.overlay_gb,
+                allowed_domains: None, // Not persisted in DB yet
             };
 
             // Create AgentManager and try to reconnect
@@ -213,12 +337,18 @@ impl ApiState {
                     sandboxes.insert(
                         name.clone(),
                         Arc::new(parking_lot::Mutex::new(SandboxEntry {
-                            manager,
+                            manager: Arc::new(manager),
                             mounts,
                             ports,
                             resources,
                             restart: record.restart.clone(),
                             network: record.network,
+                            allowed_domains: None, // Not persisted in DB yet
+                            secrets: Vec::new(),
+                            default_env: Vec::new(),
+                            owner_token_hash: None, // Legacy sandboxes have no RBAC
+                            permissions: Vec::new(),
+                            mcp_servers: Vec::new(),
                         })),
                     );
                     loaded.push(name.clone());
@@ -252,20 +382,17 @@ impl ApiState {
         &self,
         name: &str,
     ) -> Result<Arc<parking_lot::Mutex<SandboxEntry>>, ApiError> {
-        // Hold write lock across the entire operation to prevent concurrent
-        // delete races (check + DB delete + in-memory remove must be atomic).
-        let mut sandboxes = self.sandboxes.write();
-
-        if !sandboxes.contains_key(name) {
+        // Quick existence check with read lock (fast path for 404).
+        if !self.sandboxes.read().contains_key(name) {
             return Err(ApiError::NotFound(format!("sandbox '{}' not found", name)));
         }
 
-        // Remove from database first — if this fails, in-memory state stays consistent
+        // Remove from database BEFORE taking the write lock.
+        // This keeps the write lock scope minimal (microseconds vs milliseconds).
+        // Safe: if DB remove fails we return error and in-memory state is untouched.
         match self.db.remove_vm(name) {
             Ok(Some(_)) => {} // expected: row existed and was deleted
             Ok(None) => {
-                // Row was already gone from DB (concurrent delete or manual cleanup).
-                // Log and continue — we still need to clean up in-memory state.
                 tracing::warn!(
                     sandbox = name,
                     "sandbox not found in database during remove (already deleted?)"
@@ -277,12 +404,15 @@ impl ApiState {
             }
         }
 
-        // Remove from in-memory registry (guaranteed to succeed — we hold the write lock)
-        let entry = sandboxes
-            .remove(name)
-            .expect("sandbox disappeared while holding write lock");
-
-        Ok(entry)
+        // Brief write lock for in-memory removal only.
+        let mut sandboxes = self.sandboxes.write();
+        match sandboxes.remove(name) {
+            Some(entry) => Ok(entry),
+            None => {
+                // Concurrent delete already removed it
+                Err(ApiError::NotFound(format!("sandbox '{}' not found", name)))
+            }
+        }
     }
 
     /// Update sandbox state in database (call after start/stop).
@@ -302,7 +432,7 @@ impl ApiState {
             record.pid_start_time = pid_start_time;
         })?;
         match result {
-            Some(()) => Ok(()),
+            Some(_) => Ok(()),
             None => Err(crate::Error::database(
                 "update sandbox state",
                 format!("sandbox '{}' not found in database", name),
@@ -340,24 +470,7 @@ impl ApiState {
     ///
     /// Returns `Err(Conflict)` if the name is already taken or reserved.
     pub fn reserve_sandbox_name(&self, name: &str) -> Result<(), ApiError> {
-        // First check: sandbox existence (early exit for common case).
-        // Use separate scope to release read lock before acquiring write lock.
-        // This prevents lock-order inversion with complete_sandbox_registration.
-        {
-            let sandboxes = self.sandboxes.read();
-            if sandboxes.contains_key(name) {
-                return Err(ApiError::Conflict(format!(
-                    "sandbox '{}' already exists",
-                    name
-                )));
-            }
-        }
-
-        // Acquire reservation lock
-        let mut reserved = self.reserved_names.write();
-
-        // Double-check sandbox existence (could have been added while we
-        // didn't hold the sandboxes lock). This is necessary for correctness.
+        // Fast-path checks without holding the write lock.
         if self.sandboxes.read().contains_key(name) {
             return Err(ApiError::Conflict(format!(
                 "sandbox '{}' already exists",
@@ -365,15 +478,14 @@ impl ApiState {
             )));
         }
 
-        // Check if name is already reserved (creation in progress)
-        if reserved.contains(name) {
+        if self.reserved_names.read().contains(name) {
             return Err(ApiError::Conflict(format!(
                 "sandbox '{}' is being created by another request",
                 name
             )));
         }
 
-        // Also check database for persisted sandboxes not yet loaded
+        // Check database without holding any locks.
         if let Ok(Some(_)) = self.db.get_vm(name) {
             return Err(ApiError::Conflict(format!(
                 "sandbox '{}' already exists in database",
@@ -381,7 +493,21 @@ impl ApiState {
             )));
         }
 
-        // Reserve the name
+        // Now acquire write lock and re-check atomically before inserting.
+        let mut reserved = self.reserved_names.write();
+        if reserved.contains(name) {
+            return Err(ApiError::Conflict(format!(
+                "sandbox '{}' is being created by another request",
+                name
+            )));
+        }
+        if self.sandboxes.read().contains_key(name) {
+            return Err(ApiError::Conflict(format!(
+                "sandbox '{}' already exists",
+                name
+            )));
+        }
+
         reserved.insert(name.to_string());
         tracing::debug!(sandbox = %name, "reserved sandbox name");
         Ok(())
@@ -441,12 +567,23 @@ impl ApiState {
                 sandboxes.insert(
                     name,
                     Arc::new(parking_lot::Mutex::new(SandboxEntry {
-                        manager: reg.manager,
+                        manager: Arc::new(reg.manager),
                         mounts: reg.mounts,
                         ports: reg.ports,
                         resources: reg.resources,
                         restart: reg.restart,
                         network: reg.network,
+                        allowed_domains: reg.allowed_domains,
+                        secrets: reg.secrets,
+                        default_env: reg.default_env,
+                        owner_token_hash: reg.owner_token_hash.clone(),
+                        permissions: reg.owner_token_hash.map(|h| {
+                            vec![SandboxPermission {
+                                token_hash: h,
+                                role: SandboxRole::Owner,
+                            }]
+                        }).unwrap_or_default(),
+                        mcp_servers: reg.mcp_servers,
                     })),
                 );
                 Ok(())
@@ -492,7 +629,7 @@ impl ApiState {
     /// `Ok(None)` (row not found) and `Err` without propagating.
     fn update_vm_best_effort(&self, name: &str, op_label: &str, f: impl FnOnce(&mut VmRecord)) {
         match self.db.update_vm(name, f) {
-            Ok(Some(())) => {}
+            Ok(Some(_)) => {}
             Ok(None) => {
                 tracing::warn!(sandbox = %name, op = op_label, "sandbox not found in database");
             }
@@ -562,6 +699,120 @@ impl ApiState {
             false
         }
     }
+
+    // ── Work Queue / Job Management ──────────────────────────────────
+
+    /// Add a job to the work queue.
+    pub fn add_job(&self, job: JobInfo) {
+        self.jobs.write().push(job);
+    }
+
+    /// List jobs with optional filters.
+    pub fn list_jobs(
+        &self,
+        status: Option<&str>,
+        sandbox: Option<&str>,
+        limit: Option<usize>,
+    ) -> Vec<JobInfo> {
+        let jobs = self.jobs.read();
+        let iter = jobs.iter().filter(|j| {
+            if let Some(s) = status {
+                let job_status = format!("{:?}", j.status).to_lowercase();
+                if job_status != s.to_lowercase() {
+                    return false;
+                }
+            }
+            if let Some(sb) = sandbox {
+                if j.sandbox != sb {
+                    return false;
+                }
+            }
+            true
+        });
+        match limit {
+            Some(n) => iter.take(n).cloned().collect(),
+            None => iter.cloned().collect(),
+        }
+    }
+
+    /// Get a job by ID.
+    pub fn get_job(&self, id: &str) -> Option<JobInfo> {
+        self.jobs.read().iter().find(|j| j.id == id).cloned()
+    }
+
+    /// Atomically claim the highest-priority queued job, transitioning it to running.
+    pub fn poll_next_job(&self) -> Option<JobInfo> {
+        let mut jobs = self.jobs.write();
+        // Find the highest-priority queued job (higher priority value = higher priority)
+        let idx = jobs
+            .iter()
+            .enumerate()
+            .filter(|(_, j)| matches!(j.status, JobStatus::Queued))
+            .max_by_key(|(_, j)| j.priority)
+            .map(|(i, _)| i);
+
+        if let Some(i) = idx {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            jobs[i].status = JobStatus::Running;
+            jobs[i].started_at = Some(now);
+            jobs[i].attempts += 1;
+            Some(jobs[i].clone())
+        } else {
+            None
+        }
+    }
+
+    /// Mark a job as completed with its result.
+    pub fn complete_job(&self, id: &str, result: ExecResponse) -> Option<JobInfo> {
+        let mut jobs = self.jobs.write();
+        if let Some(job) = jobs.iter_mut().find(|j| j.id == id) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            job.status = JobStatus::Completed;
+            job.completed_at = Some(now);
+            job.result = Some(result);
+            Some(job.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Mark a job as failed. If retries remain, re-queue it; otherwise mark as dead.
+    pub fn fail_job(&self, id: &str, error: &str) -> Option<JobInfo> {
+        let mut jobs = self.jobs.write();
+        if let Some(job) = jobs.iter_mut().find(|j| j.id == id) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            job.error = Some(error.to_string());
+            if job.attempts < job.max_retries + 1 {
+                // Re-queue for retry
+                job.status = JobStatus::Queued;
+                job.started_at = None;
+            } else {
+                // No retries left — mark as dead
+                job.status = JobStatus::Dead;
+                job.completed_at = Some(now);
+            }
+            Some(job.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Remove a job from the queue. Returns true if found and removed.
+    pub fn remove_job(&self, id: &str) -> bool {
+        let mut jobs = self.jobs.write();
+        let len_before = jobs.len();
+        jobs.retain(|j| j.id != id);
+        jobs.len() < len_before
+    }
 }
 
 /// Run a blocking operation against a sandbox's agent client.
@@ -575,10 +826,15 @@ where
     T: Send + 'static,
     F: FnOnce(&mut crate::agent::AgentClient) -> crate::Result<T> + Send + 'static,
 {
-    let entry_clone = entry.clone();
+    // Clone the Arc<AgentManager> and release the entry lock immediately.
+    // AgentManager has its own internal locking, so we don't need to hold
+    // the SandboxEntry lock during the (potentially slow) VM operation.
+    let manager = {
+        let entry = entry.lock();
+        Arc::clone(&entry.manager)
+    };
     tokio::task::spawn_blocking(move || {
-        let entry = entry_clone.lock();
-        let mut client = entry.manager.connect()?;
+        let mut client = manager.connect()?;
         op(&mut client)
     })
     .await?
@@ -597,9 +853,10 @@ where
 pub async fn ensure_sandbox_running(
     entry: &Arc<parking_lot::Mutex<SandboxEntry>>,
 ) -> crate::Result<()> {
-    let entry_clone = entry.clone();
-    tokio::task::spawn_blocking(move || {
-        let entry = entry_clone.lock();
+    // Snapshot config and clone manager reference, then release entry lock.
+    // The VM boot (5-30s) runs without holding the SandboxEntry lock.
+    let (manager, mounts, ports, resources) = {
+        let entry = entry.lock();
         let mounts: Vec<_> = entry
             .mounts
             .iter()
@@ -607,14 +864,58 @@ pub async fn ensure_sandbox_running(
             .collect::<crate::Result<Vec<_>>>()?;
         let ports: Vec<_> = entry.ports.iter().map(PortMapping::from).collect();
         let resources = resource_spec_to_vm_resources(&entry.resources, entry.network);
-
-        entry
-            .manager
-            .ensure_running_with_full_config(mounts, ports, resources)?;
+        (Arc::clone(&entry.manager), mounts, ports, resources)
+    };
+    tokio::task::spawn_blocking(move || {
+        manager.ensure_running_with_full_config(mounts, ports, resources)?;
         Ok(())
     })
     .await
     .map_err(|e| crate::Error::agent("ensure running", e.to_string()))?
+}
+
+/// Start the secret proxy for a sandbox if it has secrets configured.
+///
+/// Called after the VM is started. Spawns a host-side proxy thread that
+/// listens on a Unix socket (mapped to vsock port 6100 in the VM).
+pub fn start_secret_proxy_if_needed(
+    entry: &parking_lot::Mutex<SandboxEntry>,
+    proxy_config: &RwLock<Option<ProxyConfig>>,
+    service_registry: &RwLock<HashMap<String, SecretService>>,
+) {
+    let entry = entry.lock();
+    if entry.secrets.is_empty() {
+        return;
+    }
+    let config_guard = proxy_config.read();
+    let proxy_config = match config_guard.as_ref() {
+        Some(config) => config,
+        None => return,
+    };
+
+    let sandbox_name = entry.manager.name().unwrap_or("unnamed").to_string();
+    let proxy_socket = crate::agent::vm_data_dir(&sandbox_name).join("proxy.sock");
+
+    // Filter the proxy config to only include secrets this sandbox requested
+    let mut sandbox_secrets = std::collections::HashMap::new();
+    for name in &entry.secrets {
+        if let Some(key) = proxy_config.secrets.get(name) {
+            sandbox_secrets.insert(name.clone(), key.clone());
+        }
+    }
+    // Use the full service registry (built-in + custom) so user-defined services work
+    let all_services = service_registry.read().clone();
+    let sandbox_proxy_config = crate::proxy::ProxyConfig::with_services(sandbox_secrets, all_services);
+
+    match crate::proxy::start_proxy_listener(&proxy_socket, sandbox_proxy_config, sandbox_name) {
+        Ok(_handle) => {
+            // Thread is detached — it will stop when the socket is closed
+            tracing::info!("secret proxy started for sandbox");
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "failed to start secret proxy");
+        }
+    }
 }
 
 /// Ensure a sandbox is running and persist the Running state to the database.
@@ -698,17 +999,20 @@ pub fn resource_spec_to_vm_resources(spec: &ResourceSpec, network: bool) -> VmRe
         network,
         storage_gb: spec.storage_gb,
         overlay_gb: spec.overlay_gb,
+        allowed_domains: spec.allowed_domains.clone().unwrap_or_default(),
     }
 }
 
 /// Convert VmResources to ResourceSpec.
 pub fn vm_resources_to_spec(res: VmResources) -> ResourceSpec {
+    let domains = if res.allowed_domains.is_empty() { None } else { Some(res.allowed_domains) };
     ResourceSpec {
         cpus: Some(res.cpus),
         memory_mb: Some(res.mem),
         network: Some(res.network),
         storage_gb: res.storage_gb,
         overlay_gb: res.overlay_gb,
+        allowed_domains: domains,
     }
 }
 
@@ -769,6 +1073,7 @@ mod tests {
             network: None,
             storage_gb: None,
             overlay_gb: None,
+            allowed_domains: None,
         };
         let res = resource_spec_to_vm_resources(&spec, false);
         assert_eq!(res.cpus, crate::agent::DEFAULT_CPUS);

@@ -76,7 +76,6 @@ fn create_sparse_disk(path: &Path, size_bytes: u64, label: &str) -> Result<()> {
     let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
     file.seek(SeekFrom::Start(size_bytes - 1))?;
     file.write_all(&[0])?;
-    file.sync_all()?;
 
     Ok(())
 }
@@ -109,6 +108,10 @@ fn find_disk_template(template_filename: &str) -> Option<PathBuf> {
 }
 
 /// Copy a disk from a pre-formatted template, resizing to target size.
+///
+/// On macOS, uses `clonefile()` for instant APFS copy-on-write cloning.
+/// On Linux, falls back to `fs::copy` (which uses `copy_file_range` for
+/// sparse-aware copying on supported filesystems).
 fn copy_disk_from_template(
     disk_path: &Path,
     size_bytes: u64,
@@ -126,8 +129,7 @@ fn copy_disk_from_template(
             .map_err(|e| Error::storage("create directory", e.to_string()))?;
     }
 
-    std::fs::copy(template_path, disk_path)
-        .map_err(|e| Error::storage("copy template", e.to_string()))?;
+    clone_or_copy_file(template_path, disk_path)?;
 
     // Resize to the desired size (template may be smaller than target)
     use std::io::{Seek, SeekFrom, Write};
@@ -140,14 +142,50 @@ fn copy_disk_from_template(
         .map_err(|e| Error::storage("seek for resize", e.to_string()))?;
     file.write_all(&[0])
         .map_err(|e| Error::storage("extend disk", e.to_string()))?;
-    file.sync_all()
-        .map_err(|e| Error::storage("sync disk", e.to_string()))?;
 
     // Filesystem resize happens inside the VM (guest runs resize2fs on boot).
 
     mark_disk_formatted(disk_path)?;
 
     tracing::info!(path = %disk_path.display(), "{} copied from template", label);
+    Ok(())
+}
+
+/// Clone a file using platform-optimal method.
+///
+/// - macOS: `clonefile()` for instant APFS copy-on-write (falls back to `fs::copy`)
+/// - Linux: `fs::copy` (uses `copy_file_range` for sparse-aware copy)
+pub(crate) fn clone_or_copy_file(src: &Path, dst: &Path) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::ffi::CString;
+
+        // clonefile(2) requires the destination to not exist
+        if dst.exists() {
+            let _ = std::fs::remove_file(dst);
+        }
+
+        let src_c = CString::new(src.to_string_lossy().as_bytes())
+            .map_err(|e| Error::storage("clonefile src path", e.to_string()))?;
+        let dst_c = CString::new(dst.to_string_lossy().as_bytes())
+            .map_err(|e| Error::storage("clonefile dst path", e.to_string()))?;
+
+        // clonefile(2): instant APFS copy-on-write clone
+        let ret = unsafe { libc::clonefile(src_c.as_ptr(), dst_c.as_ptr(), 0) };
+        if ret == 0 {
+            tracing::debug!(src = %src.display(), dst = %dst.display(), "clonefile succeeded");
+            return Ok(());
+        }
+
+        // Fall back to regular copy if clonefile fails (e.g., non-APFS filesystem)
+        tracing::debug!(
+            src = %src.display(),
+            errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0),
+            "clonefile failed, falling back to fs::copy"
+        );
+    }
+
+    std::fs::copy(src, dst).map_err(|e| Error::storage("copy template", e.to_string()))?;
     Ok(())
 }
 
@@ -175,7 +213,17 @@ fn format_disk_with_mkfs(disk_path: &Path, volume_label: &str, label: &str) -> R
         .ok_or_else(|| Error::storage("validate path", "disk path contains invalid characters"))?;
 
     let output = std::process::Command::new(mkfs_path)
-        .args(["-F", "-q", "-m", "0", "-L", volume_label, path_str])
+        .args([
+            "-F",
+            "-q",
+            "-m",
+            "0",
+            "-O",
+            "^has_journal",
+            "-L",
+            volume_label,
+            path_str,
+        ])
         .output()
         .map_err(|e| Error::storage("run mkfs.ext4", e.to_string()))?;
 
@@ -191,6 +239,8 @@ fn format_disk_with_mkfs(disk_path: &Path, volume_label: &str, label: &str) -> R
 }
 
 /// Check if a disk file appears to be a valid ext4 filesystem.
+/// Used in tests; removed from hot path to avoid spawning `file` command on every start.
+#[cfg(test)]
 fn disk_appears_valid_ext4(disk_path: &Path) -> bool {
     let output = std::process::Command::new("file")
         .arg("-b")
@@ -218,7 +268,11 @@ fn disk_appears_valid_ext4(disk_path: &Path) -> bool {
 }
 
 /// Check if a disk needs to be formatted.
-fn disk_needs_format(disk_path: &Path, label: &str) -> bool {
+///
+/// Fast path: if the format marker AND the disk file both exist, the disk
+/// was formatted successfully — skip the expensive `file` command validation.
+/// The marker is only created after successful mkfs.ext4 completion.
+fn disk_needs_format(disk_path: &Path, _label: &str) -> bool {
     let marker_path = disk_marker_path(disk_path);
 
     if !marker_path.exists() {
@@ -226,26 +280,13 @@ fn disk_needs_format(disk_path: &Path, label: &str) -> bool {
     }
 
     if !disk_path.exists() {
-        if let Err(e) = std::fs::remove_file(&marker_path) {
-            tracing::debug!(path = %marker_path.display(), error = %e, "cleanup: remove stale {} marker", label);
-        }
+        // Marker exists but disk is gone — stale marker
+        let _ = std::fs::remove_file(&marker_path);
         return true;
     }
 
-    if !disk_appears_valid_ext4(disk_path) {
-        tracing::warn!(
-            path = %disk_path.display(),
-            "{} disk appears corrupt, will recreate", label
-        );
-        if let Err(e) = std::fs::remove_file(disk_path) {
-            tracing::debug!(path = %disk_path.display(), error = %e, "cleanup: remove corrupt {} disk", label);
-        }
-        if let Err(e) = std::fs::remove_file(&marker_path) {
-            tracing::debug!(path = %marker_path.display(), error = %e, "cleanup: remove {} marker", label);
-        }
-        return true;
-    }
-
+    // Both marker and disk exist — disk was formatted successfully.
+    // Skip spawning `file` command (~10ms) on every restart.
     false
 }
 
@@ -628,15 +669,18 @@ mod tests {
         // Now corrupt the disk by zeroing the magic bytes
         corrupt_ext4_magic(&disk_path);
 
-        // Create a new disk handle to check corruption detection
-        let disk2 = StorageDisk::open_or_create_at(&disk_path, 1).unwrap();
-
-        // Should detect corruption and need reformatting
+        // disk_appears_valid_ext4 catches corruption via `file` command
         assert!(!disk_appears_valid_ext4(&disk_path));
-        assert!(disk2.needs_format()); // This should delete the corrupt disk
 
-        // Verify corrupt disk was deleted
-        assert!(!disk_path.exists());
+        // But needs_format trusts the marker file for performance (avoids
+        // spawning `file` on every start). Marker + disk present = no reformat.
+        let disk2 = StorageDisk::open_or_create_at(&disk_path, 1).unwrap();
+        assert!(!disk2.needs_format());
+
+        // Stale marker (disk deleted) should be detected
+        let _ = std::fs::remove_file(&disk_path);
+        assert!(disk2.needs_format());
+        // Stale marker should be cleaned up
         assert!(!marker_path.exists());
 
         // Clean up temp dir

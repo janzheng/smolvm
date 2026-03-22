@@ -96,9 +96,11 @@ if command -v docker &> /dev/null; then
         apk add --root /rootfs --initdb --no-cache \
             jq \
             e2fsprogs \
+            e2fsprogs-extra \
             crun \
             util-linux \
-            libcap
+            libcap \
+            iptables
     '
     echo "Packages installed successfully"
 else

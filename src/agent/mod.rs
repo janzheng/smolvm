@@ -10,7 +10,7 @@ mod manager;
 pub mod terminal;
 
 pub use crate::vm::config::HostMount;
-pub use client::{AgentClient, PullOptions, RunConfig};
+pub use client::{AgentClient, InteractiveInput, PullOptions, RunConfig};
 pub use manager::{docker_config_dir, docker_config_mount, vm_data_dir, AgentManager, AgentState};
 
 /// Default agent VM memory in MiB.
@@ -55,7 +55,7 @@ impl PortMapping {
 }
 
 /// VM configuration for the agent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct VmResources {
     /// Number of vCPUs.
     pub cpus: u8,
@@ -67,6 +67,10 @@ pub struct VmResources {
     pub storage_gb: Option<u64>,
     /// Overlay disk size in GiB (None = default 2 GiB).
     pub overlay_gb: Option<u64>,
+    /// Allowed domains for egress filtering (S03).
+    /// When set, the agent will enforce iptables rules allowing only these domains.
+    #[serde(default)]
+    pub allowed_domains: Vec<String>,
 }
 
 impl Default for VmResources {
@@ -77,6 +81,7 @@ impl Default for VmResources {
             network: false,
             storage_gb: None,
             overlay_gb: None,
+            allowed_domains: Vec::new(),
         }
     }
 }

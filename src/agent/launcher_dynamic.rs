@@ -12,9 +12,6 @@ use std::path::{Path, PathBuf};
 
 use super::VmResources;
 
-// TSI (Transparent Socket Impersonation) feature flags
-const KRUN_TSI_HIJACK_INET: u32 = 1 << 0;
-
 /// Function pointers for libkrun, loaded via dlopen.
 ///
 /// This struct parallels the `extern "C"` declarations in `launcher.rs`
@@ -41,8 +38,6 @@ pub struct KrunFunctions {
     pub add_vsock_port2: unsafe extern "C" fn(u32, u32, *const libc::c_char, bool) -> i32,
     pub add_virtiofs: unsafe extern "C" fn(u32, *const libc::c_char, *const libc::c_char) -> i32,
     pub start_enter: unsafe extern "C" fn(u32) -> i32,
-    pub disable_implicit_vsock: unsafe extern "C" fn(u32) -> i32,
-    pub add_vsock: unsafe extern "C" fn(u32, u32) -> i32,
     pub set_console_output: unsafe extern "C" fn(u32, *const libc::c_char) -> i32,
 }
 
@@ -129,8 +124,6 @@ impl KrunFunctions {
             add_vsock_port2: load_sym!(krun_add_vsock_port2),
             add_virtiofs: load_sym!(krun_add_virtiofs),
             start_enter: load_sym!(krun_start_enter),
-            disable_implicit_vsock: load_sym!(krun_disable_implicit_vsock),
-            add_vsock: load_sym!(krun_add_vsock),
             set_console_output: load_sym!(krun_set_console_output),
         })
     }
@@ -267,19 +260,9 @@ pub fn launch_agent_vm_dynamic(
         free_ctx_on_err!("krun_set_root failed");
     }
 
-    // Configure TSI networking
-    // SAFETY: ctx is valid
-    if unsafe { (krun.disable_implicit_vsock)(ctx) } < 0 {
-        free_ctx_on_err!("krun_disable_implicit_vsock failed");
-    }
-
-    if config.resources.network || !config.port_mappings.is_empty() {
-        // SAFETY: ctx is valid, KRUN_TSI_HIJACK_INET is a valid flag
-        if unsafe { (krun.add_vsock)(ctx, KRUN_TSI_HIJACK_INET) } < 0 {
-            free_ctx_on_err!("krun_add_vsock with TSI failed");
-        }
-
-        // Set port mappings
+    // Configure port mappings for TCP port forwarding (if any).
+    // Vsock ports for control channel are added below via krun_add_vsock_port2.
+    if !config.port_mappings.is_empty() {
         let port_cstrings: Vec<CString> = config
             .port_mappings
             .iter()
@@ -295,12 +278,6 @@ pub fn launch_agent_vm_dynamic(
         // SAFETY: ctx is valid, port_ptrs is a null-terminated array of valid C strings
         if unsafe { (krun.set_port_map)(ctx, port_ptrs.as_ptr()) } < 0 {
             free_ctx_on_err!("krun_set_port_map failed");
-        }
-    } else {
-        // Control-only vsock, no network
-        // SAFETY: ctx is valid
-        if unsafe { (krun.add_vsock)(ctx, 0) } < 0 {
-            free_ctx_on_err!("krun_add_vsock failed");
         }
     }
 

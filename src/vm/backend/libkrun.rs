@@ -122,8 +122,23 @@ impl LibkrunVm {
         inject_init_krun(&rootfs_path)?;
 
         // Setup DNS if network egress is enabled
-        if let NetworkPolicy::Egress { dns } = &config.network {
-            setup_dns(&rootfs_path, dns.map(|ip| ip.to_string()).as_deref())?;
+        match &config.network {
+            NetworkPolicy::Egress { dns } => {
+                setup_dns(&rootfs_path, dns.map(|ip| ip.to_string()).as_deref())?;
+            }
+            NetworkPolicy::Filtered { dns, allowed_domains } => {
+                setup_dns(&rootfs_path, dns.map(|ip| ip.to_string()).as_deref())?;
+                // TODO: When VMM-level domain filtering is available, apply
+                // allowed_domains rules here. For now, just log and behave
+                // like full egress.
+                if !allowed_domains.is_empty() {
+                    tracing::info!(
+                        domains = ?allowed_domains,
+                        "egress domain filtering configured (enforcement pending VMM support)"
+                    );
+                }
+            }
+            NetworkPolicy::None => {}
         }
 
         let mut vm = Self {

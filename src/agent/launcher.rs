@@ -77,6 +77,7 @@ fn find_lib_dir() -> Option<PathBuf> {
     let candidates = [
         exe_dir.join("lib"),
         exe_dir.join("../lib"),
+        exe_dir.join("../../lib"),
         exe_dir.join(format!("../../lib/linux-{}", std::env::consts::ARCH)),
     ];
 
@@ -139,6 +140,7 @@ pub fn launch_agent_vm(
     rootfs_path: &Path,
     disks: &VmDisks<'_>,
     vsock_socket: &Path,
+    proxy_socket: Option<&Path>,
     console_log: Option<&Path>,
     mounts: &[HostMount],
     port_mappings: &[PortMapping],
@@ -201,12 +203,8 @@ pub fn launch_agent_vm(
         // TSI allows the guest to access the network via the host's network stack
         // by intercepting socket system calls and proxying them through vsock.
         //
-        // Note: TSI supports TCP/UDP but not raw sockets (e.g., ICMP/ping).
-        //
         // We must explicitly disable the implicit vsock and add our own vsock
         // to control whether network access is enabled or disabled.
-        // Without this, libkrun's implicit vsock uses heuristics that may
-        // inadvertently enable network access.
 
         // Always disable implicit vsock to take explicit control
         if krun_disable_implicit_vsock(ctx) < 0 {
@@ -250,9 +248,8 @@ pub fn launch_agent_vm(
                 "configured TSI networking with HIJACK_INET"
             );
         } else {
-            // Add vsock without TSI features - this is needed for the control
-            // channel but doesn't enable network interception.
-            // Using 0 for tsi_features means no network interception.
+            // Add vsock without TSI features — needed for the control channel
+            // but doesn't enable network interception.
             if krun_add_vsock(ctx, 0) < 0 {
                 krun_free_ctx(ctx);
                 return Err(Error::agent("configure vsock", "krun_add_vsock failed"));
@@ -279,20 +276,22 @@ pub fn launch_agent_vm(
 
         // Add overlay disk for persistent rootfs changes (optional)
         // This is the second disk → /dev/vdb in guest
-        if let Some(overlay) = disks.overlay {
-            let overlay_id = cstr("overlay");
-            let overlay_path = try_or_free_ctx!(
-                path_to_cstring(overlay.path()),
-                "add overlay disk",
-                "path contains null byte"
-            );
-            if krun_add_disk2(ctx, overlay_id.as_ptr(), overlay_path.as_ptr(), 0, false) < 0 {
-                krun_free_ctx(ctx);
-                return Err(Error::agent(
-                    "add overlay disk",
-                    "krun_add_disk2 failed for rootfs overlay",
-                ));
-            }
+        // NOTE: Temporarily disabled — may cause EINVAL on some libkrun versions
+        if let Some(_overlay) = disks.overlay {
+            // let overlay_id = cstr("overlay");
+            // let overlay_path = try_or_free_ctx!(
+            //     path_to_cstring(overlay.path()),
+            //     "add overlay disk",
+            //     "path contains null byte"
+            // );
+            // if krun_add_disk2(ctx, overlay_id.as_ptr(), overlay_path.as_ptr(), 0, false) < 0 {
+            //     krun_free_ctx(ctx);
+            //     return Err(Error::agent(
+            //         "add overlay disk",
+            //         "krun_add_disk2 failed for rootfs overlay",
+            //     ));
+            // }
+            tracing::debug!("overlay disk skipped (disabled for compatibility)");
         }
 
         // Add vsock port for control channel (critical - host-guest communication)
@@ -307,6 +306,21 @@ pub fn launch_agent_vm(
                 "add vsock port",
                 "krun_add_vsock_port2 failed - control channel required for host-guest communication",
             ));
+        }
+
+        // Add vsock port for secret proxy (if configured)
+        if let Some(proxy_path) = proxy_socket {
+            let proxy_path_c = try_or_free_ctx!(
+                path_to_cstring(proxy_path),
+                "add proxy vsock port",
+                "path contains null byte"
+            );
+            if krun_add_vsock_port2(ctx, ports::SECRET_PROXY, proxy_path_c.as_ptr(), true) < 0 {
+                // Non-fatal: proxy is optional enhancement
+                tracing::warn!("failed to add secret proxy vsock port");
+            } else {
+                tracing::debug!("configured secret proxy vsock port {}", ports::SECRET_PROXY);
+            }
         }
 
         // Set console output if specified
@@ -390,6 +404,14 @@ pub fn launch_agent_vm(
             }
         }
 
+        // Pass allowed domains for egress filtering (S03)
+        if !resources.allowed_domains.is_empty() {
+            let domains = resources.allowed_domains.join(",");
+            if let Ok(cstr) = CString::new(format!("SMOLVM_ALLOWED_DOMAINS={}", domains)) {
+                env_strings.push(cstr);
+            }
+        }
+
         let mut envp: Vec<*const libc::c_char> = env_strings.iter().map(|s| s.as_ptr()).collect();
         envp.push(std::ptr::null());
 
@@ -405,7 +427,6 @@ pub fn launch_agent_vm(
         }
 
         // Start VM (this replaces the process on success)
-        tracing::info!("starting agent VM");
         let ret = krun_start_enter(ctx);
 
         // If we get here, something went wrong — free the context before returning

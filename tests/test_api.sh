@@ -32,7 +32,7 @@ SANDBOX_NAME="api-test-sandbox"
 
 start_server() {
     log_info "Starting API server on port $API_PORT..."
-    $SMOLVM serve --listen "127.0.0.1:$API_PORT" &
+    $SMOLVM serve start --listen "127.0.0.1:$API_PORT" &
     SERVER_PID=$!
 
     local retries=30
@@ -118,14 +118,14 @@ test_exec_exit_codes() {
     response=$(curl -s -X POST "$API_URL/api/v1/sandboxes/$SANDBOX_NAME/exec" \
         -H "Content-Type: application/json" \
         -d '{"command": ["sh", "-c", "exit 0"]}')
-    exit_code=$(echo "$response" | grep -o '"exit_code":[0-9]*' | cut -d: -f2)
+    exit_code=$(echo "$response" | grep -o '"exitCode":[0-9]*' | cut -d: -f2)
     [[ "$exit_code" != "0" ]] && return 1
 
     # Test exit code 42
     response=$(curl -s -X POST "$API_URL/api/v1/sandboxes/$SANDBOX_NAME/exec" \
         -H "Content-Type: application/json" \
         -d '{"command": ["sh", "-c", "exit 42"]}')
-    exit_code=$(echo "$response" | grep -o '"exit_code":[0-9]*' | cut -d: -f2)
+    exit_code=$(echo "$response" | grep -o '"exitCode":[0-9]*' | cut -d: -f2)
     [[ "$exit_code" == "42" ]]
 }
 

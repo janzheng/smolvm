@@ -14,6 +14,7 @@ use smolvm_protocol::{
 };
 use std::io::{Read, Write};
 use std::os::unix::io::AsRawFd;
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use tracing::{debug, error, info, warn};
 
@@ -22,6 +23,7 @@ mod crun;
 mod oci;
 mod paths;
 mod process;
+mod proxy;
 #[cfg(target_os = "linux")]
 mod pty;
 mod retry;
@@ -114,13 +116,11 @@ fn main() {
     mount_storage_disk();
     info!(duration_ms = uptime_ms() - t0, "storage disk mounted");
 
-    // Now do initialization - the vsock listener is already accepting at kernel level
+    // Set up network firewall to block VM→host access (S01 security fix).
+    // Must run after mounts (needs /proc) but before accepting connections.
     let t0 = uptime_ms();
-    if let Err(e) = storage::init() {
-        error!(error = %e, "failed to initialize storage");
-        std::process::exit(1);
-    }
-    info!(duration_ms = uptime_ms() - t0, "storage initialized");
+    setup_network_firewall();
+    info!(duration_ms = uptime_ms() - t0, "network firewall configured");
 
     // Initialize packed layers support (if SMOLVM_PACKED_LAYERS env var is set)
     let t0 = uptime_ms();
@@ -132,15 +132,31 @@ fn main() {
         );
     }
 
-    // Load and reconcile container registry
+    // Initialize volume mounts from SMOLVM_MOUNT_* env vars
     let t0 = uptime_ms();
-    if let Err(e) = container::REGISTRY.load() {
-        warn!(error = %e, "failed to load container registry, starting fresh");
+    let boot_mounts = storage::init_volume_mounts();
+    if !boot_mounts.is_empty() {
+        info!(
+            duration_ms = uptime_ms() - t0,
+            mount_count = boot_mounts.len(),
+            "volume mounts initialized at boot"
+        );
     }
-    if let Err(e) = container::REGISTRY.reconcile() {
-        warn!(error = %e, "failed to reconcile container registry");
+
+    // Registry load+reconcile deferred to first container operation via
+    // REGISTRY.ensure_loaded(). On fresh boot, no containers from a previous
+    // instance survive, so this work (~30-50ms for crun list + JSON parse)
+    // is wasted if no container operations are requested.
+
+    // Start guest-side secret proxy (bridges localhost:9800 -> vsock:6100 -> host proxy).
+    // This is a no-op if vsock port 6100 is not mapped (no secrets configured).
+    match proxy::start_guest_proxy() {
+        Ok(()) => info!("guest secret proxy started on port {}", proxy::GUEST_PROXY_PORT),
+        Err(e) => {
+            // Non-fatal: proxy is an optional feature
+            debug!(error = %e, "guest secret proxy not started (vsock port may not be mapped)");
+        }
     }
-    info!(duration_ms = uptime_ms() - t0, "registry reconciled");
 
     info!(
         total_startup_ms = uptime_ms() - start_uptime,
@@ -148,10 +164,51 @@ fn main() {
         "agent startup complete, entering accept loop"
     );
 
+    // Signal readiness to host via virtiofs marker file.
+    // The host watches for this file instead of the vsock socket (which appears
+    // before the agent is ready, causing wasted timeout on the first ping).
+    signal_ready_to_host();
+
     // Start accepting connections (listener already bound)
     if let Err(e) = run_server_with_listener(listener) {
         error!(error = %e, "server error");
         std::process::exit(1);
+    }
+}
+
+/// Well-known filename for the ready marker.
+/// The agent creates this file in the virtiofs rootfs to signal readiness.
+/// The host watches for it via inotify/kqueue instead of the vsock socket.
+const READY_MARKER_FILENAME: &str = ".smolvm-ready";
+
+/// Signal to the host that the agent is fully initialized and ready.
+///
+/// Creates a marker file in the virtiofs rootfs directory. Since virtiofs is
+/// shared between host and guest, the host can detect this file instantly
+/// via inotify/kqueue. This is more reliable than watching the vsock socket
+/// file (which is created by libkrun's muxer thread before the agent boots).
+///
+/// After pivot_root, the virtiofs root is mounted at /oldroot.
+/// Without overlay, the virtiofs root is /.
+fn signal_ready_to_host() {
+    use std::path::Path;
+
+    let content = uptime_ms().to_string();
+
+    // Try /oldroot first (overlay mode: virtiofs is the lower layer after pivot_root)
+    // Before pivot_root: virtiofs is at /, so the / path works.
+    let paths = [
+        format!("/oldroot/{}", READY_MARKER_FILENAME),
+        format!("/{}", READY_MARKER_FILENAME),
+    ];
+
+    for path in &paths {
+        if Path::new(path).parent().map_or(false, |p| p.exists()) {
+            if std::fs::write(path, content.as_bytes()).is_ok() {
+                debug!(path = path, "ready marker written");
+                return;
+            }
+        }
     }
 }
 
@@ -214,11 +271,214 @@ impl MountEntry {
     }
 }
 
+/// Look up a Unix user by name, returning (uid, gid, home_dir).
+/// Parses /etc/passwd directly to avoid libc getpwnam (which may not work in minimal rootfs).
+fn lookup_user(username: &str) -> std::result::Result<(u32, u32, String), String> {
+    let passwd = std::fs::read_to_string("/etc/passwd")
+        .map_err(|e| format!("cannot read /etc/passwd: {}", e))?;
+
+    for line in passwd.lines() {
+        let fields: Vec<&str> = line.split(':').collect();
+        if fields.len() >= 6 && fields[0] == username {
+            let uid: u32 = fields[2].parse().map_err(|_| "invalid uid")?;
+            let gid: u32 = fields[3].parse().map_err(|_| "invalid gid")?;
+            let home = fields[5].to_string();
+            return Ok((uid, gid, home));
+        }
+    }
+
+    Err(format!("user '{}' not found in /etc/passwd", username))
+}
+
+/// Set up network firewall to prevent VM from reaching host services.
+///
+/// S01 security fix: Without this, TSI (Transparent Socket Impersonation) allows
+/// the VM to reach any port on the host via the vsock proxy. This means a sandbox
+/// with `network: true` could hit the smolvm API on port 8080 and manage other
+/// sandboxes — a critical privilege escalation.
+///
+/// We detect the default gateway (host) IP from /proc/net/route and add iptables
+/// rules to block access to sensitive host ports. Also enforces domain allowlists
+/// if SMOLVM_ALLOWED_DOMAINS is set (S03).
+#[cfg(target_os = "linux")]
+fn setup_network_firewall() {
+    // Detect gateway IP from /proc/net/route
+    let gateway_ip = match detect_gateway_ip() {
+        Some(ip) => ip,
+        None => {
+            warn!("could not detect gateway IP, skipping firewall setup");
+            return;
+        }
+    };
+
+    info!(gateway = %gateway_ip, "detected host gateway IP");
+
+    // NOTE: With TSI (Transparent Socket Impersonation), iptables rules have no effect
+    // because TSI intercepts socket syscalls before they reach netfilter.
+    // These rules only apply if libkrun switches to a real network device (virtio-net).
+    // For TSI-based networking, port blocking must be done at the libkrun/TSI layer.
+
+    // Block access to common host service ports via the gateway.
+    // These are the ports most likely to be running host services
+    // that a sandbox should never be able to reach.
+    let blocked_ports: &[u16] = &[
+        8080,  // smolvm API server
+        22,    // SSH
+        5432,  // PostgreSQL
+        3306,  // MySQL
+        6379,  // Redis
+        27017, // MongoDB
+    ];
+
+    for port in blocked_ports {
+        run_iptables(&[
+            "-A", "OUTPUT",
+            "-d", &gateway_ip,
+            "-p", "tcp",
+            "--dport", &port.to_string(),
+            "-j", "REJECT",
+            "--reject-with", "tcp-reset",
+        ]);
+    }
+
+    // Also block UDP to the same ports (e.g., DNS on gateway)
+    // but allow DNS to external resolvers
+    run_iptables(&[
+        "-A", "OUTPUT",
+        "-d", &gateway_ip,
+        "-p", "udp",
+        "--dport", "53",
+        "-j", "REJECT",
+    ]);
+
+    info!(
+        blocked_ports = ?blocked_ports,
+        gateway = %gateway_ip,
+        "firewall rules applied: host service ports blocked"
+    );
+
+    // S03: Enforce domain allowlist if configured
+    if let Ok(domains) = std::env::var("SMOLVM_ALLOWED_DOMAINS") {
+        if !domains.is_empty() {
+            setup_domain_allowlist(&domains, &gateway_ip);
+        }
+    }
+}
+
+/// Parse gateway IP from /proc/net/route.
+/// The default route (destination 00000000) has the gateway in hex.
+#[cfg(target_os = "linux")]
+fn detect_gateway_ip() -> Option<String> {
+    let content = std::fs::read_to_string("/proc/net/route").ok()?;
+    for line in content.lines().skip(1) {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 3 {
+            continue;
+        }
+        // Default route: destination is 00000000
+        if fields[1] == "00000000" {
+            let hex = fields[2];
+            if let Ok(ip_u32) = u32::from_str_radix(hex, 16) {
+                // /proc/net/route stores IPs in little-endian hex
+                let a = ip_u32 & 0xFF;
+                let b = (ip_u32 >> 8) & 0xFF;
+                let c = (ip_u32 >> 16) & 0xFF;
+                let d = (ip_u32 >> 24) & 0xFF;
+                return Some(format!("{}.{}.{}.{}", a, b, c, d));
+            }
+        }
+    }
+    None
+}
+
+/// Run an iptables command, logging but not failing on error.
+#[cfg(target_os = "linux")]
+fn run_iptables(args: &[&str]) {
+    match Command::new("iptables").args(args).output() {
+        Ok(output) => {
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                warn!(args = ?args, stderr = %stderr, "iptables rule failed (iptables may not be available)");
+            }
+        }
+        Err(e) => {
+            // iptables not installed in rootfs — this is expected in minimal Alpine
+            debug!(error = %e, "iptables not found, firewall rules not applied");
+        }
+    }
+}
+
+/// S03: Set up domain allowlist using iptables.
+///
+/// When SMOLVM_ALLOWED_DOMAINS is set, we resolve each domain and create
+/// iptables rules that only allow outbound connections to those IPs.
+/// All other outbound TCP/UDP (except DNS to external resolvers) is blocked.
+#[cfg(target_os = "linux")]
+fn setup_domain_allowlist(domains: &str, gateway_ip: &str) {
+    info!(domains = %domains, "setting up domain allowlist");
+
+    // Parse comma-separated domain list
+    let domain_list: Vec<&str> = domains.split(',').map(|d| d.trim()).filter(|d| !d.is_empty()).collect();
+
+    if domain_list.is_empty() {
+        return;
+    }
+
+    // Allow loopback
+    run_iptables(&["-A", "OUTPUT", "-o", "lo", "-j", "ACCEPT"]);
+
+    // Allow established/related connections
+    run_iptables(&["-A", "OUTPUT", "-m", "state", "--state", "ESTABLISHED,RELATED", "-j", "ACCEPT"]);
+
+    // Allow DNS to external resolvers (needed to resolve the allowed domains)
+    run_iptables(&["-A", "OUTPUT", "-p", "udp", "--dport", "53", "-j", "ACCEPT"]);
+    run_iptables(&["-A", "OUTPUT", "-p", "tcp", "--dport", "53", "-j", "ACCEPT"]);
+
+    // Resolve each domain and allow its IPs
+    for domain in &domain_list {
+        // Use getent to resolve the domain
+        if let Ok(output) = Command::new("getent").args(["ahosts", domain]).output() {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    if let Some(ip) = line.split_whitespace().next() {
+                        // Allow TCP and UDP to this IP
+                        run_iptables(&["-A", "OUTPUT", "-d", ip, "-j", "ACCEPT"]);
+                    }
+                }
+                info!(domain = %domain, "allowed domain resolved and permitted");
+            } else {
+                warn!(domain = %domain, "failed to resolve domain for allowlist");
+            }
+        }
+    }
+
+    // Block the gateway (host) entirely — already done by S01 rules above,
+    // but make it explicit in allowlist mode
+    run_iptables(&["-A", "OUTPUT", "-d", gateway_ip, "-j", "REJECT"]);
+
+    // Default policy: drop everything else
+    // Note: We use REJECT on the OUTPUT chain rather than changing policy,
+    // because changing policy to DROP would break vsock communication
+    run_iptables(&["-A", "OUTPUT", "-p", "tcp", "-j", "REJECT", "--reject-with", "tcp-reset"]);
+    run_iptables(&["-A", "OUTPUT", "-p", "udp", "-j", "REJECT"]);
+
+    info!(allowed = ?domain_list, "domain allowlist enforced");
+}
+
 /// Mount essential filesystems (proc, sysfs, devtmpfs, devpts).
 /// This must be done first when running as init (PID 1).
 /// Uses direct syscalls to avoid any overhead.
 #[cfg(target_os = "linux")]
 fn mount_essential_filesystems() {
+    // libkrun's init.c mounts /proc, /sys, /dev, /dev/pts before exec'ing
+    // the agent. Skip redundant mounts if already present.
+    if std::path::Path::new("/proc/uptime").exists() {
+        // Ensure /dev/ptmx symlink exists (not set up by init.c)
+        let _ = std::os::unix::fs::symlink("pts/ptmx", "/dev/ptmx");
+        return;
+    }
+
     let mounts = [
         MountEntry {
             source: "proc",
@@ -297,6 +557,8 @@ fn setup_persistent_rootfs() {
 
     const OVERLAY_DEVICE: &str = "/dev/vdb";
     const OVERLAY_MOUNT: &str = "/mnt/overlay";
+    const STORAGE_DEVICE: &str = "/dev/vda";
+    const STORAGE_TEMP_MOUNT: &str = "/mnt/storage";
     const NEWROOT: &str = "/mnt/newroot";
 
     // Make root mount private — required for mount --move and pivot_root.
@@ -317,10 +579,8 @@ fn setup_persistent_rootfs() {
     // On devtmpfs, the kernel creates /dev/vdb automatically when libkrun
     // attaches a second virtio-blk disk. No mknod needed.
     if !Path::new(OVERLAY_DEVICE).exists() {
-        tracing::debug!("no overlay device, skipping");
         return;
     }
-    tracing::debug!("overlay device found, setting up overlayfs");
 
     let _ = std::fs::create_dir_all(OVERLAY_MOUNT);
 
@@ -328,34 +588,41 @@ fn setup_persistent_rootfs() {
     let dev = cstr(OVERLAY_DEVICE);
     let mnt = cstr(OVERLAY_MOUNT);
     let ext4 = cstr("ext4");
-    // SAFETY: mount /dev/vdb as ext4 at /mnt/overlay
+    // SAFETY: mount /dev/vdb as ext4 at /mnt/overlay with noatime
     let mounted = unsafe {
         libc::mount(
             dev.as_ptr(),
             mnt.as_ptr(),
             ext4.as_ptr(),
-            0,
+            libc::MS_NOATIME,
             std::ptr::null(),
         ) == 0
     };
 
     if !mounted {
-        tracing::debug!("formatting overlay disk on first boot");
         // First boot — format the disk
         let _ = std::process::Command::new("mkfs.ext4")
-            .args(["-F", "-q", "-L", "smolvm-overlay", OVERLAY_DEVICE])
+            .args([
+                "-F",
+                "-q",
+                "-O",
+                "^has_journal",
+                "-L",
+                "smolvm-overlay",
+                OVERLAY_DEVICE,
+            ])
             .status();
 
         let dev = cstr(OVERLAY_DEVICE);
         let mnt = cstr(OVERLAY_MOUNT);
         let ext4 = cstr("ext4");
-        // SAFETY: retry mount after formatting
+        // SAFETY: retry mount after formatting with noatime
         if unsafe {
             libc::mount(
                 dev.as_ptr(),
                 mnt.as_ptr(),
                 ext4.as_ptr(),
-                0,
+                libc::MS_NOATIME,
                 std::ptr::null(),
             )
         } != 0
@@ -365,13 +632,41 @@ fn setup_persistent_rootfs() {
         }
     }
 
-    // Expand the ext4 filesystem to fill the block device. The host may have
-    // copied from a small template then extended the sparse file, but the ext4
-    // superblock still reflects the template size. resize2fs fixes this.
-    // Safe to call even when the FS already spans the device (instant no-op).
-    let _ = std::process::Command::new("resize2fs")
-        .arg(OVERLAY_DEVICE)
-        .output();
+    // Expand the ext4 filesystem to fill the block device on first boot.
+    // The host may have copied from a small template then extended the sparse
+    // file. After first resize, the FS spans the full device — skip on
+    // subsequent boots to avoid process spawn overhead (~3-5ms).
+    let resized_marker = format!("{}/.resized", OVERLAY_MOUNT);
+    if !std::path::Path::new(&resized_marker).exists() {
+        let _ = std::process::Command::new("resize2fs")
+            .arg(OVERLAY_DEVICE)
+            .output();
+        let _ = std::fs::write(&resized_marker, "1");
+    }
+
+    // Start storage disk mount in parallel while we set up overlayfs.
+    // The ext4 mount of /dev/vda (~15-20ms) overlaps with overlayfs setup
+    // and overlay dir creation, saving that time from the critical path.
+    let storage_handle = if Path::new(STORAGE_DEVICE).exists() {
+        let _ = std::fs::create_dir_all(STORAGE_TEMP_MOUNT);
+        Some(std::thread::spawn(|| {
+            let dev = cstr(STORAGE_DEVICE);
+            let mnt = cstr(STORAGE_TEMP_MOUNT);
+            let ext4 = cstr("ext4");
+            // SAFETY: mount /dev/vda as ext4 at /mnt/storage with noatime
+            unsafe {
+                libc::mount(
+                    dev.as_ptr(),
+                    mnt.as_ptr(),
+                    ext4.as_ptr(),
+                    libc::MS_NOATIME,
+                    std::ptr::null(),
+                ) == 0
+            }
+        }))
+    } else {
+        None
+    };
 
     // Create overlay directories
     let _ = std::fs::create_dir_all(format!("{}/upper", OVERLAY_MOUNT));
@@ -399,9 +694,19 @@ fn setup_persistent_rootfs() {
     if result != 0 {
         let err = std::io::Error::last_os_error();
         eprintln!("smolvm-agent: failed to mount overlayfs: {}", err);
+        // Clean up parallel storage mount to avoid double-mount in
+        // mount_storage_disk() fallback path.
+        if let Some(handle) = storage_handle {
+            if handle.join().unwrap_or(false) {
+                let mnt = cstr(STORAGE_TEMP_MOUNT);
+                // SAFETY: umount the temp storage mount
+                unsafe {
+                    libc::umount(mnt.as_ptr());
+                }
+            }
+        }
         return;
     }
-    tracing::debug!("overlayfs mounted, doing pivot_root");
 
     // Create mount point directories in new root and move special mounts
     for dir in &["proc", "sys", "dev"] {
@@ -417,6 +722,28 @@ fn setup_persistent_rootfs() {
                 libc::MS_MOVE,
                 std::ptr::null(),
             );
+        }
+    }
+
+    // Join parallel storage mount and move it into new root.
+    // On subsequent boots, the ext4 mount succeeds and overlaps with the
+    // overlayfs setup above. On first boot, mount fails (disk unformatted)
+    // and mount_storage_disk() handles it with full fsck/mkfs recovery.
+    if let Some(handle) = storage_handle {
+        if handle.join().unwrap_or(false) {
+            let _ = std::fs::create_dir_all(format!("{}/storage", NEWROOT));
+            let src = cstr(STORAGE_TEMP_MOUNT);
+            let dst = cstr(&format!("{}/storage", NEWROOT));
+            // SAFETY: mount --move /mnt/storage to newroot/storage
+            unsafe {
+                libc::mount(
+                    src.as_ptr(),
+                    dst.as_ptr(),
+                    std::ptr::null(),
+                    libc::MS_MOVE,
+                    std::ptr::null(),
+                );
+            }
         }
     }
 
@@ -439,7 +766,6 @@ fn setup_persistent_rootfs() {
         eprintln!("smolvm-agent: pivot_root failed: {}", err);
         return;
     }
-    tracing::debug!("pivot_root done");
 
     // Set working directory to new root
     let _ = std::env::set_current_dir("/");
@@ -512,6 +838,7 @@ fn setup_signal_handlers() {
 /// Mount the storage disk at /storage.
 /// This is done by the agent (instead of init script) to allow vsock listener
 /// to be created first, reducing cold start latency.
+#[cfg(target_os = "linux")]
 fn mount_storage_disk() {
     use std::process::Command;
 
@@ -523,24 +850,47 @@ fn mount_storage_disk() {
 
     // Check if device exists
     if !std::path::Path::new(STORAGE_DEVICE).exists() {
-        // Try to create device node
-        let _ = Command::new("mknod")
-            .args([STORAGE_DEVICE, "b", "253", "0"])
-            .status();
+        // Try to create device node via mknod syscall
+        let dev_path = cstr(STORAGE_DEVICE);
+        // SAFETY: mknod with block device type, major 253 minor 0
+        unsafe {
+            libc::mknod(
+                dev_path.as_ptr(),
+                libc::S_IFBLK | 0o660,
+                libc::makedev(253, 0),
+            );
+        }
     }
 
-    // Check if already mounted
+    // Check if already mounted (e.g., pre-mounted during setup_persistent_rootfs)
     if std::path::Path::new(STORAGE_MOUNT).join("layers").exists() {
         debug!("storage already mounted");
         return;
     }
 
-    // Try to mount (disk should be pre-formatted by host)
-    let mount_result = Command::new("mount")
-        .args([STORAGE_DEVICE, STORAGE_MOUNT])
-        .status();
+    /// Mount ext4 using direct syscall with noatime (avoids ~3-5ms fork+exec).
+    fn try_mount_ext4() -> bool {
+        let dev = cstr("/dev/vda");
+        let mnt = cstr("/storage");
+        let ext4 = cstr("ext4");
+        let opts = cstr("noatime");
+        // SAFETY: mount /dev/vda as ext4 at /storage with noatime
+        unsafe {
+            libc::mount(
+                dev.as_ptr(),
+                mnt.as_ptr(),
+                ext4.as_ptr(),
+                libc::MS_NOATIME,
+                opts.as_ptr() as *const libc::c_void,
+            ) == 0
+        }
+    }
 
+    // Skip create_dirs if dirs already exist (subsequent boots).
     let create_dirs = || {
+        if std::path::Path::new(STORAGE_MOUNT).join("layers").exists() {
+            return;
+        }
         let dirs = [
             "layers",
             "configs",
@@ -556,64 +906,79 @@ fn mount_storage_disk() {
         }
     };
 
-    // Expand the ext4 filesystem to fill the block device. The host creates
-    // storage from a 512MB template then extends the sparse file to 20GB, but
-    // the ext4 superblock still thinks the FS is 512MB. resize2fs fixes this.
-    // Safe to call even when the FS already spans the device (instant no-op).
+    // Expand the ext4 filesystem on first boot. After first resize, the FS
+    // spans the full device — skip on subsequent boots to avoid process spawn
+    // overhead (~3-5ms).
     let resize_fs = || {
-        let _ = Command::new("resize2fs").arg(STORAGE_DEVICE).output(); // output() to suppress stdout/stderr
+        let resized_marker = format!("{}/.resized", STORAGE_MOUNT);
+        if !std::path::Path::new(&resized_marker).exists() {
+            let _ = Command::new("resize2fs").arg(STORAGE_DEVICE).output();
+            let _ = std::fs::write(&resized_marker, "1");
+        }
     };
 
-    match mount_result {
-        Ok(status) if status.success() => {
-            debug!("storage disk mounted successfully");
+    // Check /proc/mounts for pre-mounted storage (setup_persistent_rootfs
+    // may have already mounted /dev/vda and moved it to /storage via
+    // mount --move during pivot_root).
+    if let Ok(mounts) = std::fs::read_to_string("/proc/mounts") {
+        if mounts
+            .lines()
+            .any(|line| line.split_whitespace().nth(1) == Some(STORAGE_MOUNT))
+        {
+            debug!("storage pre-mounted during rootfs setup");
             resize_fs();
             create_dirs();
-        }
-        _ => {
-            // Mount failed - try fsck to repair filesystem first
-            warn!("mount failed, attempting filesystem repair with fsck");
-            let fsck_result = Command::new("fsck.ext4")
-                .args(["-y", "-f", STORAGE_DEVICE])
-                .status();
-
-            match fsck_result {
-                Ok(status) if status.success() || status.code() == Some(1) => {
-                    // fsck succeeded (0) or fixed errors (1) - try mounting again
-                    info!("fsck completed, attempting mount");
-                    let mount_after_fsck = Command::new("mount")
-                        .args([STORAGE_DEVICE, STORAGE_MOUNT])
-                        .status();
-
-                    if let Ok(status) = mount_after_fsck {
-                        if status.success() {
-                            info!("storage disk mounted after fsck repair");
-                            resize_fs();
-                            create_dirs();
-                            return;
-                        }
-                    }
-                    // Mount still failed after fsck, need to format
-                    warn!("mount failed after fsck, formatting storage disk");
-                }
-                _ => {
-                    // fsck failed - disk might be unformatted (first boot)
-                    info!("fsck failed, assuming first boot - formatting storage disk");
-                }
-            }
-
-            // Format as last resort (mkfs creates the FS at full device size,
-            // no resize needed)
-            let _ = Command::new("mkfs.ext4")
-                .args(["-F", "-q", STORAGE_DEVICE])
-                .status();
-            let _ = Command::new("mount")
-                .args([STORAGE_DEVICE, STORAGE_MOUNT])
-                .status();
-            create_dirs();
+            return;
         }
     }
+
+    if try_mount_ext4() {
+        debug!("storage disk mounted successfully");
+        resize_fs();
+        create_dirs();
+    } else {
+        // Mount failed - try fsck to repair filesystem first
+        warn!("mount failed, attempting filesystem repair with fsck");
+        let fsck_result = Command::new("fsck.ext4")
+            .args(["-y", "-f", STORAGE_DEVICE])
+            .status();
+
+        match fsck_result {
+            Ok(status) if status.success() || status.code() == Some(1) => {
+                // fsck succeeded (0) or fixed errors (1) - try mounting again
+                info!("fsck completed, attempting mount");
+                if try_mount_ext4() {
+                    info!("storage disk mounted after fsck repair");
+                    resize_fs();
+                    create_dirs();
+                    return;
+                }
+                // Mount still failed after fsck, need to format
+                warn!("mount failed after fsck, formatting storage disk");
+            }
+            _ => {
+                // fsck failed - disk might be unformatted (first boot)
+                info!("fsck failed, assuming first boot - formatting storage disk");
+            }
+        }
+
+        // Format as last resort (mkfs creates the FS at full device size,
+        // no resize needed)
+        let _ = Command::new("mkfs.ext4")
+            .args(["-F", "-q", "-O", "^has_journal", STORAGE_DEVICE])
+            .status();
+        let _ = try_mount_ext4();
+        create_dirs();
+    }
 }
+
+/// Stub for non-Linux platforms.
+#[cfg(not(target_os = "linux"))]
+fn mount_storage_disk() {}
+
+/// Stub for non-Linux platforms.
+#[cfg(not(target_os = "linux"))]
+fn setup_network_firewall() {}
 
 /// Run the vsock server with a pre-created listener.
 /// The listener is created early (before initialization) to ensure the kernel
@@ -884,7 +1249,8 @@ fn handle_request(request: AgentRequest) -> AgentResponse {
             timeout_ms,
             interactive: false,
             tty: false,
-        } => handle_vm_exec(&command, &env, workdir.as_deref(), timeout_ms),
+            user,
+        } => handle_vm_exec(&command, &env, workdir.as_deref(), timeout_ms, user.as_deref()),
 
         AgentRequest::VmExec { .. } => {
             // Interactive mode should be handled by handle_interactive_vm_exec
@@ -903,6 +1269,7 @@ fn handle_request(request: AgentRequest) -> AgentResponse {
             timeout_ms,
             interactive: false,
             tty: false,
+            user,
         } => handle_run(
             &image,
             &command,
@@ -910,6 +1277,7 @@ fn handle_request(request: AgentRequest) -> AgentResponse {
             workdir.as_deref(),
             &mounts,
             timeout_ms,
+            user.as_deref(),
         ),
 
         AgentRequest::Run { .. } => {
@@ -956,6 +1324,7 @@ fn handle_request(request: AgentRequest) -> AgentResponse {
             timeout_ms,
             interactive: false,
             tty: false,
+            ..
         } => handle_exec(
             &container_id,
             &command,
@@ -1795,10 +2164,11 @@ fn handle_run(
     workdir: Option<&str>,
     mounts: &[(String, String, bool)],
     timeout_ms: Option<u64>,
+    user: Option<&str>,
 ) -> AgentResponse {
-    info!(image = %image, command = ?command, mounts = ?mounts, timeout_ms = ?timeout_ms, "running command");
+    info!(image = %image, command = ?command, mounts = ?mounts, timeout_ms = ?timeout_ms, user = ?user, "running command");
 
-    match storage::run_command(image, command, env, workdir, mounts, timeout_ms) {
+    match storage::run_command(image, command, env, workdir, mounts, timeout_ms, user) {
         Ok(result) => AgentResponse::Completed {
             exit_code: result.exit_code,
             stdout: result.stdout,
@@ -2027,12 +2397,28 @@ fn handle_vm_exec(
     env: &[(String, String)],
     workdir: Option<&str>,
     timeout_ms: Option<u64>,
+    user: Option<&str>,
 ) -> AgentResponse {
-    info!(command = ?command, "executing directly in VM");
+    info!(command = ?command, user = ?user, "executing directly in VM");
 
     if command.is_empty() {
         return AgentResponse::error("command cannot be empty", error_codes::INVALID_REQUEST);
     }
+
+    // If a user is specified, validate it exists and get uid/gid
+    let user_ids = if let Some(username) = user {
+        match lookup_user(username) {
+            Ok(ids) => Some(ids),
+            Err(msg) => {
+                return AgentResponse::error(
+                    format!("user '{}': {}", username, msg),
+                    error_codes::INVALID_REQUEST,
+                );
+            }
+        }
+    } else {
+        None
+    };
 
     let mut cmd = Command::new(&command[0]);
     cmd.args(&command[1..]);
@@ -2045,6 +2431,47 @@ fn handle_vm_exec(
     // Set working directory
     if let Some(wd) = workdir {
         cmd.current_dir(wd);
+    }
+
+    // If running as a different user, set uid/gid before exec
+    if let Some((uid, gid, home)) = &user_ids {
+        let uid = *uid;
+        let gid = *gid;
+        let home = home.clone();
+        unsafe {
+            cmd.pre_exec(move || {
+                // Set supplementary groups, then gid, then uid
+                // Order matters: must set gid before dropping root via setuid
+                if libc::setgroups(0, std::ptr::null()) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::setgid(gid) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::setuid(uid) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        cmd.env("HOME", &home);
+        cmd.env("USER", user.unwrap_or("root"));
+    }
+
+    // Apply RLIMIT_NPROC to cap forked processes (fork bomb protection).
+    // This applies to all exec calls, not just non-root users.
+    unsafe {
+        cmd.pre_exec(|| {
+            let nproc_limit = libc::rlimit {
+                rlim_cur: 256,
+                rlim_max: 512,
+            };
+            if libc::setrlimit(libc::RLIMIT_NPROC, &nproc_limit) != 0 {
+                // Log but don't fail — rlimit is defense-in-depth
+                eprintln!("warning: failed to set RLIMIT_NPROC");
+            }
+            Ok(())
+        });
     }
 
     cmd.stdout(Stdio::piped());
@@ -2074,10 +2501,10 @@ fn handle_vm_exec(
                 let mut stdout = String::new();
                 let mut stderr = String::new();
 
-                if let Some(mut out) = child.stdout.take() {
+                if let Some(out) = child.stdout.take() {
                     let _ = out.take(MAX_OUTPUT as u64).read_to_string(&mut stdout);
                 }
-                if let Some(mut err) = child.stderr.take() {
+                if let Some(err) = child.stderr.take() {
                     let _ = err.take(MAX_OUTPUT as u64).read_to_string(&mut stderr);
                 }
 

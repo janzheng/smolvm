@@ -372,6 +372,7 @@ impl RunCmd {
             network: params.net,
             storage_gb: params.storage_gb,
             overlay_gb: params.overlay_gb,
+            allowed_domains: Vec::new(),
         };
 
         // Start agent VM
@@ -479,7 +480,6 @@ impl RunCmd {
                             workdir: params.workdir.clone(),
                         }),
                     );
-                    config.close_db();
                 }
             }
 
@@ -643,10 +643,11 @@ pub struct StartCmd {
 
 impl StartCmd {
     pub fn run(self) -> smolvm::Result<()> {
-        let name = vm_common::resolve_vm_name(self.name)?;
-        match &name {
-            Some(name) => vm_common::start_vm_named(KIND, name),
-            None => vm_common::start_vm_default(KIND),
+        let name = self.name.unwrap_or_else(|| "default".to_string());
+        match vm_common::start_vm_named(KIND, &name) {
+            Ok(()) => Ok(()),
+            Err(smolvm::Error::VmNotFound { .. }) => vm_common::start_vm_default(KIND),
+            Err(e) => Err(e),
         }
     }
 }

@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "smolvm"
-version = "0.1.16"
+version = "0.1.17"
 edition = "2021"
 description = "OCI-native microVM runtime"
 license = "Apache-2.0"
@@ -23,6 +23,7 @@ path = "src/main.rs"
 [dependencies]
 smolvm-protocol = { path = "crates/smolvm-protocol" }
 smolvm-pack = { path = "crates/smolvm-pack" }
+async-trait = "0.1"
 thiserror = "1"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
@@ -37,13 +38,34 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 humantime = "2"
 tempfile = "3"
 
+# File operations
+base64 = { workspace = true }
+
+# Snapshot export/import
+tar = "0.4"
+flate2 = "1"
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+
 # HTTP API server
 tokio = { version = "1", features = ["full"] }
-axum = { version = "0.7", features = ["macros"] }
+axum = { version = "0.7", features = ["macros", "ws", "multipart"] }
 tower-http = { version = "0.5", features = ["cors", "trace", "timeout"] }
 tokio-stream = "0.1"
+tokio-util = { version = "0.7", features = ["io"] }
+futures-util = "0.3"
 parking_lot = "0.12"
 async-stream = "0.3"
+
+# Job IDs
+uuid = { version = "1", features = ["v4"] }
+
+# Secret proxy (host-side HTTPS forwarding with API key injection)
+reqwest = { version = "0.12", features = ["rustls-tls", "blocking", "json"], default-features = false }
+
+# Prometheus metrics
+metrics = "0.23"
+metrics-exporter-prometheus = "0.15"
 
 # OpenAPI documentation
 utoipa = { version = "5", features = ["axum_extras"] }

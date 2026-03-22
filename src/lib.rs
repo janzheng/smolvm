@@ -71,6 +71,10 @@ pub mod mount;
 pub mod network;
 pub mod platform;
 pub mod process;
+pub mod provider;
+pub mod provider_local;
+pub mod provider_remote;
+pub mod proxy;
 pub mod registry;
 pub mod storage;
 pub mod util;
@@ -98,6 +102,10 @@ pub use registry::{RegistryAuth, RegistryConfig};
 pub use vm::config::{HostMount, NetworkPolicy, Resources, RootfsSource, Timeouts, VmConfig, VmId};
 pub use vm::state::{ExitReason, VmState};
 pub use vm::{default_backend, VmBackend, VmHandle};
+
+pub use provider::{ProviderError, ProviderInfo, SandboxProvider};
+pub use provider_local::LocalProvider;
+pub use provider_remote::RemoteProvider;
 
 /// Library version.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

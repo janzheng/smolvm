@@ -58,6 +58,8 @@ pub mod ports {
     pub const WORKLOAD_LOGS: u32 = 5001;
     /// Agent control port (for OCI operations and management).
     pub const AGENT_CONTROL: u32 = 6000;
+    /// Secret proxy port (for API key injection without exposing secrets in VM).
+    pub const SECRET_PROXY: u32 = 6100;
 }
 
 /// vsock CID constants.
@@ -169,6 +171,9 @@ pub enum AgentRequest {
         /// Allocate a pseudo-TTY for the command.
         #[serde(default)]
         tty: bool,
+        /// Run as this user (via setuid/setgid). None = root.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        user: Option<String>,
     },
 
     /// Run a command in an image's rootfs.
@@ -202,6 +207,9 @@ pub enum AgentRequest {
         /// Enables terminal features like colors, line editing, and signal handling.
         #[serde(default)]
         tty: bool,
+        /// Run as this user (via setuid/setgid). None = root.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        user: Option<String>,
     },
 
     /// Send stdin data to a running interactive command.
@@ -293,6 +301,9 @@ pub enum AgentRequest {
         /// Enables terminal features like colors, line editing, and signal handling.
         #[serde(default)]
         tty: bool,
+        /// Run as this user (via setuid/setgid). None = root.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        user: Option<String>,
     },
 }
 

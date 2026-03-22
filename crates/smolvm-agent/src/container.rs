@@ -183,6 +183,19 @@ pub enum ContainerState {
     Stopped,
 }
 
+impl ContainerState {
+    /// Parse a crun status string into a ContainerState.
+    /// Returns `None` for unrecognized status values.
+    fn from_crun_status(status: &str) -> Option<Self> {
+        match status {
+            "running" => Some(ContainerState::Running),
+            "stopped" | "exited" => Some(ContainerState::Stopped),
+            "created" => Some(ContainerState::Created),
+            _ => None,
+        }
+    }
+}
+
 impl std::fmt::Display for ContainerState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -468,29 +481,48 @@ impl ContainerRegistry {
             containers.keys().cloned().collect()
         };
 
+        if container_ids.is_empty() {
+            debug!("no containers to reconcile");
+            // Still persist to update instance_id
+            self.persist()?;
+            info!("registry reconciliation complete");
+            return Ok(());
+        }
+
+        // Get all container states in one `crun list` call instead of
+        // N separate `crun state` calls (~6ms each).
+        // Falls back to per-container `crun state` if batch call fails,
+        // to avoid incorrectly treating all containers as gone.
+        let crun_states = get_crun_states_batch();
+        if crun_states.is_none() {
+            warn!("crun list failed, falling back to per-container crun state");
+        }
+
         let mut to_remove = Vec::new();
         let mut to_update = Vec::new();
 
-        for id in container_ids {
-            // Check crun state
-            let crun_state = get_crun_state(&id);
-            let exit_code = read_exit_code(&id);
+        for id in &container_ids {
+            let per_container_state;
+            let crun_status = match &crun_states {
+                Some(states) => states.get(id.as_str()),
+                None => {
+                    // Batch failed — fall back to per-container crun state
+                    per_container_state = get_crun_state(id).ok();
+                    per_container_state.as_ref()
+                }
+            };
+            let exit_code = read_exit_code(id);
 
-            match crun_state {
-                Ok(state) => {
-                    let new_state = match state.as_str() {
-                        "running" => ContainerState::Running,
-                        "stopped" | "exited" => ContainerState::Stopped,
-                        "created" => ContainerState::Created,
-                        _ => {
-                            warn!(container_id = %id, state = %state, "unknown crun state");
-                            ContainerState::Stopped
-                        }
-                    };
+            match crun_status {
+                Some(state) => {
+                    let new_state = ContainerState::from_crun_status(state).unwrap_or_else(|| {
+                        warn!(container_id = %id, state = %state, "unknown crun state");
+                        ContainerState::Stopped
+                    });
                     to_update.push((id.clone(), new_state));
                     debug!(container_id = %id, state = %state, "reconciled container");
                 }
-                Err(_) => {
+                None => {
                     // Container doesn't exist in crun
                     if exit_code.is_some() {
                         // Container exited, mark as stopped
@@ -529,6 +561,26 @@ impl ContainerRegistry {
 impl Default for ContainerRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl ContainerRegistry {
+    /// Lazily load the registry from disk and reconcile with crun state.
+    ///
+    /// Called on first container operation that needs full registry state
+    /// (list, stop, delete, status). Deferred from boot to avoid ~30-50ms
+    /// of wasted work when no container operations are requested.
+    pub fn ensure_loaded(&self) {
+        use std::sync::Once;
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            if let Err(e) = self.load() {
+                warn!(error = %e, "failed to load container registry");
+            }
+            if let Err(e) = self.reconcile() {
+                warn!(error = %e, "failed to reconcile container registry");
+            }
+        });
     }
 }
 
@@ -1103,6 +1155,7 @@ pub fn spawn_interactive_exec(
 
 /// Stop a running container.
 pub fn stop_container(container_id: &str, timeout_secs: u64) -> Result<(), StorageError> {
+    REGISTRY.ensure_loaded();
     let info = REGISTRY
         .find_by_prefix(container_id)
         .ok_or_else(|| StorageError::new(format!("container not found: {}", container_id)))?;
@@ -1145,6 +1198,7 @@ pub fn stop_container(container_id: &str, timeout_secs: u64) -> Result<(), Stora
 
 /// Delete a container (must be stopped).
 pub fn delete_container(container_id: &str, force: bool) -> Result<(), StorageError> {
+    REGISTRY.ensure_loaded();
     let info = REGISTRY
         .find_by_prefix(container_id)
         .ok_or_else(|| StorageError::new(format!("container not found: {}", container_id)))?;
@@ -1198,17 +1252,15 @@ pub fn delete_container(container_id: &str, force: bool) -> Result<(), StorageEr
 
 /// List all containers with their current state.
 pub fn list_containers() -> Vec<ContainerInfo> {
+    REGISTRY.ensure_loaded();
     let mut containers = REGISTRY.list();
 
     // Update states from crun
     for container in &mut containers {
         if let Ok(state) = get_crun_state(&container.id) {
-            container.state = match state.as_str() {
-                "running" => ContainerState::Running,
-                "stopped" | "exited" => ContainerState::Stopped,
-                "created" => ContainerState::Created,
-                _ => container.state,
-            };
+            if let Some(new_state) = ContainerState::from_crun_status(&state) {
+                container.state = new_state;
+            }
         }
     }
 
@@ -1241,6 +1293,49 @@ fn get_crun_state(container_id: &str) -> Result<String, StorageError> {
             context: "crun state".into(),
             field: "status".into(),
         })
+}
+
+/// Get all container states in a single `crun list` call.
+///
+/// Returns `Some(map)` of container_id → status string on success,
+/// or `None` if `crun list` failed (so callers can fall back to per-container state).
+/// Much faster than calling `crun state` per container (~6ms per process spawn).
+fn get_crun_states_batch() -> Option<HashMap<String, String>> {
+    let output = match CrunCommand::list().output() {
+        Ok(o) if o.status.success() => o,
+        Ok(o) => {
+            warn!(
+                exit_code = ?o.status.code(),
+                stderr = %String::from_utf8_lossy(&o.stderr),
+                "crun list failed"
+            );
+            return None;
+        }
+        Err(e) => {
+            warn!(error = %e, "failed to run crun list");
+            return None;
+        }
+    };
+
+    // crun list -f json returns an array of objects with "id" and "status" fields
+    let entries: Vec<serde_json::Value> = match serde_json::from_slice(&output.stdout) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(error = %e, "failed to parse crun list output");
+            return None;
+        }
+    };
+
+    Some(
+        entries
+            .iter()
+            .filter_map(|entry| {
+                let id = entry["id"].as_str()?;
+                let status = entry["status"].as_str()?;
+                Some((id.to_string(), status.to_string()))
+            })
+            .collect(),
+    )
 }
 
 /// Read exit code from the exit file for a container.
