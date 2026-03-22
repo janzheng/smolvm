@@ -682,11 +682,11 @@ pub async fn clone_sandbox(
         let overlay_gb = source_resources.overlay_gb;
         let storage_disk = StorageDisk::open_or_create_at(
             &dst_storage,
-            storage_gb.unwrap_or(crate::storage::DEFAULT_STORAGE_SIZE_GB),
+            storage_gb.unwrap_or(crate::storage::DEFAULT_STORAGE_SIZE_GIB),
         )?;
         let overlay_disk = OverlayDisk::open_or_create_at(
             &dst_overlay,
-            overlay_gb.unwrap_or(crate::storage::DEFAULT_OVERLAY_SIZE_GB),
+            overlay_gb.unwrap_or(crate::storage::DEFAULT_OVERLAY_SIZE_GIB),
         )?;
 
         // Create manager from existing disks

@@ -425,11 +425,11 @@ pub async fn pull_snapshot(
         // Convert bytes to GB for open_or_create_at (use at least defaults)
         let storage_gb = std::cmp::max(
             storage_size / (1024 * 1024 * 1024),
-            crate::storage::DEFAULT_STORAGE_SIZE_GB,
+            crate::storage::DEFAULT_STORAGE_SIZE_GIB,
         );
         let overlay_gb = std::cmp::max(
             overlay_size / (1024 * 1024 * 1024),
-            crate::storage::DEFAULT_OVERLAY_SIZE_GB,
+            crate::storage::DEFAULT_OVERLAY_SIZE_GIB,
         );
 
         let storage_disk = StorageDisk::open_or_create_at(&storage_path, storage_gb)?;
