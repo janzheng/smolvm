@@ -115,13 +115,6 @@ pub fn parse_mounts_as_tuples(specs: &[String]) -> smolvm::Result<Vec<(String, S
     })
 }
 
-/// Parse mounts and convert to virtiofs binding format for agent.
-///
-/// Returns tuples of (virtiofs_tag, container_path, read_only).
-pub fn parse_mounts_to_bindings(specs: &[String]) -> smolvm::Result<Vec<(String, String, bool)>> {
-    parse_mounts(specs).map(|mounts| mounts_to_virtiofs_bindings(&mounts))
-}
-
 /// Convert parsed HostMount list to virtiofs binding format for agent.
 ///
 /// Returns tuples of (virtiofs_tag, container_path, read_only).

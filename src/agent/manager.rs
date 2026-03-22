@@ -196,6 +196,8 @@ pub struct AgentManager {
     config_file: PathBuf,
     /// Console log path (optional).
     console_log: Option<PathBuf>,
+    /// Startup error log path written by the child if microvm launch fails before readiness
+    startup_error_log: PathBuf,
     /// Internal state.
     inner: Arc<Mutex<AgentInner>>,
 }
@@ -258,6 +260,7 @@ impl AgentManager {
         let pid_file = smolvm_runtime.join("agent.pid");
         let config_file = smolvm_runtime.join("agent.config.json");
         let console_log = Some(smolvm_runtime.join("agent-console.log"));
+        let startup_error_log: PathBuf = smolvm_runtime.join("agent-startup-error.log");
 
         Ok(Self {
             name,
@@ -269,6 +272,7 @@ impl AgentManager {
             pid_file,
             config_file,
             console_log,
+            startup_error_log,
             inner: Arc::new(Mutex::new(AgentInner {
                 state: AgentState::Stopped,
                 child: None,
@@ -284,7 +288,7 @@ impl AgentManager {
     /// Get the default agent manager.
     ///
     /// Uses default paths for rootfs and storage.
-    /// `storage_gb` and `overlay_gb` override the default disk sizes (20 GiB / 2 GiB).
+    /// `storage_gb` and `overlay_gb` override the default disk sizes (20 GiB / 10 GiB).
     ///
     /// Canonicalized to `for_vm_with_sizes("default", ...)` so that all
     /// lifecycle commands (start/stop/exec/status) use consistent paths.
@@ -306,7 +310,7 @@ impl AgentManager {
     /// Get an agent manager for a named VM.
     ///
     /// Each named VM gets its own isolated storage and socket.
-    /// `storage_gb` and `overlay_gb` override the default disk sizes (20 GiB / 2 GiB).
+    /// `storage_gb` and `overlay_gb` override the default disk sizes (20 GiB / 10 GiB).
     pub fn for_vm_with_sizes(
         name: impl Into<String>,
         storage_gb: Option<u64>,
@@ -314,8 +318,8 @@ impl AgentManager {
     ) -> Result<Self> {
         let name = name.into();
         let rootfs_path = Self::default_rootfs_path()?;
-        let sg = storage_gb.unwrap_or(crate::storage::DEFAULT_STORAGE_SIZE_GB);
-        let og = overlay_gb.unwrap_or(crate::storage::DEFAULT_OVERLAY_SIZE_GB);
+        let sg = storage_gb.unwrap_or(crate::storage::DEFAULT_STORAGE_SIZE_GIB);
+        let og = overlay_gb.unwrap_or(crate::storage::DEFAULT_OVERLAY_SIZE_GIB);
 
         // Named VMs get their own storage disk
         let storage_dir = vm_data_dir(&name);
@@ -406,6 +410,16 @@ impl AgentManager {
     /// Get the console log path.
     pub fn console_log(&self) -> Option<&Path> {
         self.console_log.as_deref()
+    }
+
+    /// Get the storage disk path.
+    pub fn storage_path(&self) -> &Path {
+        self.storage_disk.path()
+    }
+
+    /// Get the overlay disk path.
+    pub fn overlay_path(&self) -> &Path {
+        self.overlay_disk.path()
     }
 
     /// Check if an agent is already running (socket exists + responds to ping).
@@ -843,6 +857,7 @@ impl AgentManager {
         // Clean up stale ready marker from previous boot
         let ready_marker = self.rootfs_path.join(READY_MARKER_FILENAME);
         let _ = std::fs::remove_file(&ready_marker);
+        let _ = std::fs::remove_file(&self.startup_error_log);
 
         // Clone mounts/ports/resources for save_running_config (originals move into fork closure)
         let mounts_for_config = mounts.clone();
@@ -858,10 +873,10 @@ impl AgentManager {
         let console_log = self.console_log.clone();
         let storage_size_gb = resources
             .storage_gb
-            .unwrap_or(crate::storage::DEFAULT_STORAGE_SIZE_GB);
+            .unwrap_or(crate::storage::DEFAULT_STORAGE_SIZE_GIB);
         let overlay_size_gb = resources
             .overlay_gb
-            .unwrap_or(crate::storage::DEFAULT_OVERLAY_SIZE_GB);
+            .unwrap_or(crate::storage::DEFAULT_OVERLAY_SIZE_GIB);
 
         // Fork child process using the safe abstraction.
         // The child becomes a session leader (detached from parent's session)
@@ -880,6 +895,10 @@ impl AgentManager {
             ) {
                 Ok(d) => d,
                 Err(e) => {
+                    let _ = std::fs::write(
+                        &self.startup_error_log,
+                        format!("failed to open storage disk: {}", e),
+                    );
                     eprintln!("failed to open storage disk: {}", e);
                     process::exit_child(1);
                 }
@@ -892,6 +911,10 @@ impl AgentManager {
             ) {
                 Ok(d) => d,
                 Err(e) => {
+                    let _ = std::fs::write(
+                        &self.startup_error_log,
+                        format!("failed to open overlay disk: {}", e),
+                    );
                     eprintln!("failed to open overlay disk: {}", e);
                     process::exit_child(1);
                 }
@@ -924,15 +947,11 @@ impl AgentManager {
                 resources,
             );
 
-            // If we get here, something went wrong — log to file since stderr is /dev/null
+            // If we get here, something went wrong (stderr is /dev/null,
+            // but the error is also logged to agent-startup-error.log)
             if let Err(ref e) = result {
-                let err_log = rootfs_path.parent().unwrap_or(std::path::Path::new("/tmp")).join("launch-error.log");
-                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&err_log) {
-                    use std::io::Write;
-                    let _ = writeln!(f, "launch_agent_vm failed: {}", e);
-                }
+                let _ = std::fs::write(&self.startup_error_log, e.to_string());
             }
-            let _ = result;
 
             process::exit_child(1);
         }) {
@@ -981,6 +1000,7 @@ impl AgentManager {
                 let mut inner = self.inner.lock();
                 inner.state = AgentState::Stopped;
                 inner.child = None;
+                let _ = std::fs::remove_file(&self.startup_error_log);
                 Err(e)
             }
         }
@@ -1160,9 +1180,16 @@ impl AgentManager {
                 let mut inner = self.inner.lock();
                 if let Some(ref mut child) = inner.child {
                     if !child.is_running() {
+                        let reason = std::fs::read_to_string(&self.startup_error_log)
+                            .ok()
+                            .map(|content| content.trim().to_string())
+                            .filter(|content| !content.is_empty());
+
                         return Err(Error::agent(
                             "monitor agent",
-                            "agent process exited during startup",
+                            reason.unwrap_or_else(|| {
+                                "agent process exited during startup".to_string()
+                            }),
                         ));
                     }
                 }

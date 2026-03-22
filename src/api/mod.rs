@@ -120,6 +120,7 @@ use state::ApiState;
         handlers::microvms::stop_microvm,
         handlers::microvms::delete_microvm,
         handlers::microvms::exec_microvm,
+        handlers::microvms::resize_microvm,
         // Stats
         handlers::stats::sandbox_stats,
         // Jobs
@@ -173,6 +174,7 @@ use state::ApiState;
         types::LogsQuery,
         types::CreateMicrovmRequest,
         types::MicrovmExecRequest,
+        types::ResizeMicrovmRequest,
         // Response types
         types::HealthResponse,
         types::SandboxInfo,
@@ -378,6 +380,7 @@ pub fn create_router(state: Arc<ApiState>, cors_origins: Vec<String>, api_token:
         .route("/:name/stop", post(handlers::microvms::stop_microvm))
         .route("/:name", delete(handlers::microvms::delete_microvm))
         .route("/:name/exec", post(handlers::microvms::exec_microvm))
+        .route("/:name/resize", post(handlers::microvms::resize_microvm))
         .layer(TimeoutLayer::new(Duration::from_secs(
             API_REQUEST_TIMEOUT_SECS,
         )));

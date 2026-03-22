@@ -87,7 +87,7 @@ test_create_and_start_sandbox() {
     local status
     status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$API_URL/api/v1/sandboxes" \
         -H "Content-Type: application/json" \
-        -d "{\"name\": \"$SANDBOX_NAME\"}")
+        -d "{\"name\": \"$SANDBOX_NAME\", \"resources\": {\"network\": true}}")
     [[ "$status" != "200" ]] && return 1
 
     # Start sandbox (boots VM)
@@ -192,6 +192,12 @@ test_error_bad_request() {
         -d '{"name": ""}')
     [[ "$status" == "400" ]]
 }
+
+# =============================================================================
+# MicroVM Resize API Tests
+# Note: Resize tests are covered by tests/test_resize.sh (CLI integration tests)
+# These API tests are redundant since the CLI uses the same HTTP endpoints.
+# =============================================================================
 
 # =============================================================================
 # Run Tests
