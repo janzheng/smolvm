@@ -98,6 +98,8 @@ use state::ApiState;
         handlers::snapshots::delete_snapshot,
         handlers::snapshots::download_snapshot,
         handlers::snapshots::upload_snapshot,
+        handlers::snapshots::snapshot_history,
+        handlers::snapshots::snapshot_rollback,
         // Execution
         handlers::exec::exec_command,
         handlers::exec::run_command,
@@ -263,7 +265,7 @@ const API_REQUEST_TIMEOUT_SECS: u64 = 300;
 ///
 /// `cors_origins` specifies allowed CORS origins. If empty, defaults to
 /// localhost:8080 and localhost:3000 (both http and 127.0.0.1 variants).
-pub fn create_router(state: Arc<ApiState>, cors_origins: Vec<String>, api_token: Option<String>) -> Router {
+pub fn create_router(state: Arc<ApiState>, cors_origins: Vec<String>, api_token: Option<String>, web_ui_dir: Option<std::path::PathBuf>) -> Router {
     // Health check and metrics routes
     let health_route = Router::new()
         .route("/health", get(handlers::health::health))
@@ -394,6 +396,8 @@ pub fn create_router(state: Arc<ApiState>, cors_origins: Vec<String>, api_token:
     let snapshot_routes_with_timeout = Router::new()
         .route("/", get(handlers::snapshots::list_snapshots))
         .route("/:name/pull", post(handlers::snapshots::pull_snapshot))
+        .route("/:name/history", get(handlers::snapshots::snapshot_history))
+        .route("/:name/rollback", post(handlers::snapshots::snapshot_rollback))
         .route("/:name", delete(handlers::snapshots::delete_snapshot))
         .layer(TimeoutLayer::new(Duration::from_secs(
             API_REQUEST_TIMEOUT_SECS,
@@ -523,11 +527,20 @@ pub fn create_router(state: Arc<ApiState>, cors_origins: Vec<String>, api_token:
     let request_id_layer = axum::middleware::from_fn(request_id_middleware);
 
     // Combine all routes
-    Router::new()
+    let mut app = Router::new()
         .merge(health_route)
         .nest("/api/v1", api_v1)
-        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
-        .layer(request_id_layer)
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()));
+
+    // Serve web dashboard as fallback (API routes take priority)
+    if let Some(web_dir) = web_ui_dir {
+        use tower_http::services::ServeDir;
+        let serve_dir = ServeDir::new(&web_dir)
+            .append_index_html_on_directories(true);
+        app = app.fallback_service(serve_dir);
+    }
+
+    app.layer(request_id_layer)
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(state)

@@ -241,6 +241,172 @@ pkill -f "smolvm-bin microvm start"
 ps aux | grep smolvm
 ```
 
+---
+
+## smolvm-plus extensions
+
+This fork ([janzheng/smolvm](https://github.com/janzheng/smolvm), branch `smolvm-plus`) adds experimental agent infrastructure on top of upstream smolvm. Synced with upstream v0.1.19.
+
+### HTTP API server
+
+OpenAPI-documented REST API with 30+ endpoints. Start with `smolvm serve start`.
+
+- **Sandbox CRUD** — create, start, stop, delete, list, clone, diff, merge
+- **Exec** — REST exec, WebSocket streaming, interactive terminal (bidirectional stdin/stdout/stderr)
+- **File CRUD** — read, write, delete, list, multipart upload, tar archive download
+- **Snapshots** — push/pull VM state, streaming upload/download for remote transfer
+- **Jobs** — async work queue with priority, retry, dead letter
+- **MCP** — tool discovery + tool calling via shell-based MCP servers (filesystem, exec, git — 18 tools)
+- **Permissions** — RBAC (owner/operator/read-only) with grant/revoke API
+- **Secrets** — secure configuration with rotation support
+- **Metrics** — Prometheus endpoint
+- **Provider** — backend info + health
+- **OpenAPI/Swagger UI** — auto-generated docs at `/swagger-ui`
+
+### CLI (smolctl)
+
+Full-featured CLI wrapping the API. Written in TypeScript (Deno).
+
+```bash
+# sandbox lifecycle
+smolctl up my-sandbox --network --starter node-deno
+smolctl sh my-sandbox                    # interactive shell
+smolctl exec my-sandbox -- node -e "console.log('hi')"
+smolctl down my-sandbox
+
+# file operations
+smolctl files ls my-sandbox /workspace
+smolctl cp ./local-file my-sandbox:/workspace/
+smolctl sync push ./src my-sandbox --exclude node_modules
+
+# git-based workspace merging
+smolctl fleet fanout base-vm 4           # clone 4 copies, each on own branch
+smolctl fleet exec "vm-*" -- make test   # run tests in all
+smolctl fleet gather "vm-*" --into base  # three-way merge all forks back
+
+# portable snapshots
+smolctl snapshot push my-sandbox --desc "checkpoint"
+smolctl snapshot pull my-snapshot new-sandbox
+smolctl snapshot merge my-snapshot target-sandbox
+smolctl snapshot upload my-snapshot       # push to remote server
+smolctl snapshot download my-snapshot     # pull from remote server
+
+# workspace export (lightweight, ~14KB vs ~100MB)
+smolctl snapshot export-workspace my-sandbox ./workspace.tar.gz
+smolctl snapshot import-workspace ./workspace.tar.gz target-sandbox
+smolctl snapshot to-docker my-sandbox     # generate Dockerfile
+
+# MCP servers
+smolctl up my-sandbox --with-mcp         # auto-install MCP servers
+smolctl mcp tools my-sandbox             # discover 18 tools
+smolctl mcp call my-sandbox filesystem read_file '{"path":"/etc/hostname"}'
+
+# agent workflows
+smolctl agent run my-sandbox "build a REST API"
+smolctl agent worker my-sandbox --reuse --max-jobs 10
+
+# multi-provider
+smolctl provider add cloud https://my-vps:8080 --token secret
+smolctl --provider cloud snapshot ls
+```
+
+### secret proxy
+
+Host-side API key injection via vsock. Real keys never enter the VM.
+
+- Guest hits `127.0.0.1:9800/anthropic` → vsock → host proxy injects real API key → forwards to Anthropic
+- Supports: Anthropic, OpenAI, Google + custom services via TOML config
+- Env var stripping: real keys removed from sandbox environment
+- Rotation without restart via `PUT /api/v1/secrets`
+
+### portable snapshots
+
+Self-contained `.smolvm` archives that move between machines.
+
+- **Push/pull** — snapshot VM state with git metadata, SHA-256 integrity
+- **Lineage tracking** — parent→child chains across snapshots
+- **Merge** — three-way git merge between snapshots and running VMs
+- **Remote transfer** — streaming upload/download between smolvm servers
+- **Workspace export** — lightweight tar.gz of just `/storage/workspace` (~14KB vs ~100MB)
+- **Docker interop** — `to-docker` generates Dockerfile with detected packages
+
+### web dashboard
+
+Browser-based dashboard at `web-ui/`. Dark theme, ghostty-web terminal.
+
+- Sandbox list with live status (running/stopped)
+- Create, start, stop, delete sandboxes
+- Interactive terminal via WebSocket (bidirectional, full TTY)
+- ghostty-web (WASM) terminal with WebGL rendering
+
+### provider abstraction
+
+Swap between local and remote smolvm backends.
+
+- `SandboxProvider` trait: local, remote HTTP, future cloud adapters
+- `~/.smolvm/providers.json` config
+- CLI `--provider` flag routes commands to any backend
+
+### git-based workspace merging
+
+Per-VM isolated storage with git as the merge engine.
+
+- Each VM gets its own ext4 disk at `/dev/vda`, mounted at `/storage/workspace`
+- `clone` creates CoW copy with isolated branch
+- `fleet fanout` clones N copies for parallel work
+- `fleet gather` merges all forks back via three-way merge
+- Git bundle transfer between VMs (no shared filesystem needed)
+
+### starter templates
+
+Pre-configured sandbox profiles with init commands.
+
+- 4 built-in starters: `claude-code`, `node-deno`, `python-ml`, `universal`
+- `smolctl starter init/build/validate/export/import` for custom starters
+- Init commands run on create (install runtimes, clone repos, etc.)
+
+### auth & security
+
+- PKCE OAuth flow (`smolctl auth login`)
+- Bearer token API auth with constant-time comparison
+- Sandbox RBAC (owner/operator/read-only)
+- DNS-based egress filtering
+- Fork bomb protection (RLIMIT_NPROC)
+- Code signing (HMAC-SHA256) for artifact verification
+- Audit trail for secret access
+
+### observability
+
+- Prometheus metrics (`/metrics`)
+- Structured JSON logging (`--json-log`)
+- Request correlation (`X-Request-Id`)
+- Event log (`~/.smolvm/events.ndjson`)
+- Session recording + replay
+
+### playtest suite
+
+71 automated tests across 19 scenarios. Run with:
+
+```bash
+SMOLCTL="deno run -A cli/smolctl.ts" bash playtests/e2e-playtest.sh
+```
+
+### SDKs
+
+- **TypeScript** (`sdk-ts/`) — full API coverage
+- **Python** (`sdk-py/`) — full API coverage
+
+### build from source
+
+```bash
+# build (macOS)
+LIBKRUN_BUNDLE=~/.smolvm/lib cargo build --release
+codesign --force --sign - --entitlements smolvm.entitlements target/release/smolvm
+
+# run
+DYLD_LIBRARY_PATH=~/.smolvm/lib:/opt/homebrew/lib target/release/smolvm serve start
+```
+
 ## license
 
 Apache-2.0

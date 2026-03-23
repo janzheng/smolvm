@@ -855,6 +855,11 @@ pub struct ListStartersResponse {
 // Snapshot Types
 // ============================================================================
 
+/// Default snapshot version (full archive).
+fn default_snapshot_version() -> u32 {
+    1
+}
+
 /// Snapshot manifest metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SnapshotManifest {
@@ -891,6 +896,24 @@ pub struct SnapshotManifest {
     /// SHA-256 hash of the archive file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
+    /// Snapshot format version: 1 = full archive, 2 = incremental delta.
+    #[serde(default = "default_snapshot_version")]
+    pub snapshot_version: u32,
+    /// SHA-256 of the parent archive (for delta validation).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_sha256: Option<String>,
+    /// Block size used for delta computation (default: 4096).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_size: Option<u32>,
+    /// Number of changed overlay blocks in this delta.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay_changed_blocks: Option<u64>,
+    /// Number of changed storage blocks in this delta.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage_changed_blocks: Option<u64>,
+    /// Sequence number within a sandbox's snapshot history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sequence: Option<u32>,
 }
 
 /// List snapshots response.
@@ -917,6 +940,9 @@ pub struct PushSnapshotRequest {
     /// Parent snapshot name (for lineage tracking).
     #[serde(default)]
     pub parent_snapshot: Option<String>,
+    /// Request incremental (delta) snapshot if parent is available.
+    #[serde(default)]
+    pub incremental: Option<bool>,
 }
 
 /// Response from pushing a snapshot.
@@ -947,6 +973,51 @@ pub struct UploadSnapshotResponse {
     pub size_bytes: u64,
     /// Manifest metadata extracted from the archive.
     pub manifest: SnapshotManifest,
+}
+
+/// Response from snapshot history endpoint.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SnapshotHistoryResponse {
+    /// Chain of snapshots, newest first.
+    pub chain: Vec<SnapshotManifest>,
+    /// Total number of snapshots in the chain.
+    pub total_snapshots: usize,
+    /// Number of full snapshots in the chain.
+    pub full_snapshots: usize,
+    /// Number of incremental snapshots in the chain.
+    pub incremental_snapshots: usize,
+    /// Total size of all archives in bytes.
+    pub total_size_bytes: u64,
+}
+
+/// Request to rollback a sandbox to a specific snapshot version.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct RollbackRequest {
+    /// Name of the sandbox to restore into.
+    #[schema(example = "my-sandbox")]
+    pub sandbox_name: String,
+    /// Specific version number to rollback to (latest if omitted).
+    #[serde(default)]
+    pub version: Option<u32>,
+}
+
+/// Response from rollback endpoint.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RollbackResponse {
+    /// Sandbox that was restored.
+    pub sandbox_name: String,
+    /// Snapshot version that was restored.
+    pub restored_version: u32,
+    /// Manifest of the restored snapshot.
+    pub manifest: SnapshotManifest,
+}
+
+/// Request to squash a snapshot chain into a single full archive.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct SquashSnapshotRequest {
+    /// Keep the original versioned archives after squashing (default: false).
+    #[serde(default)]
+    pub keep_originals: Option<bool>,
 }
 
 // ============================================================================

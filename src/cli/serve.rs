@@ -92,6 +92,12 @@ pub struct ServeStartCmd {
     /// Custom services are merged with built-in definitions (anthropic, openai, google).
     #[arg(long = "services-config", value_name = "PATH")]
     services_config: Option<String>,
+
+    /// Path to the web dashboard directory (containing index.html).
+    /// Auto-detected relative to the binary if not specified.
+    /// Set to "none" to disable the web dashboard.
+    #[arg(long = "web-ui", value_name = "PATH")]
+    web_ui: Option<String>,
 }
 
 impl ServeStartCmd {
@@ -217,8 +223,43 @@ impl ServeStartCmd {
             supervisor.run().await;
         });
 
+        // Resolve web-ui directory
+        let web_ui_dir = match self.web_ui.as_deref() {
+            Some("none") => None,
+            Some(path) => {
+                let p = std::path::PathBuf::from(path);
+                if p.join("index.html").exists() {
+                    Some(p)
+                } else {
+                    tracing::warn!(path = %p.display(), "web-ui dir missing index.html, disabling");
+                    None
+                }
+            }
+            None => {
+                // Auto-detect: check relative to executable, then CWD
+                let candidates = [
+                    std::env::current_exe()
+                        .ok()
+                        .and_then(|p| p.parent().map(|d| d.join("web-ui"))),
+                    std::env::current_exe()
+                        .ok()
+                        .and_then(|p| p.parent().map(|d| d.join("../web-ui"))),
+                    Some(std::path::PathBuf::from("web-ui")),
+                ];
+                candidates
+                    .into_iter()
+                    .flatten()
+                    .find(|p| p.join("index.html").exists())
+            }
+        };
+
+        if let Some(ref dir) = web_ui_dir {
+            tracing::info!(path = %dir.display(), "serving web dashboard");
+            println!("Web dashboard at http://{}/", addr);
+        }
+
         // Create router
-        let app = smolvm::api::create_router(state, self.cors_origins, api_token);
+        let app = smolvm::api::create_router(state, self.cors_origins, api_token, web_ui_dir);
 
         // Create listener
         let listener = tokio::net::TcpListener::bind(addr)

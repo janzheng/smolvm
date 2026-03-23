@@ -1,6 +1,7 @@
 //! HTTP request handlers.
 
 pub mod containers;
+pub mod delta;
 pub mod exec;
 pub mod files;
 pub mod health;

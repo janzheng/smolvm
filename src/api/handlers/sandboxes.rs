@@ -601,6 +601,22 @@ pub async fn delete_sandbox(
     // Now remove from registry and database
     state.remove_sandbox(&id)?;
 
+    // Clean up VM disk files (overlay, storage, sockets) from cache directory.
+    // Without this, each deleted sandbox leaks ~30GB of disk files.
+    let data_dir = vm_data_dir(&id);
+    if data_dir.exists() {
+        if let Err(e) = std::fs::remove_dir_all(&data_dir) {
+            tracing::warn!(
+                sandbox = %id,
+                path = %data_dir.display(),
+                error = %e,
+                "failed to clean up VM data directory"
+            );
+        } else {
+            tracing::info!(sandbox = %id, "cleaned up VM data directory");
+        }
+    }
+
     crate::api::metrics::record_sandbox_deleted();
     Ok(Json(DeleteResponse { deleted: id }))
 }
