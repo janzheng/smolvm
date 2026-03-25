@@ -86,7 +86,7 @@ Custom kernel: [libkrunfw](https://github.com/smol-machines/libkrunfw)
 
 ## known limitations
 
-- **Network is opt-in**: `--net` enables outbound networking. TCP/UDP only — no ICMP.
+- **Network is opt-in for sandboxes**: `--net` enables outbound networking for `sandbox run` and `sandbox create`. The default microVM (`smolvm microvm start`) has networking enabled for ease of use. TCP/UDP only — no ICMP.
 - **Volume mounts**: Directories only (no single files)
 - **macOS**: Binary must be signed with Hypervisor.framework entitlements
 

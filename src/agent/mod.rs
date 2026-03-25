@@ -74,7 +74,7 @@ impl Default for VmResources {
         Self {
             cpus: DEFAULT_CPUS,
             mem: DEFAULT_MEMORY_MIB,
-            network: false,
+            network: true,
             storage_gb: None,
             overlay_gb: None,
         }
