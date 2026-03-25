@@ -1,110 +1,79 @@
-# smolVM
+# smolvm
 
-Run microVMs locally to sandbox workloads.
+Local microVMs. Hardware isolation. Single binary.
 
-> **Alpha** - APIs can change, there may be bugs. [Report issues](https://github.com/smol-machines/smolvm/issues)
+> **Alpha** — APIs can change. [Report issues](https://github.com/smol-machines/smolvm/issues)
 
-## install + usage
+## install
+
+Download from [GitHub Releases](https://github.com/smol-machines/smolvm/releases), or:
 
 ```bash
-# install (macOS only, Linux coming soon)
 curl -sSL https://smolmachines.com/install.sh | bash
+```
 
-# sandbox - ephemeral isolated environments
-smolvm sandbox run --net alpine:latest -- echo "hello"
-smolvm sandbox run --net -v /tmp:/workspace alpine:latest -- ls /workspace
+## usage
 
+```bash
+# sandbox — ephemeral isolated environments
+smolvm sandbox run --net alpine -- echo "hello"
 smolvm sandbox run --net python:3.12-alpine -- python -V
+smolvm sandbox run --net -v ./src:/workspace alpine -- ls /workspace  # explicit mount
 
-# microvm - persistent linux VMs
-smolvm microvm start
-smolvm microvm exec -- apk add git  # changes persist across reboots
-smolvm microvm exec -- echo "hello"
-smolvm microvm exec -it -- /bin/sh   # interactive shell (exit with Ctrl+D)
-smolvm microvm stop
+# microvm — persistent Linux VMs
+smolvm microvm create --net myvm
+smolvm microvm start myvm
+smolvm microvm exec --name myvm -- apk add git
+smolvm microvm exec --name myvm -it -- /bin/sh
+smolvm microvm stop myvm
 
-# resize disk resources (VM must be stopped first)
-smolvm microvm resize --storage 50           # expand storage to 50 GiB
-smolvm microvm resize --overlay 20           # expand overlay to 20 GiB
-smolvm microvm resize my-vm --storage 100 --overlay 50
-# Disk changes apply immediately; filesystem expands on next boot
+# smolfile — declarative VM configuration
+smolvm sandbox run -d -s my-app.smolfile alpine
+smolvm microvm create myvm -s my-app.smolfile
 
-# pack - build a portable, executable virtual machine.
-smolvm pack create alpine:latest -o ./my-sandbox        # creates ./my-sandbox + ./my-sandbox.smolmachine
-smolvm pack create alpine:latest -o ./my-sandbox --single-file  # single executable, no sidecar
-
-./my-sandbox uname -a # this will return results of running sys info within the guest linux vm
-
-smolvm pack create python:3.12-alpine -o ./my-pythonvm
-./my-pythonvm python3 -c "import sys; print(sys.version)"
-
-# uninstall
-curl -sSL https://smolmachines.com/install.sh | bash -s -- --uninstall
+# pack — portable, executable virtual machine
+smolvm pack create alpine -o ./my-sandbox
+./my-sandbox echo "hello"
 ```
 
 ## about
 
-microVMs are lightweight VMs - security and isolation of VMs with the speed of containers.
+smolvm runs Linux microVMs on your machine. No daemon, no Docker, no cloud account.
 
-They power AWS Lambda and Fly.io, but are inaccessible to average developers due to setup complexity.
-
-smolVM makes microVMs easy: <200ms boot, works on macOS and Linux, single binary distribution.
-
-## use this for
-
-- run coding agents locally and safely
-- run microVMs locally on macOS and Linux with minimal setup
-- run containers within microvm for improved isolation
-- distribute self-contained sandboxed applications
-
-## demo: run OpenAI Codex in a sandbox
-
-```bash
-# create a persistent microVM with networking
-smolvm microvm create codex-sandbox --net --cpus 2 --mem 1024
-smolvm microvm start codex-sandbox
-
-# install Node.js + Codex CLI
-smolvm microvm exec --name codex-sandbox -- sh -c "apk add nodejs npm && npm i -g @openai/codex"
-
-# login (pipe your API key)
-smolvm microvm exec --name codex-sandbox -- sh -c "echo $OPENAI_API_KEY | codex login --with-api-key"
-
-# run Codex interactively — fully isolated in a microVM
-smolvm microvm exec --name codex-sandbox -it -- codex
-```
+A microVM is a lightweight VM — hardware-level isolation with <200ms boot. Your host filesystem, network, and credentials are separated from the workload unless explicitly shared.
 
 ## comparison
 
-|                     | Containers | QEMU | Firecracker | Kata | smolvm |
-|---------------------|------------|------|-------------|------|--------|
-| kernel isolation    | shared ¹   | separate | separate | separate | separate |
-| boot time           | ~100ms ²   | ~15-30s ³ | <125ms ⁴ | ~500ms ⁵ | <200ms |
-| setup               | easy       | complex | complex | complex | easy |
-| macOS               | via Docker | yes | no ⁶ | no ⁷ | yes |
-| guest rootfs        | layered    | disk image | DIY ⁸ | bundled + DIY | bundled |
-| embeddable          | no         | no | no | no | yes |
-| distribution        | daemon+CLI ⁹ | multiple | binary+rootfs | runtime stack ¹⁰ | single binary |
+|                     | Containers | Colima + krunkit | QEMU | Firecracker | Kata | smolvm |
+|---------------------|------------|-----------------|------|-------------|------|--------|
+| isolation           | namespace (shared kernel) [\[1\]](#references) | namespace (inside 1 VM) | separate VM | separate VM | VM per container [\[2\]](#references) | VM per workload |
+| boot time           | ~100ms [\[3\]](#references) | ~seconds (1 VM) | ~15-30s [\[4\]](#references) | <125ms [\[5\]](#references) | ~500ms [\[6\]](#references) | <200ms |
+| architecture        | daemon | daemon (containerd in VM) | process | process | runtime stack [\[7\]](#references) | library (libkrun) |
+| per-workload VMs    | no | no (shared VM) | yes | yes | yes | yes |
+| macOS               | via Docker VM | yes (krunkit) | yes | no [\[8\]](#references) | no [\[9\]](#references) | yes |
+| embeddable (SDK)    | no | no | no | no | no | yes |
+| portable artifacts  | images (need daemon) | no | no | no | no | `.smolmachine` |
 
 <details>
-<summary>References</summary>
+<summary id="references">References</summary>
 
 1. [Container isolation](https://www.docker.com/blog/understanding-docker-container-escapes/)
-2. [containerd benchmark](https://github.com/containerd/containerd/issues/4482)
-3. [QEMU boot time](https://wiki.qemu.org/Features/TCG)
-4. [Firecracker website](https://firecracker-microvm.github.io/)
-5. [Kata boot time](https://github.com/kata-containers/kata-containers/issues/4292)
-6. [Firecracker requires KVM](https://github.com/firecracker-microvm/firecracker/blob/main/docs/getting-started.md)
-7. [Kata macOS support](https://github.com/kata-containers/kata-containers/issues/243)
-8. [Firecracker rootfs setup](https://github.com/firecracker-microvm/firecracker/blob/main/docs/rootfs-and-kernel-setup.md)
-9. [Docker daemon docs](https://docs.docker.com/config/daemon/)
-10. [Kata installation](https://github.com/kata-containers/kata-containers/blob/main/docs/install/README.md)
+2. [Kata Containers](https://katacontainers.io/)
+3. [containerd benchmark](https://github.com/containerd/containerd/issues/4482)
+4. [QEMU boot time](https://wiki.qemu.org/Features/TCG)
+5. [Firecracker website](https://firecracker-microvm.github.io/)
+6. [Kata boot time](https://github.com/kata-containers/kata-containers/issues/4292)
+7. [Kata installation](https://github.com/kata-containers/kata-containers/blob/main/docs/install/README.md)
+8. [Firecracker requires KVM](https://github.com/firecracker-microvm/firecracker/blob/main/docs/getting-started.md)
+9. [Kata macOS support](https://github.com/kata-containers/kata-containers/issues/243)
 
 </details>
 
 ## how it works
 
-[libkrun](https://github.com/containers/libkrun) VMM + Hypervisor.framework (macOS) / KVM (Linux) + crun container runtime.
+[libkrun](https://github.com/containers/libkrun) VMM + Hypervisor.framework (macOS) / KVM (Linux) + crun container runtime. No daemon — the VMM is a library.
+
+Custom kernel: [libkrunfw](https://github.com/smol-machines/libkrunfw)
 
 ## platform support
 
@@ -117,129 +86,13 @@ smolvm microvm exec --name codex-sandbox -it -- codex
 
 ## known limitations
 
-- **Network is opt-in**: Use `--net` to enable outbound network access (required for image pulls from registries). TCP/UDP only — ICMP (`ping`) and raw sockets do not work.
+- **Network is opt-in**: `--net` enables outbound networking. TCP/UDP only — no ICMP.
 - **Volume mounts**: Directories only (no single files)
 - **macOS**: Binary must be signed with Hypervisor.framework entitlements
 
 ## development
 
-**Prerequisites (for building from source):**
-- Rust toolchain
-- [git-lfs](https://git-lfs.com) (required for library binaries)
-- Docker (for cross-compiling the agent)
-- e2fsprogs (for storage template creation; `mkfs.ext4`)
-- LLVM (macOS only, for building libkrun: `brew install llvm`)
-- [cargo-make](https://github.com/sagiegurari/cargo-make): `cargo install cargo-make`
-
-### Quick Start (Local Development)
-
-We use [`cargo-make`](https://github.com/sagiegurari/cargo-make) to orchestrate build tasks:
-
-```bash
-# Install cargo-make (one-time)
-cargo install cargo-make
-
-# View all available tasks
-cargo make --list-all-steps
-
-# Build and codesign (macOS) - binary ready at ./target/release/smolvm
-cargo make dev
-
-# Run smolvm with environment variables set up automatically
-cargo make smolvm --version
-cargo make smolvm sandbox run --net alpine:latest -- echo hello
-cargo make smolvm microvm ls
-
-# Or run the binary directly with environment variables:
-DYLD_LIBRARY_PATH="./lib" SMOLVM_AGENT_ROOTFS="./target/agent-rootfs" ./target/release/smolvm <command>
-```
-
-**How it works:**
-- `cargo make dev` → builds + codesigns (macOS only), binary ready at `./target/release/smolvm`
-- `cargo make smolvm <args>` → runs smolvm with `DYLD_LIBRARY_PATH` and `SMOLVM_AGENT_ROOTFS` set up
-- On macOS, binary is automatically signed with hypervisor entitlements
-
-### Building Distribution Packages
-
-```bash
-# Build distribution package
-cargo make dist
-
-# Build using local libkrun changes from ../libkrun
-./scripts/build-dist.sh --with-local-libkrun
-```
-
-### Running Tests
-
-```bash
-# Run all tests
-cargo make test
-
-# Run specific test suites
-cargo make test-cli        # CLI tests only
-cargo make test-sandbox    # Sandbox tests only
-cargo make test-microvm    # MicroVM tests only
-cargo make test-pack       # Pack tests only
-cargo make test-lib        # Unit tests (no VM required)
-```
-
-### Agent Rootfs Development
-
-The agent rootfs resolution order is:
-1. `SMOLVM_AGENT_ROOTFS` env var (explicit override)
-2. `./target/agent-rootfs` (local development)
-3. Platform data directory (`~/.local/share/smolvm/` on Linux, `~/Library/Application Support/smolvm/` on macOS)
-
-```bash
-# Build agent for Linux (size-optimized)
-cargo make build-agent
-
-# Build agent rootfs
-cargo make agent-rootfs
-
-# Rebuild agent and update rootfs
-cargo make agent-rebuild
-```
-
-### Code Quality
-
-```bash
-# Run clippy and fmt checks
-cargo make lint
-
-# Auto-fix linting issues
-cargo make fix-lints
-```
-
-### Other Useful Tasks
-
-```bash
-# Install locally from dist package
-cargo make install
-```
-
-### Distribution Scripts
-
-The `cargo make dist` task wraps `scripts/build-dist.sh`. Other scripts you can run directly:
-
-```bash
-./scripts/build-dist.sh
-./scripts/build-agent-rootfs.sh
-./scripts/install-local.sh
-```
-
-### troubleshooting tests
-
-**Database lock errors** ("Database already open"):
-```bash
-pkill -f "smolvm serve"
-pkill -f "smolvm-bin microvm start"
-```
-
-**Hung tests**: Check for stuck VM processes:
-```bash
-ps aux | grep smolvm
-```
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## license
 

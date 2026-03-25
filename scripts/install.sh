@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # smolvm installer
 #
+# CANONICAL SOURCE: scripts/install.sh in the smolvm repo
+# The website copy at smolmachines/docs/public/install.sh must be kept in sync.
+# After editing this file, copy it to smolmachines/docs/public/install.sh
+#
 # Usage:
 #   curl -sSL https://smolmachines.com/install.sh | bash
 #   curl -sSL https://smolmachines.com/install.sh | bash -s -- --version 0.1.1
@@ -298,13 +302,47 @@ install_smolvm() {
         exit 1
     fi
 
+    # Safety: refuse to install to system directories
+    case "$prefix" in
+        /|/usr|/usr/*|/bin|/sbin|/lib|/lib64|/etc|/var|/opt|/tmp|/System|/System/*|/Library|/Library/*)
+            error "Refusing to install to system directory: $prefix"
+            error "Use a user-writable directory like ~/.smolvm (the default)"
+            rm -rf "$tmp_dir"
+            exit 1
+            ;;
+    esac
+
+    # Safety: warn if installing outside home directory
+    if [[ "$prefix" != "$HOME"* ]] && [[ "$prefix" != /tmp/* ]]; then
+        warn "Installing outside of home directory: $prefix"
+        warn "This will remove $prefix/lib/ and $prefix/smolvm if they exist."
+        if [ -t 0 ]; then
+            printf "Continue? [y/N] "
+            read -r REPLY
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                error "Aborted."
+                rm -rf "$tmp_dir"
+                exit 1
+            fi
+        else
+            error "Non-interactive install to non-home path. Aborting for safety."
+            error "Use --prefix with a path under \$HOME, or run interactively."
+            rm -rf "$tmp_dir"
+            exit 1
+        fi
+    fi
+
     # Create installation directory
     info "Installing to $prefix..."
     mkdir -p "$prefix"
 
-    # Remove old installation if exists
-    if [[ -d "$prefix/lib" ]]; then
+    # Remove old smolvm installation files only (not arbitrary lib/ directories)
+    if [[ -d "$prefix/lib" ]] && [[ -f "$prefix/.version" ]]; then
+        # Only remove lib/ if this looks like an existing smolvm installation
         rm -rf "$prefix/lib"
+    elif [[ -d "$prefix/lib" ]]; then
+        warn "$prefix/lib exists but no .version file found — skipping lib/ removal"
+        warn "If this is a previous smolvm install, remove it manually first"
     fi
     if [[ -f "$prefix/smolvm" ]]; then
         rm -f "$prefix/smolvm"
