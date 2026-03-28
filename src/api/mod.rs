@@ -17,6 +17,7 @@
 
 pub mod auth;
 pub mod dns_filter;
+#[path = "errors.rs"]
 pub mod error;
 pub mod handlers;
 pub mod metrics;

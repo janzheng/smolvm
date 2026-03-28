@@ -26,6 +26,8 @@ use crate::api::validation::validate_command;
 use futures_util::stream::StreamExt;
 use futures_util::sink::SinkExt;
 use smolvm_protocol::AgentResponse;
+use crate::data::consts::BYTES_PER_MIB;
+use crate::data::storage::HostMount;
 use tokio::sync::Semaphore;
 
 use crate::api::state::SandboxEntry;
@@ -177,7 +179,7 @@ pub async fn run_command(
             .iter()
             .enumerate()
             .map(|(i, m)| {
-                let tag = crate::agent::mount_tag(i);
+                let tag = HostMount::mount_tag(i);
                 (tag, m.target.clone(), m.readonly)
             })
             .collect::<Vec<_>>()
@@ -395,7 +397,7 @@ const MAX_READ_CHUNK: u64 = 64 * 1024;
 /// Maximum size of the partial (incomplete) line buffer (1 MiB).
 /// If a log produces data without newlines beyond this limit, the partial
 /// buffer is flushed as-is to prevent unbounded memory growth.
-const MAX_PARTIAL_LINE: usize = 1024 * 1024;
+const MAX_PARTIAL_LINE: usize = BYTES_PER_MIB as usize;
 
 /// Read new content from a file starting at a given position.
 /// Reads at most `MAX_READ_CHUNK` bytes per call.

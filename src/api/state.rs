@@ -4,12 +4,13 @@ use crate::agent::{AgentManager, HostMount, PortMapping, VmResources};
 use crate::api::error::ApiError;
 use crate::api::types::{ExecResponse, JobInfo, JobStatus, McpServerConfig, MountSpec, PortSpec, ResourceSpec, RestartSpec, SandboxInfo, SandboxPermission, SandboxRole};
 use crate::config::{RecordState, RestartConfig, RestartPolicy, VmRecord};
+use crate::data::resources::{DEFAULT_MICROVM_CPU_COUNT, DEFAULT_MICROVM_MEMORY_MIB};
 use crate::db::SmolvmDb;
-use crate::mount::MountBinding;
 use crate::proxy::{ProxyConfig, SecretService};
 use metrics_exporter_prometheus::PrometheusHandle;
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::Arc;
 
 /// Shared API server state.
@@ -544,10 +545,10 @@ impl ApiState {
         // Persist to database (with conflict detection)
         let mut record = VmRecord::new_with_restart(
             name.clone(),
-            reg.resources.cpus.unwrap_or(crate::agent::DEFAULT_CPUS),
+            reg.resources.cpus.unwrap_or(DEFAULT_MICROVM_CPU_COUNT),
             reg.resources
                 .memory_mb
-                .unwrap_or(crate::agent::DEFAULT_MEMORY_MIB),
+                .unwrap_or(DEFAULT_MICROVM_MEMORY_MIB),
             reg.mounts
                 .iter()
                 .map(|m| (m.source.clone(), m.target.clone(), m.readonly))
@@ -949,20 +950,30 @@ impl TryFrom<&MountSpec> for HostMount {
     type Error = crate::Error;
 
     /// Validate and canonicalize a MountSpec into a HostMount.
+    ///
+    /// API mount specs require absolute source paths even though CLI parsing
+    /// allows relative host paths that are canonicalized against the current
+    /// working directory.
     fn try_from(spec: &MountSpec) -> Result<Self, Self::Error> {
-        let binding = MountBinding::try_from(spec)?;
-        Ok(HostMount::from(&binding))
+        let source = Path::new(&spec.source);
+        if !source.is_absolute() {
+            return Err(crate::Error::mount(
+                "validate source",
+                format!("path must be absolute: {}", source.display()),
+            ));
+        }
+
+        HostMount::new(&spec.source, &spec.target, spec.readonly)
     }
 }
 
 impl From<&HostMount> for MountSpec {
     fn from(mount: &HostMount) -> Self {
-        let binding = MountBinding::from_stored(
-            mount.source.to_string_lossy().to_string(),
-            mount.target.to_string_lossy().to_string(),
-            mount.read_only,
-        );
-        MountSpec::from(&binding)
+        MountSpec {
+            source: mount.source.to_string_lossy().to_string(),
+            target: mount.target.to_string_lossy().to_string(),
+            readonly: mount.read_only,
+        }
     }
 }
 
@@ -981,24 +992,24 @@ impl From<&PortMapping> for PortSpec {
     }
 }
 
-/// Convert multiple MountSpecs to MountBindings.
+/// Convert multiple MountSpecs to HostMount values.
 ///
 /// Returns an error if any mount fails validation.
-pub fn mounts_to_bindings(specs: &[MountSpec]) -> Result<Vec<MountBinding>, ApiError> {
+pub fn mounts_to_host_mounts(specs: &[MountSpec]) -> Result<Vec<HostMount>, ApiError> {
     specs
         .iter()
-        .map(|s| MountBinding::try_from(s).map_err(|e| ApiError::BadRequest(e.to_string())))
+        .map(|s| HostMount::try_from(s).map_err(|e| ApiError::BadRequest(e.to_string())))
         .collect()
 }
 
 /// Convert ResourceSpec to VmResources.
 pub fn resource_spec_to_vm_resources(spec: &ResourceSpec, network: bool) -> VmResources {
     VmResources {
-        cpus: spec.cpus.unwrap_or(crate::agent::DEFAULT_CPUS),
-        mem: spec.memory_mb.unwrap_or(crate::agent::DEFAULT_MEMORY_MIB),
+        cpus: spec.cpus.unwrap_or(DEFAULT_MICROVM_CPU_COUNT),
+        memory_mib: spec.memory_mb.unwrap_or(DEFAULT_MICROVM_MEMORY_MIB),
         network,
-        storage_gb: spec.storage_gb,
-        overlay_gb: spec.overlay_gb,
+        storage_gib: spec.storage_gb,
+        overlay_gib: spec.overlay_gb,
         allowed_domains: spec.allowed_domains.clone().unwrap_or_default(),
     }
 }
@@ -1008,10 +1019,10 @@ pub fn vm_resources_to_spec(res: VmResources) -> ResourceSpec {
     let domains = if res.allowed_domains.is_empty() { None } else { Some(res.allowed_domains) };
     ResourceSpec {
         cpus: Some(res.cpus),
-        memory_mb: Some(res.mem),
+        memory_mb: Some(res.memory_mib),
         network: Some(res.network),
-        storage_gb: res.storage_gb,
-        overlay_gb: res.overlay_gb,
+        storage_gb: res.storage_gib,
+        overlay_gb: res.overlay_gib,
         allowed_domains: domains,
     }
 }
@@ -1076,8 +1087,8 @@ mod tests {
             allowed_domains: None,
         };
         let res = resource_spec_to_vm_resources(&spec, false);
-        assert_eq!(res.cpus, crate::agent::DEFAULT_CPUS);
-        assert_eq!(res.mem, crate::agent::DEFAULT_MEMORY_MIB);
+        assert_eq!(res.cpus, DEFAULT_MICROVM_CPU_COUNT);
+        assert_eq!(res.memory_mib, DEFAULT_MICROVM_MEMORY_MIB);
         assert!(!res.network);
 
         // Test with network enabled

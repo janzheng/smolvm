@@ -57,7 +57,7 @@ export interface ResourceSpec {
   network?: boolean;
   /** Storage disk size in GiB (default: 20). */
   storageGb?: number;
-  /** Overlay disk size in GiB (default: 2). */
+  /** Overlay disk size in GiB (default: 10). */
   overlayGb?: number;
 }
 

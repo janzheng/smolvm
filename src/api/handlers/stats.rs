@@ -34,11 +34,11 @@ pub async fn sandbox_stats(
     let (effective_state, pid) = entry.manager.effective_status();
 
     // Get configured resources
-    let cpus = entry.resources.cpus.unwrap_or(crate::agent::DEFAULT_CPUS);
+    let cpus = entry.resources.cpus.unwrap_or(crate::data::resources::DEFAULT_MICROVM_CPU_COUNT);
     let memory_mb = entry
         .resources
         .memory_mb
-        .unwrap_or(crate::agent::DEFAULT_MEMORY_MIB);
+        .unwrap_or(crate::data::resources::DEFAULT_MICROVM_MEMORY_MIB);
 
     // Get disk usage from host-side file sizes
     let data_dir = vm_data_dir(&id);

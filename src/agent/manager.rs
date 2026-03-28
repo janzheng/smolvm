@@ -872,10 +872,10 @@ impl AgentManager {
         let proxy_socket = self.proxy_socket.clone();
         let console_log = self.console_log.clone();
         let storage_size_gb = resources
-            .storage_gb
+            .storage_gib
             .unwrap_or(crate::storage::DEFAULT_STORAGE_SIZE_GIB);
         let overlay_size_gb = resources
-            .overlay_gb
+            .overlay_gib
             .unwrap_or(crate::storage::DEFAULT_OVERLAY_SIZE_GIB);
 
         // Fork child process using the safe abstraction.
