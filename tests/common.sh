@@ -295,6 +295,26 @@ kill_orphan_smolvm_processes() {
     fi
 }
 
+# Wait for a VM's agent to be ready (able to accept exec commands).
+# Usage: wait_for_agent_ready <vm_name> [max_attempts] [sleep_seconds]
+# Returns 0 on success, 1 if the agent never became ready.
+wait_for_agent_ready() {
+    local vm_name="${1:?vm name required}"
+    local max_attempts="${2:-10}"
+    local sleep_secs="${3:-1}"
+
+    local attempt=0
+    while [[ $attempt -lt $max_attempts ]]; do
+        if $SMOLVM microvm exec --name "$vm_name" -- true 2>/dev/null; then
+            return 0
+        fi
+        ((attempt++))
+        sleep "$sleep_secs"
+    done
+    echo "Agent for '$vm_name' not ready after ${max_attempts} attempts" >&2
+    return 1
+}
+
 # Check if any smolvm processes are running that might interfere with tests
 check_smolvm_processes() {
     local procs

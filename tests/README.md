@@ -10,8 +10,10 @@ Integration tests and performance benchmarks for smolvm.
 | `test_sandbox.sh` | Sandbox run tests (exec, env, volumes, TSI) | Yes |
 | `test_microvm.sh` | MicroVM lifecycle tests (start, stop, exec, DB) | Yes |
 | `test_container.sh` | Container lifecycle tests (create, exec, stop) | Yes |
-| `test_api.sh` | HTTP API tests (`smolvm serve`) | Yes |
+| `test_api.sh` | HTTP API tests (`smolvm serve start`) | Yes |
 | `test_pack.sh` | Pack command tests (pack, run, daemon mode) | Yes |
+| `test_smolfile.sh` | Smolfile configuration tests | Yes |
+| `test_resize.sh` | VM resize tests (CPU, memory, disk) | Yes |
 
 ## Benchmarks
 
@@ -75,13 +77,15 @@ cargo test --lib
 - **All other tests**: Require VM environment (macOS Hypervisor.framework or Linux KVM)
 - **Benchmarks**: Require VM environment, best run on a quiet system
 
+These are shell integration tests that run the actual smolvm binary against real micro VMs.
+
 ## Binary Discovery
 
 Tests automatically look for the smolvm binary in:
 
 1. `$SMOLVM` environment variable
-2. `dist/smolvm-*-darwin-*/smolvm` or `dist/smolvm-*-linux-*/smolvm`
-3. `target/release/smolvm`
+2. `target/release/smolvm`
+3. `dist/smolvm-*-darwin-*/smolvm` or `dist/smolvm-*-linux-*/smolvm`
 
 ## Common Utilities
 
@@ -95,15 +99,22 @@ The `common.sh` file provides shared test utilities:
 - `cleanup_microvm` - Stop the default microvm
 - `extract_container_id` - Parse container ID from command output
 - `cleanup_container` - Force remove a container
+- `wait_for_agent_ready` - Wait for VM agent to accept exec commands (up to N attempts, fixes boot race conditions)
+- `run_with_timeout` - Run a command with configurable timeout
+- `kill_orphan_smolvm_processes` - Pre-flight cleanup of stale processes
+- `vm_data_dir` - Get the data directory for a named microvm
+- `ensure_data_dir_deleted` - Verify VM data dir was cleaned up
 
 ## Test Count
 
 | Suite | Tests |
 |-------|-------|
 | CLI | 13 |
-| Sandbox | 17 |
-| MicroVM | 13 |
+| Sandbox | 31 |
+| MicroVM | 24 |
 | Container | 10 |
 | API | 13 |
-| Pack | 25 |
-| **Total** | **91** |
+| Pack | 34 |
+| **Total** | **125** |
+
+_Last updated: 2026-03-28_

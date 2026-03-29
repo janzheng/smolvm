@@ -543,10 +543,11 @@ test_from_vm_run_finds_installed_package() {
         return 1
     fi
 
-    # The packed binary should have curl from the VM snapshot
-    local result
-    result=$(run_with_timeout 60 "$FROM_VM_OUTPUT" which curl 2>&1)
-    local exit_code=$?
+    # The packed binary should have curl from the VM snapshot.
+    # Use "ls /usr/bin/curl" instead of "which curl" because the packed
+    # binary's minimal environment may not have "which" or a full PATH.
+    local result exit_code=0
+    result=$(run_with_timeout 60 "$FROM_VM_OUTPUT" -- ls /usr/bin/curl 2>&1) || exit_code=$?
 
     [[ $exit_code -eq 124 ]] && { echo "TIMEOUT"; return 1; }
     [[ "$result" == *"/usr/bin/curl"* ]]

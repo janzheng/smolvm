@@ -207,7 +207,7 @@ ps aux | grep smolvm
 
 ## smolvm-plus extensions
 
-This fork ([janzheng/smolvm](https://github.com/janzheng/smolvm), branch `smolvm-plus`) adds experimental agent infrastructure on top of upstream smolvm. Synced with upstream v0.1.19.
+This fork ([janzheng/smolvm](https://github.com/janzheng/smolvm), branch `smolvm-plus`) adds experimental agent infrastructure on top of upstream smolvm. Synced with upstream v0.1.21.
 
 ### HTTP API server
 
@@ -329,8 +329,9 @@ Pre-configured sandbox profiles with init commands.
 
 ### auth & security
 
-- PKCE OAuth flow (`smolctl auth login`)
-- Bearer token API auth with constant-time comparison
+- **Claude Code subscription auth**: `smolctl auth login` opens a browser, authenticates via Claude.ai PKCE OAuth, and saves tokens to the project `.env`. No API key needed — uses your Claude subscription. Tokens auto-refresh.
+- **API key auth**: set `ANTHROPIC_API_KEY` in environment or `.env` as an alternative.
+- Bearer token API auth with constant-time comparison (`smolvm serve start --generate-token`)
 - Sandbox RBAC (owner/operator/read-only)
 - DNS-based egress filtering
 - Fork bomb protection (RLIMIT_NPROC)
@@ -347,7 +348,7 @@ Pre-configured sandbox profiles with init commands.
 
 ### playtest suite
 
-71 automated tests across 19 scenarios. Run with:
+73 automated tests across 20 scenarios (including snapshot lifecycle). Run with:
 
 ```bash
 SMOLCTL="deno run -A cli/smolctl.ts" bash playtests/e2e-playtest.sh
@@ -355,18 +356,22 @@ SMOLCTL="deno run -A cli/smolctl.ts" bash playtests/e2e-playtest.sh
 
 ### SDKs
 
-- **TypeScript** (`sdk-ts/`) — full API coverage
-- **Python** (`sdk-py/`) — full API coverage
+- **Node.js embedded** (`sdks/node/smolvm-embedded/`) — native N-API bindings for embedding smolvm
+- **TypeScript** (`../sdk-ts/`) — REST API wrapper (at CX04-smolvm level, not inside smolvm-plus)
+- **Python** (`../sdk-py/`) — REST API wrapper (at CX04-smolvm level, not inside smolvm-plus)
 
 ### build from source
 
 ```bash
-# build (macOS)
+# Preferred: use cargo-make (handles env vars + codesigning)
+cargo install cargo-make  # one-time
+cargo make dev            # build + codesign
+cargo make smolvm serve start  # run with correct DYLD_LIBRARY_PATH
+
+# Or manually (macOS):
 LIBKRUN_BUNDLE=~/.smolvm/lib cargo build --release
 codesign --force --sign - --entitlements smolvm.entitlements target/release/smolvm
-
-# run
-DYLD_LIBRARY_PATH=~/.smolvm/lib:/opt/homebrew/lib target/release/smolvm serve start
+DYLD_LIBRARY_PATH=./lib ./target/release/smolvm serve start
 ```
 
 License

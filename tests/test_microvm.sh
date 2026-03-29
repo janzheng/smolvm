@@ -355,7 +355,12 @@ test_microvm_overlay_root_active() {
     $SMOLVM microvm create "$vm_name" 2>&1 || return 1
     $SMOLVM microvm start "$vm_name" 2>&1 || { $SMOLVM microvm delete "$vm_name" -f 2>/dev/null; return 1; }
 
-    # Check that root is an overlay mount
+    # Wait for agent to be ready before exec
+    wait_for_agent_ready "$vm_name" || { $SMOLVM microvm stop "$vm_name" 2>/dev/null; $SMOLVM microvm delete "$vm_name" -f 2>/dev/null; return 1; }
+
+    # Check that root is a persistent mount (virtiofs or overlay).
+    # Older versions used overlayfs directly; current versions use virtiofs
+    # backed by an overlay disk on the host.
     local output exit_code=0
     output=$($SMOLVM microvm exec --name "$vm_name" -- mount 2>&1) || exit_code=$?
 
@@ -364,7 +369,8 @@ test_microvm_overlay_root_active() {
     $SMOLVM microvm delete "$vm_name" -f 2>/dev/null || true
     ensure_data_dir_deleted "$vm_name"
 
-    [[ $exit_code -eq 0 ]] && [[ "$output" == *"overlay on / type overlay"* ]]
+    # Root should be either overlay or virtiofs (both indicate persistent storage)
+    [[ $exit_code -eq 0 ]] && { [[ "$output" == *"overlay on / type overlay"* ]] || [[ "$output" == *"on / type virtiofs"* ]]; }
 }
 
 test_microvm_rootfs_persists_across_reboot() {
@@ -377,6 +383,9 @@ test_microvm_rootfs_persists_across_reboot() {
     # Create and start VM
     $SMOLVM microvm create "$vm_name" 2>&1 || return 1
     $SMOLVM microvm start "$vm_name" 2>&1 || { $SMOLVM microvm delete "$vm_name" -f 2>/dev/null; return 1; }
+
+    # Wait for agent to be ready before exec
+    wait_for_agent_ready "$vm_name" || { $SMOLVM microvm stop "$vm_name" 2>/dev/null; $SMOLVM microvm delete "$vm_name" -f 2>/dev/null; return 1; }
 
     # Write a marker file to the rootfs
     local exit_code=0
@@ -403,6 +412,9 @@ test_microvm_rootfs_persists_across_reboot() {
     # Stop and restart the VM
     $SMOLVM microvm stop "$vm_name" 2>&1 || { $SMOLVM microvm delete "$vm_name" -f 2>/dev/null; return 1; }
     $SMOLVM microvm start "$vm_name" 2>&1 || { $SMOLVM microvm delete "$vm_name" -f 2>/dev/null; return 1; }
+
+    # Wait for agent to be ready after restart
+    wait_for_agent_ready "$vm_name" || { $SMOLVM microvm stop "$vm_name" 2>/dev/null; $SMOLVM microvm delete "$vm_name" -f 2>/dev/null; return 1; }
 
     # Verify the file survived the reboot
     exit_code=0
@@ -625,7 +637,7 @@ run_test "DB default VM state transitions" test_db_default_vm_state_transitions 
 run_test "Network: disabled by default" test_microvm_network_disabled_by_default || true
 run_test "Network: DNS resolution" test_microvm_network_dns_resolution || true
 run_test "Network: multiple DNS lookups" test_microvm_network_multiple_dns_lookups || true
-run_test "Overlay: root is overlayfs" test_microvm_overlay_root_active || true
+run_test "Overlay: root is persistent (virtiofs/overlay)" test_microvm_overlay_root_active || true
 run_test "Overlay: rootfs persists across reboot" test_microvm_rootfs_persists_across_reboot || true
 run_test "Volume: mount visible to exec" test_microvm_volume_mount_visible_to_exec || true
 run_test "Port: mapping host to guest HTTP" test_microvm_port_mapping_http || true
