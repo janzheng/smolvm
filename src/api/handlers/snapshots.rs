@@ -355,11 +355,29 @@ pub async fn push_sandbox(
         ));
     }
 
-    // Flush filesystem caches so disk images are consistent for snapshot
+    // Flush filesystem caches so disk images are consistent for snapshot.
+    // 1. Guest-side sync: flush FS caches to guest block device
     let _ = try_exec_in_sandbox(
         &entry,
         vec!["sync".into()],
     ).await;
+    // 2. Guest-side: explicitly flush the storage block device
+    let _ = try_exec_in_sandbox(
+        &entry,
+        vec!["sh".into(), "-c".into(), "blockdev --flushbufs /dev/vda 2>/dev/null; sync".into()],
+    ).await;
+    // 3. Host-side: fsync the disk image files to ensure virtio-blk writes
+    //    have been flushed through to the host filesystem
+    if storage_path.exists() {
+        if let Ok(f) = std::fs::File::open(&storage_path) {
+            let _ = f.sync_all();
+        }
+    }
+    if overlay_path.exists() {
+        if let Ok(f) = std::fs::File::open(&overlay_path) {
+            let _ = f.sync_all();
+        }
+    }
 
     // Capture git info (best-effort — works only if sandbox is running with git workspace)
     let git_branch = try_exec_in_sandbox(

@@ -68,15 +68,22 @@ pub async fn read_file(
         .await
         .map_err(classify_ensure_running_error)?;
 
-    let cmd = vec![
+    let escaped_path = file_path.replace('\'', "'\\''");
+
+    // Get file size first to decide strategy.
+    // The agent protocol has a ~64KB stdout buffer limit, so files whose
+    // base64 encoding exceeds ~48KB (i.e. raw files >~36KB) must be read
+    // in chunks via dd + base64 to avoid hanging.
+    let size_cmd = vec![
         "sh".into(),
         "-c".into(),
-        format!("base64 '{}'", file_path.replace('\'', "'\\''")),
+        format!("stat -c %s '{}' 2>/dev/null || stat -f %z '{}'", escaped_path, escaped_path),
     ];
-    let timeout = Some(Duration::from_secs(30));
-
-    let (exit_code, stdout, stderr) =
-        with_sandbox_client(&entry, move |c| c.vm_exec(cmd, vec![], None, timeout)).await?;
+    let (exit_code, size_stdout, stderr) =
+        with_sandbox_client(&entry, move |c| {
+            c.vm_exec(size_cmd, vec![], None, Some(Duration::from_secs(5)))
+        })
+        .await?;
 
     if exit_code != 0 {
         return Err(ApiError::NotFound(format!(
@@ -86,9 +93,83 @@ pub async fn read_file(
         )));
     }
 
-    Ok(Json(ReadFileResponse {
-        content: stdout.trim().to_string(),
-    }))
+    let file_size: u64 = size_stdout
+        .trim()
+        .parse()
+        .unwrap_or(0);
+
+    // Small files (<36KB): single base64 command (output < 48KB, well within agent buffer)
+    let chunk_threshold: u64 = 36 * 1024;
+
+    if file_size <= chunk_threshold {
+        let cmd = vec![
+            "sh".into(),
+            "-c".into(),
+            format!("base64 -w 0 '{}'", escaped_path),
+        ];
+        let (exit_code, stdout, stderr) =
+            with_sandbox_client(&entry, move |c| {
+                c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(30)))
+            })
+            .await?;
+
+        if exit_code != 0 {
+            return Err(ApiError::NotFound(format!(
+                "file '{}': {}",
+                file_path,
+                stderr.trim()
+            )));
+        }
+
+        Ok(Json(ReadFileResponse {
+            content: stdout.trim().to_string(),
+        }))
+    } else {
+        // Large files: read in 32KB chunks via dd, base64 each chunk,
+        // then reassemble on the server side.
+        let chunk_size: u64 = 32 * 1024;
+        let num_chunks = (file_size + chunk_size - 1) / chunk_size;
+        let mut b64_parts: Vec<String> = Vec::new();
+
+        for i in 0..num_chunks {
+            let skip = i * chunk_size;
+            let cmd = vec![
+                "sh".into(),
+                "-c".into(),
+                format!(
+                    "dd if='{}' bs=1 skip={} count={} 2>/dev/null | base64 -w 0",
+                    escaped_path, skip, chunk_size
+                ),
+            ];
+            let (exit_code, stdout, stderr) =
+                with_sandbox_client(&entry, move |c| {
+                    c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(30)))
+                })
+                .await?;
+
+            if exit_code != 0 {
+                return Err(ApiError::Internal(format!(
+                    "read_file chunk {} failed: {}",
+                    i,
+                    stderr.trim()
+                )));
+            }
+
+            b64_parts.push(stdout.trim().to_string());
+        }
+
+        // Decode each chunk and re-encode as a single base64 string
+        let mut raw_bytes: Vec<u8> = Vec::with_capacity(file_size as usize);
+        for (i, part) in b64_parts.iter().enumerate() {
+            let decoded = BASE64.decode(part).map_err(|e| {
+                ApiError::Internal(format!("failed to decode chunk {}: {}", i, e))
+            })?;
+            raw_bytes.extend_from_slice(&decoded);
+        }
+        let content = BASE64.encode(&raw_bytes);
+
+        Ok(Json(ReadFileResponse { content }))
+    }
 }
 
 /// Write a file to a sandbox.
@@ -149,28 +230,91 @@ pub async fn write_file(
         }
     }
 
-    // Write file via base64 decode
-    let mut script = format!(
-        "echo '{}' | base64 -d > '{}'",
-        req.content, escaped_path
-    );
+    // Write file via base64 decode.
+    // For small content (<48KB base64), use a single command.
+    // For larger content, chunk to avoid ARG_MAX limits.
+    let chunk_limit = 48 * 1024;
 
-    // Set permissions if specified
-    if let Some(ref perms) = req.permissions {
-        script.push_str(&format!(" && chmod {} '{}'", perms, escaped_path));
-    }
+    if req.content.len() <= chunk_limit {
+        let mut script = format!(
+            "echo '{}' | base64 -d > '{}'",
+            req.content, escaped_path
+        );
+        if let Some(ref perms) = req.permissions {
+            script.push_str(&format!(" && chmod {} '{}'", perms, escaped_path));
+        }
+        let cmd = vec!["sh".into(), "-c".into(), script];
+        let (exit_code, _stdout, stderr) =
+            with_sandbox_client(&entry, move |c| {
+                c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(30)))
+            })
+            .await?;
+        if exit_code != 0 {
+            return Err(ApiError::Internal(format!(
+                "write_file failed: {}",
+                stderr.trim()
+            )));
+        }
+    } else {
+        // Large content — write base64 chunks to temp file, then decode
+        let chunks: Vec<&str> = req
+            .content
+            .as_bytes()
+            .chunks(chunk_limit)
+            .map(|c| std::str::from_utf8(c).unwrap_or_default())
+            .collect();
 
-    let cmd = vec!["sh".into(), "-c".into(), script];
-    let timeout = Some(Duration::from_secs(30));
+        for (i, chunk) in chunks.iter().enumerate() {
+            let redirect = if i == 0 { ">" } else { ">>" };
+            let script = format!("echo -n '{}' {} /tmp/_smolvm_write.b64", chunk, redirect);
+            let cmd = vec!["sh".into(), "-c".into(), script];
+            let (exit_code, _, stderr) =
+                with_sandbox_client(&entry, move |c| {
+                    c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(30)))
+                })
+                .await?;
+            if exit_code != 0 {
+                let cleanup = vec!["sh".into(), "-c".into(), "rm -f /tmp/_smolvm_write.b64".into()];
+                let _ = with_sandbox_client(&entry, move |c| {
+                    c.vm_exec(cleanup, vec![], None, Some(Duration::from_secs(5)))
+                })
+                .await;
+                return Err(ApiError::Internal(format!(
+                    "write_file chunk {}/{} failed: {}",
+                    i + 1,
+                    chunks.len(),
+                    stderr.trim()
+                )));
+            }
+        }
 
-    let (exit_code, _stdout, stderr) =
-        with_sandbox_client(&entry, move |c| c.vm_exec(cmd, vec![], None, timeout)).await?;
-
-    if exit_code != 0 {
-        return Err(ApiError::Internal(format!(
-            "write_file failed: {}",
-            stderr.trim()
-        )));
+        let mut decode_script = format!(
+            "base64 -d < /tmp/_smolvm_write.b64 > '{}' && rm -f /tmp/_smolvm_write.b64",
+            escaped_path
+        );
+        if let Some(ref perms) = req.permissions {
+            decode_script = format!(
+                "base64 -d < /tmp/_smolvm_write.b64 > '{}' && chmod {} '{}' && rm -f /tmp/_smolvm_write.b64",
+                escaped_path, perms, escaped_path
+            );
+        }
+        let cmd = vec!["sh".into(), "-c".into(), decode_script];
+        let (exit_code, _, stderr) =
+            with_sandbox_client(&entry, move |c| {
+                c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(30)))
+            })
+            .await?;
+        if exit_code != 0 {
+            let cleanup = vec!["sh".into(), "-c".into(), "rm -f /tmp/_smolvm_write.b64".into()];
+            let _ = with_sandbox_client(&entry, move |c| {
+                c.vm_exec(cleanup, vec![], None, Some(Duration::from_secs(5)))
+            })
+            .await;
+            return Err(ApiError::Internal(format!(
+                "write_file failed: {}",
+                stderr.trim()
+            )));
+        }
     }
 
     Ok(Json(serde_json::json!({ "written": file_path })))
@@ -530,24 +674,89 @@ pub async fn upload_archive(
     })
     .await;
 
-    // Send archive as base64 and extract via tar
+    // Send archive as base64 in chunks to avoid ARG_MAX limits.
+    // For small archives (<48KB), a single command suffices. For larger ones,
+    // we write base64 chunks to a temp file, then decode+extract.
     let b64_content = BASE64.encode(&body);
-    let script = format!(
-        "echo '{}' | base64 -d | tar xzf - -C '{}'",
-        b64_content, escaped_dir
-    );
-    let cmd = vec!["sh".into(), "-c".into(), script];
-    let (exit_code, _, stderr) =
-        with_sandbox_client(&entry, move |c| {
-            c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(120)))
-        })
-        .await?;
+    let chunk_limit = 48 * 1024; // 48KB base64 ≈ 36KB binary, well under ARG_MAX
 
-    if exit_code != 0 {
-        return Err(ApiError::Internal(format!(
-            "archive extraction failed: {}",
-            stderr.trim()
-        )));
+    if b64_content.len() <= chunk_limit {
+        // Small archive — single command
+        let script = format!(
+            "echo '{}' | base64 -d | tar xzf - -C '{}'",
+            b64_content, escaped_dir
+        );
+        let cmd = vec!["sh".into(), "-c".into(), script];
+        let (exit_code, _, stderr) =
+            with_sandbox_client(&entry, move |c| {
+                c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(120)))
+            })
+            .await?;
+
+        if exit_code != 0 {
+            return Err(ApiError::Internal(format!(
+                "archive extraction failed: {}",
+                stderr.trim()
+            )));
+        }
+    } else {
+        // Large archive — write base64 chunks to temp file, then decode+extract
+        let chunks: Vec<&str> = b64_content
+            .as_bytes()
+            .chunks(chunk_limit)
+            .map(|c| std::str::from_utf8(c).unwrap_or_default())
+            .collect();
+
+        for (i, chunk) in chunks.iter().enumerate() {
+            let redirect = if i == 0 { ">" } else { ">>" };
+            let script = format!("echo -n '{}' {} /tmp/_smolvm_upload.b64", chunk, redirect);
+            let cmd = vec!["sh".into(), "-c".into(), script];
+            let (exit_code, _, stderr) =
+                with_sandbox_client(&entry, move |c| {
+                    c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(30)))
+                })
+                .await?;
+
+            if exit_code != 0 {
+                // Clean up temp file on failure
+                let cleanup = vec!["sh".into(), "-c".into(), "rm -f /tmp/_smolvm_upload.b64".into()];
+                let _ = with_sandbox_client(&entry, move |c| {
+                    c.vm_exec(cleanup, vec![], None, Some(Duration::from_secs(5)))
+                })
+                .await;
+                return Err(ApiError::Internal(format!(
+                    "archive upload chunk {}/{} failed: {}",
+                    i + 1,
+                    chunks.len(),
+                    stderr.trim()
+                )));
+            }
+        }
+
+        // Decode temp file and extract
+        let extract_script = format!(
+            "base64 -d < /tmp/_smolvm_upload.b64 | tar xzf - -C '{}' && rm -f /tmp/_smolvm_upload.b64",
+            escaped_dir
+        );
+        let cmd = vec!["sh".into(), "-c".into(), extract_script];
+        let (exit_code, _, stderr) =
+            with_sandbox_client(&entry, move |c| {
+                c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(120)))
+            })
+            .await?;
+
+        if exit_code != 0 {
+            // Clean up temp file on failure
+            let cleanup = vec!["sh".into(), "-c".into(), "rm -f /tmp/_smolvm_upload.b64".into()];
+            let _ = with_sandbox_client(&entry, move |c| {
+                c.vm_exec(cleanup, vec![], None, Some(Duration::from_secs(5)))
+            })
+            .await;
+            return Err(ApiError::Internal(format!(
+                "archive extraction failed: {}",
+                stderr.trim()
+            )));
+        }
     }
 
     Ok(Json(serde_json::json!({
@@ -590,16 +799,22 @@ pub async fn download_archive(
         .await
         .map_err(classify_ensure_running_error)?;
 
-    // Create tar.gz in-guest and base64-encode it
+    // Create tar.gz in-guest, write to temp file, then download in chunks.
+    // Direct piping (tar | base64) hangs for archives >~48KB due to agent
+    // protocol stdout buffer limits (~64KB). Instead: tar to a file, get
+    // its size, then read chunks via dd + base64.
     let escaped_dir = dir.replace('\'', "'\\''");
-    let script = format!(
-        "tar czf - -C '{}' . 2>/dev/null | base64",
-        escaped_dir
-    );
-    let cmd = vec!["sh".into(), "-c".into(), script];
-    let (exit_code, stdout, stderr) =
+    let tar_cmd = vec![
+        "sh".into(),
+        "-c".into(),
+        format!(
+            "tar czf /tmp/_smolvm_dl.tar.gz -C '{}' . 2>/dev/null && stat -c %s /tmp/_smolvm_dl.tar.gz 2>/dev/null || stat -f %z /tmp/_smolvm_dl.tar.gz",
+            escaped_dir
+        ),
+    ];
+    let (exit_code, size_stdout, stderr) =
         with_sandbox_client(&entry, move |c| {
-            c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(120)))
+            c.vm_exec(tar_cmd, vec![], None, Some(Duration::from_secs(120)))
         })
         .await?;
 
@@ -610,9 +825,63 @@ pub async fn download_archive(
         )));
     }
 
-    let archive_bytes = BASE64
-        .decode(stdout.trim())
-        .map_err(|e| ApiError::Internal(format!("failed to decode archive: {}", e)))?;
+    let archive_size: u64 = size_stdout.trim().parse().unwrap_or(0);
+    if archive_size == 0 {
+        // Clean up and return error
+        let cleanup = vec!["sh".into(), "-c".into(), "rm -f /tmp/_smolvm_dl.tar.gz".into()];
+        let _ = with_sandbox_client(&entry, move |c| {
+            c.vm_exec(cleanup, vec![], None, Some(Duration::from_secs(5)))
+        })
+        .await;
+        return Err(ApiError::Internal("archive is empty".into()));
+    }
+
+    // Read archive in 32KB chunks
+    let chunk_size: u64 = 32 * 1024;
+    let num_chunks = (archive_size + chunk_size - 1) / chunk_size;
+    let mut archive_bytes: Vec<u8> = Vec::with_capacity(archive_size as usize);
+
+    for i in 0..num_chunks {
+        let skip = i * chunk_size;
+        let cmd = vec![
+            "sh".into(),
+            "-c".into(),
+            format!(
+                "dd if=/tmp/_smolvm_dl.tar.gz bs=1 skip={} count={} 2>/dev/null | base64 -w 0",
+                skip, chunk_size
+            ),
+        ];
+        let (exit_code, stdout, stderr) =
+            with_sandbox_client(&entry, move |c| {
+                c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(30)))
+            })
+            .await?;
+
+        if exit_code != 0 {
+            let cleanup = vec!["sh".into(), "-c".into(), "rm -f /tmp/_smolvm_dl.tar.gz".into()];
+            let _ = with_sandbox_client(&entry, move |c| {
+                c.vm_exec(cleanup, vec![], None, Some(Duration::from_secs(5)))
+            })
+            .await;
+            return Err(ApiError::Internal(format!(
+                "archive read chunk {} failed: {}",
+                i,
+                stderr.trim()
+            )));
+        }
+
+        let decoded = BASE64.decode(stdout.trim()).map_err(|e| {
+            ApiError::Internal(format!("failed to decode archive chunk {}: {}", i, e))
+        })?;
+        archive_bytes.extend_from_slice(&decoded);
+    }
+
+    // Clean up temp file
+    let cleanup = vec!["sh".into(), "-c".into(), "rm -f /tmp/_smolvm_dl.tar.gz".into()];
+    let _ = with_sandbox_client(&entry, move |c| {
+        c.vm_exec(cleanup, vec![], None, Some(Duration::from_secs(5)))
+    })
+    .await;
 
     let mut headers = axum::http::HeaderMap::new();
     headers.insert(
