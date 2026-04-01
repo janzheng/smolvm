@@ -147,16 +147,23 @@ fn link_libkrun() {
             println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/lib");
             println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../lib");
 
-            // Change the library's install_name to use @rpath and re-sign
+            // Change the library's install_name to use @rpath and re-sign.
+            // IMPORTANT: Work on a copy in OUT_DIR so we don't mutate the source
+            // library (which may be the live system library in ~/.smolvm/lib/).
             let lib_path = std::path::Path::new(&bundle_path).join("libkrun.dylib");
             if lib_path.exists() {
+                let out_dir = std::env::var("OUT_DIR").unwrap();
+                let out_lib = std::path::Path::new(&out_dir).join("libkrun.dylib");
+                let _ = std::fs::copy(&lib_path, &out_lib);
                 let _ = Command::new("install_name_tool")
-                    .args(["-id", "@rpath/libkrun.dylib", lib_path.to_str().unwrap()])
+                    .args(["-id", "@rpath/libkrun.dylib", out_lib.to_str().unwrap()])
                     .status();
                 // Re-sign after modification (macOS requires valid signature)
                 let _ = Command::new("codesign")
-                    .args(["--force", "--sign", "-", lib_path.to_str().unwrap()])
+                    .args(["--force", "--sign", "-", out_lib.to_str().unwrap()])
                     .status();
+                // Link against the modified copy so the binary records @rpath
+                println!("cargo:rustc-link-search=native={}", out_dir);
             }
         }
         #[cfg(target_os = "linux")]
