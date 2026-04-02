@@ -49,6 +49,25 @@ done
 echo 'nameserver 127.0.0.1' > /etc/resolv.conf
 echo '# smolvm DNS filter active — only pre-resolved domains accessible' >> /etc/resolv.conf
 echo "dns-filter: activated for $ALLOWED" >&2
+
+# iptables hardening — block raw-IP exfiltration (requires CAP_NET_ADMIN)
+if command -v iptables >/dev/null 2>&1; then
+    # Allow established connections (responses to allowed requests)
+    iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null
+    # Allow loopback
+    iptables -A OUTPUT -o lo -j ACCEPT 2>/dev/null
+    # Allow DNS to localhost (dead resolver, but don't break resolution errors)
+    iptables -A OUTPUT -p udp --dport 53 -j ACCEPT 2>/dev/null
+    # Allow resolved IPs from /etc/hosts
+    for ip in $(awk '{{print $1}}' /etc/hosts | grep -v '^#' | grep -v '127.0.0.1' | grep -v '::1' | sort -u); do
+        iptables -A OUTPUT -d "$ip" -j ACCEPT 2>/dev/null
+    done
+    # Drop everything else
+    iptables -A OUTPUT -j DROP 2>/dev/null
+    echo "dns-filter: iptables rules applied" >&2
+else
+    echo "dns-filter: WARNING iptables not available, DNS-only filtering" >&2
+fi
 "#,
         domains = domain_list,
     );
@@ -99,5 +118,14 @@ mod tests {
     fn shell_escape_strips_dangerous_chars() {
         assert_eq!(shell_escape("foo;rm -rf /"), "foorm-rf");
         assert_eq!(shell_escape("example.com"), "example.com");
+    }
+
+    #[test]
+    fn includes_iptables_hardening() {
+        let cmds = dns_filter_init_commands(&["example.com".to_string()]);
+        let script = &cmds[0][2];
+        assert!(script.contains("iptables -A OUTPUT"));
+        assert!(script.contains("iptables -A OUTPUT -j DROP"));
+        assert!(script.contains("ESTABLISHED,RELATED"));
     }
 }

@@ -7,10 +7,10 @@
 //!
 //! ```bash
 //! # Start the server
-//! smolvm serve --listen 127.0.0.1:8080
+//! smolvm serve --listen 127.0.0.1:9090
 //!
 //! # Create a sandbox
-//! curl -X POST http://localhost:8080/api/v1/sandboxes \
+//! curl -X POST http://localhost:9090/api/v1/sandboxes \
 //!   -H "Content-Type: application/json" \
 //!   -d '{"name": "test"}'
 //! ```
@@ -265,7 +265,7 @@ const API_REQUEST_TIMEOUT_SECS: u64 = 300;
 /// Create the API router with all endpoints.
 ///
 /// `cors_origins` specifies allowed CORS origins. If empty, defaults to
-/// localhost:8080 and localhost:3000 (both http and 127.0.0.1 variants).
+/// localhost:9090 and localhost:3000 (both http and 127.0.0.1 variants).
 pub fn create_router(state: Arc<ApiState>, cors_origins: Vec<String>, api_token: Option<String>, web_ui_dir: Option<std::path::PathBuf>) -> Router {
     // Health check and metrics routes
     let health_route = Router::new()
@@ -479,10 +479,10 @@ pub fn create_router(state: Arc<ApiState>, cors_origins: Vec<String>, api_token:
     // CORS: Use configured origins, or default to localhost for security.
     let default_origins = || {
         vec![
-            "http://localhost:8080"
+            "http://localhost:9090"
                 .parse()
                 .expect("hardcoded CORS origin"),
-            "http://127.0.0.1:8080"
+            "http://127.0.0.1:9090"
                 .parse()
                 .expect("hardcoded CORS origin"),
             "http://localhost:3000"

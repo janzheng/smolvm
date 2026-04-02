@@ -28,7 +28,7 @@ API ENDPOINTS:
   DELETE /api/v1/sandboxes/:id         Delete sandbox
 
 EXAMPLES:
-  smolvm serve start                         Listen on 127.0.0.1:8080 (default)
+  smolvm serve start                         Listen on 127.0.0.1:9090 (default)
   smolvm serve start -l 0.0.0.0:9000         Listen on all interfaces, port 9000
   smolvm serve start -v                      Enable verbose logging")]
     Start(ServeStartCmd),
@@ -52,7 +52,7 @@ pub struct ServeStartCmd {
     #[arg(
         short,
         long,
-        default_value = "127.0.0.1:8080",
+        default_value = "127.0.0.1:9090",
         value_name = "ADDR:PORT"
     )]
     listen: String,
@@ -61,7 +61,7 @@ pub struct ServeStartCmd {
     #[arg(short, long)]
     verbose: bool,
 
-    /// CORS allowed origins (repeatable). Defaults to localhost:8080 and localhost:3000.
+    /// CORS allowed origins (repeatable). Defaults to localhost:9090 and localhost:3000.
     #[arg(long = "cors-origin", value_name = "ORIGIN")]
     cors_origins: Vec<String>,
 
@@ -191,7 +191,7 @@ impl ServeStartCmd {
             if api_token.is_none() {
                 eprintln!("         Any network client can control this host without authentication.");
             }
-            eprintln!("         Consider using --listen 127.0.0.1:8080 for local-only access.");
+            eprintln!("         Consider using --listen 127.0.0.1:9090 for local-only access.");
         }
 
         // Create shared state and load persisted sandboxes

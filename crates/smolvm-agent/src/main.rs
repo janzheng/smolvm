@@ -322,7 +322,7 @@ fn setup_network_firewall() {
     // These are the ports most likely to be running host services
     // that a sandbox should never be able to reach.
     let blocked_ports: &[u16] = &[
-        8080,  // smolvm API server
+        9090,  // smolvm API server
         22,    // SSH
         5432,  // PostgreSQL
         3306,  // MySQL

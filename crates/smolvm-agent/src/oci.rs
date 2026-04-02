@@ -465,6 +465,10 @@ pub fn generate_container_id() -> String {
 }
 
 /// Default Linux capabilities for root containers.
+///
+/// Includes `CAP_NET_ADMIN` to allow iptables rules for egress filtering
+/// when `allowed_domains` is set. This is safe because the real security
+/// boundary is the VM itself, not OCI capabilities within the VM.
 fn default_capabilities() -> Vec<String> {
     vec![
         "CAP_CHOWN".to_string(),
@@ -473,6 +477,7 @@ fn default_capabilities() -> Vec<String> {
         "CAP_FOWNER".to_string(),
         "CAP_MKNOD".to_string(),
         "CAP_NET_RAW".to_string(),
+        "CAP_NET_ADMIN".to_string(),
         "CAP_SETGID".to_string(),
         "CAP_SETUID".to_string(),
         "CAP_SETFCAP".to_string(),
