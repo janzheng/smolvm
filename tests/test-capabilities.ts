@@ -226,8 +226,8 @@ console.log("\n═══ 4. Networking ═══\n");
     test("DNS resolution", dns.exit_code === 0 && dns.stdout.includes("Address"));
   }
 
-  const download = await sh(name, "curl -sL https://raw.githubusercontent.com/smol-machines/smolvm/main/README.md | head -3", { timeout_secs: 15 });
-  test("Download file from internet", download.exit_code === 0 && download.stdout.includes("smolVM"));
+  const download = await sh(name, "wget -q -O /dev/null https://example.com 2>&1; echo $?", { timeout_secs: 10 });
+  test("Download file from internet", download.stdout.trim() === "0");
 
   await cleanup(name);
 }

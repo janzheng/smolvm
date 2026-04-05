@@ -74,7 +74,7 @@ smolctl up my-vm --cpus 4 --memory 2048
 
 # From a starter template (pre-configured environment)
 smolctl up my-vm --starter claude-code
-smolctl up my-vm --starter node-deno
+smolctl up my-vm --starter node
 smolctl up my-vm --starter python-ml
 ```
 
@@ -555,7 +555,7 @@ smolctl agent worker --reuse my-vm --max-jobs 10
 ### Development Loop
 
 ```bash
-smolctl up dev --starter node-deno
+smolctl up dev --starter node
 smolctl sync watch dev ./src --to /workspace/src --exclude node_modules
 # Edit locally, tests run in sandbox
 smolctl sh dev "cd /workspace/src && npm test"

@@ -40,7 +40,7 @@ static STARTERS: &[(&str, StarterConfig)] = &[
         },
     ),
     (
-        "node-deno",
+        "node",
         StarterConfig {
             image: "ghcr.io/smol-machines/smolvm-node-deno:latest",
             init_commands: &[
@@ -52,7 +52,6 @@ static STARTERS: &[(&str, StarterConfig)] = &[
                 "chown -R agent:agent /storage/workspace 2>/dev/null; su agent -c 'git config --global user.name smolvm && git config --global user.email smolvm@localhost && git config --global --add safe.directory /storage/workspace && git config --global --add safe.directory /workspace' 2>/dev/null || true",
             ],
             default_user: Some("agent"),
-            // NOTE: renamed from node-deno — Deno not available on Alpine (musl). Node.js only.
             description: "Node.js 20 + npm + git workspace",
         },
     ),
@@ -94,6 +93,8 @@ static STARTERS: &[(&str, StarterConfig)] = &[
 
 /// Look up a starter by name.
 pub fn get_starter(name: &str) -> Option<&'static StarterConfig> {
+    // Backwards compat: "node-deno" → "node" (Deno not available on Alpine/musl)
+    let name = if name == "node-deno" { "node" } else { name };
     STARTERS
         .iter()
         .find(|(n, _)| *n == name)
@@ -138,7 +139,7 @@ mod tests {
         let names: Vec<&str> = starters.iter().map(|s| s.name.as_str()).collect();
         assert!(names.contains(&"claude-code"));
         assert!(names.contains(&"python-ml"));
-        assert!(names.contains(&"node-deno"));
+        assert!(names.contains(&"node"));
         assert!(names.contains(&"universal"));
     }
 }

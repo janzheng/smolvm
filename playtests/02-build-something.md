@@ -8,7 +8,7 @@ useful for real dev work.
 
 ## Entry point
 
-Create a sandbox from the `claude-code` or `node-deno` starter. Your job is
+Create a sandbox from the `claude-code` or `node` starter. Your job is
 to build a small web server inside it and prove it works.
 
 ## Things to try

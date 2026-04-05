@@ -254,7 +254,7 @@ Built-in starters:
 | Name | Includes |
 |------|----------|
 | `claude-code` | Node.js, npm, Python 3, git, openssh, curl, Claude Code CLI |
-| `node-deno` | Node.js, npm, git, curl |
+| `node` | Node.js, npm, git, curl |
 | `python-ml` | Python 3, pip, numpy |
 | `universal` | Node.js, npm, Python 3, pip, git, curl, Go, Rust, Claude Code CLI |
 
