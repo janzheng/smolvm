@@ -16,9 +16,17 @@ cpus = 2
 memory = 1024
 net = true
 
-[service]
-listen = 18789
-protocol = "http"
+# Network policy: OpenClaw only needs to reach LLM provider APIs.
+# All other outbound traffic (including exfiltration attempts) is blocked.
+[network]
+allow_hosts = [
+    "api.openai.com",
+    "api.anthropic.com",
+    "generativelanguage.googleapis.com",
+    "api.mistral.ai",
+    "api.groq.com",
+    "api.together.xyz",
+]
 
 [dev]
 ports = ["18789:18789"]

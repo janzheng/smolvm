@@ -12,10 +12,6 @@ cpus = 2
 memory = 512
 net = true
 
-[service]
-listen = 8080
-protocol = "http"
-
 [dev]
 volumes = ["./examples/doom-web:/var/www"]
 ports = ["8080:8080"]
