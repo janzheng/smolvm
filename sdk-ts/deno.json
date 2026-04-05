@@ -1,0 +1,12 @@
+{
+  "name": "@smolvm/sdk",
+  "version": "0.1.0",
+  "exports": "./mod.ts",
+  "tasks": {
+    "test": "deno run --allow-net --allow-env test.ts",
+    "check": "deno check mod.ts"
+  },
+  "compilerOptions": {
+    "strict": true
+  }
+}

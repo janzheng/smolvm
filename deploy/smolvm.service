@@ -1,0 +1,29 @@
+[Unit]
+Description=smolvm microVM server
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=smolvm
+Group=kvm
+EnvironmentFile=-/etc/smolvm/env
+Environment=LD_LIBRARY_PATH=/opt/smolvm/lib
+ExecStart=/opt/smolvm/bin/smolvm serve start --bind 127.0.0.1:8080
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/smolvm /tmp
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+DeviceAllow=/dev/kvm rw
+DeviceAllow=/dev/net/tun rw
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,29 @@
+# Environment
+.env
+.env.local
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Legacy / experimental (kept locally for reference, not in repo)
+smolvm-experimental/
+smolvm-manager/
+smolvm-repo/
+smolvm-web/
+web-ui/
+
+# Task files (local working docs)
+TASKS*.md
+
+# Deno
+node_modules/
+
+# Logs
+*.log
