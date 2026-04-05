@@ -81,6 +81,10 @@ fn main() {
     // This does overlayfs + pivot_root before anything else touches the filesystem.
     setup_persistent_rootfs();
 
+    // Mount tmpfs for /tmp and /dev/shm AFTER overlay pivot so they're
+    // visible in the final root, not hidden under /oldroot.
+    mount_tmpfs_volumes();
+
     // CRITICAL: Create vsock listener IMMEDIATELY after mounts.
     // This must happen before logging setup to minimize time to listener ready.
     // The kernel boots in ~30ms and host connects immediately after.
@@ -340,6 +344,23 @@ fn mount_essential_filesystems() {
 fn mount_essential_filesystems() {
     // No-op on non-Linux platforms
 }
+
+/// Mount tmpfs volumes for /tmp and /dev/shm.
+/// Called AFTER the overlay pivot_root so mounts land in the final root.
+#[cfg(target_os = "linux")]
+fn mount_tmpfs_volumes() {
+    for entry in &[
+        MountEntry { source: "tmpfs", target: "/tmp", fstype: "tmpfs", flags: 0, data: Some("mode=1777") },
+        MountEntry { source: "tmpfs", target: "/dev/shm", fstype: "tmpfs", flags: 0, data: None },
+    ] {
+        if let Err(e) = entry.mount() {
+            eprintln!("smolvm-agent: tmpfs mount warning: {}", e);
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn mount_tmpfs_volumes() {}
 
 /// Set up persistent rootfs overlay using overlayfs on /dev/vdb.
 ///
