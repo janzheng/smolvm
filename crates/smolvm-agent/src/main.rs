@@ -1983,7 +1983,7 @@ fn handle_run(
 ) -> AgentResponse {
     info!(image = %image, command = ?command, mounts = ?mounts, timeout_ms = ?timeout_ms, "running command");
 
-    match storage::run_command(image, command, env, workdir, mounts, timeout_ms) {
+    match storage::run_command(image, command, env, workdir, mounts, timeout_ms, None) {
         Ok(result) => AgentResponse::Completed {
             exit_code: result.exit_code,
             stdout: result.stdout,
