@@ -380,20 +380,13 @@ pub fn launch_agent_vm(config: &LaunchConfig<'_>) -> Result<()> {
 
         // Add overlay disk for persistent rootfs changes (optional)
         // This is the second disk → /dev/vdb in guest
-        if let Some(overlay) = disks.overlay {
-            let overlay_id = cstr("overlay");
-            let overlay_path = try_or_free_ctx!(
-                path_to_cstring(overlay.path()),
-                "add overlay disk",
-                "path contains null byte"
-            );
-            if krun_add_disk2(ctx, overlay_id.as_ptr(), overlay_path.as_ptr(), 0, false) < 0 {
-                krun_free_ctx(ctx);
-                return Err(Error::agent(
-                    "add overlay disk",
-                    "krun_add_disk2 failed for rootfs overlay",
-                ));
-            }
+        // NOTE: Disabled — overlayfs on top of virtiofs causes "Connection reset
+        // by network" on all writes through the overlay (virtiofs lower layer
+        // lookup fails). Without overlay, writes go directly to virtiofs which
+        // works. The storage disk (/dev/vda → /storage) handles persistence.
+        // Re-enable when libkrun virtiofs is fixed (PR #542).
+        if let Some(_overlay) = disks.overlay {
+            tracing::debug!("overlay disk skipped (virtiofs+overlayfs write bug)");
         }
 
         // Add vsock port for control channel (critical - host-guest communication)

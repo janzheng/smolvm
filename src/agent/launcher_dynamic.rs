@@ -360,16 +360,9 @@ pub fn launch_agent_vm_dynamic(
     }
 
     // Add overlay disk as 2nd disk (/dev/vdb) for VM mode
-    if let Some(overlay) = config.overlay_path {
-        let overlay_id = cstr("overlay");
-        let overlay_disk =
-            try_or_free_ctx!(path_to_cstring(overlay), "overlay path contains null byte");
-        // SAFETY: ctx is valid, overlay_id and overlay_disk are valid C strings
-        if unsafe { (krun.add_disk2)(ctx, overlay_id.as_ptr(), overlay_disk.as_ptr(), 0, false) }
-            < 0
-        {
-            free_ctx_on_err!("krun_add_disk2 failed for overlay disk");
-        }
+    // NOTE: Disabled — overlayfs on virtiofs causes write failures. See launcher.rs.
+    if let Some(_overlay) = config.overlay_path {
+        tracing::debug!("overlay disk skipped (virtiofs+overlayfs write bug)");
     }
 
     // Add vsock port for control channel
