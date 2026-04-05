@@ -144,6 +144,8 @@ fn link_libkrun() {
         // Set rpath to find libraries relative to executable
         #[cfg(target_os = "macos")]
         {
+            // Binary is at target/release/smolvm, bundled libs at repo root lib/
+            println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../../lib");
             println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/lib");
             println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../lib");
 

@@ -26,7 +26,7 @@ static STARTERS: &[(&str, StarterConfig)] = &[
             image: "ghcr.io/smol-machines/smolvm-claude-code:latest",
             init_commands: &[
                 "mkdir -p /storage && mount /dev/vda /storage 2>/dev/null || true",
-                "apk update && apk add --no-cache nodejs npm python3 git openssh-client curl",
+                "apk update && apk add --no-cache nodejs npm python3 git openssh-client curl unzip",
                 "npm install -g @anthropic-ai/claude-code",
                 "mkdir -p /tmp/claude-1000 && chmod 1777 /tmp && chown agent:agent /tmp/claude-1000",
                 "git config --global user.name smolvm && git config --global user.email smolvm@localhost && git config --global --add safe.directory /storage/workspace && git config --global --add safe.directory /workspace",
@@ -35,6 +35,7 @@ static STARTERS: &[(&str, StarterConfig)] = &[
                 "chown -R agent:agent /storage/workspace 2>/dev/null; su agent -c 'git config --global user.name smolvm && git config --global user.email smolvm@localhost && git config --global --add safe.directory /storage/workspace && git config --global --add safe.directory /workspace' 2>/dev/null || true",
             ],
             default_user: Some("agent"),
+            // NOTE: Deno not available on Alpine (musl). Use Node.js — Brigade polyfills Deno APIs.
             description: "Node.js 20 + Python 3 + Claude Code CLI + git workspace",
         },
     ),
@@ -44,13 +45,14 @@ static STARTERS: &[(&str, StarterConfig)] = &[
             image: "ghcr.io/smol-machines/smolvm-node-deno:latest",
             init_commands: &[
                 "mkdir -p /storage && mount /dev/vda /storage 2>/dev/null || true",
-                "apk update && apk add --no-cache nodejs npm git curl",
+                "apk update && apk add --no-cache nodejs npm git curl unzip",
                 "git config --global user.name smolvm && git config --global user.email smolvm@localhost && git config --global --add safe.directory /storage/workspace && git config --global --add safe.directory /workspace",
                 "mkdir -p /storage/workspace && cd /storage/workspace && git init && printf 'node_modules/\\n__pycache__/\\n*.pyc\\n.env\\n' > .gitignore && git add -A && git commit --allow-empty -m 'workspace init'",
                 "rm -rf /workspace && ln -sfn /storage/workspace /workspace",
                 "chown -R agent:agent /storage/workspace 2>/dev/null; su agent -c 'git config --global user.name smolvm && git config --global user.email smolvm@localhost && git config --global --add safe.directory /storage/workspace && git config --global --add safe.directory /workspace' 2>/dev/null || true",
             ],
             default_user: Some("agent"),
+            // NOTE: renamed from node-deno — Deno not available on Alpine (musl). Node.js only.
             description: "Node.js 20 + npm + git workspace",
         },
     ),
@@ -76,7 +78,7 @@ static STARTERS: &[(&str, StarterConfig)] = &[
             image: "ghcr.io/smol-machines/smolvm-universal:latest",
             init_commands: &[
                 "mkdir -p /storage && mount /dev/vda /storage 2>/dev/null || true",
-                "apk update && apk add --no-cache nodejs npm python3 py3-pip git curl go rust cargo",
+                "apk update && apk add --no-cache nodejs npm python3 py3-pip git curl go rust cargo unzip",
                 "npm install -g @anthropic-ai/claude-code",
                 "git config --global user.name smolvm && git config --global user.email smolvm@localhost && git config --global --add safe.directory /storage/workspace && git config --global --add safe.directory /workspace",
                 "mkdir -p /storage/workspace && cd /storage/workspace && git init && printf 'node_modules/\\n__pycache__/\\n*.pyc\\n.env\\n' > .gitignore && git add -A && git commit --allow-empty -m 'workspace init'",
@@ -84,6 +86,7 @@ static STARTERS: &[(&str, StarterConfig)] = &[
                 "chown -R agent:agent /storage/workspace 2>/dev/null; su agent -c 'git config --global user.name smolvm && git config --global user.email smolvm@localhost && git config --global --add safe.directory /storage/workspace && git config --global --add safe.directory /workspace' 2>/dev/null || true",
             ],
             default_user: Some("agent"),
+            // NOTE: Deno not available on Alpine (musl). Use Node.js — Brigade polyfills Deno APIs.
             description: "Node.js + Python + Go + Rust + Claude Code + git workspace — all-in-one",
         },
     ),
