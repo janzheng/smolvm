@@ -70,7 +70,7 @@ const KRUN_TSI_HIJACK_INET: u32 = 1 << 0;
 /// - `<exe_dir>/lib/` (distribution layout)
 /// - `<exe_dir>/../lib/` (alternative layout)
 /// - `<exe_dir>/../../lib/linux-<arch>/` (source tree dev builds)
-fn find_lib_dir() -> Option<PathBuf> {
+pub fn find_lib_dir() -> Option<PathBuf> {
     let lib_name = libkrunfw_filename();
     if let Ok(explicit_dir) = std::env::var(ENV_SMOLVM_LIB_DIR) {
         let path = PathBuf::from(explicit_dir);
@@ -144,17 +144,58 @@ fn preload_libkrunfw() {
 /// It should be called in the child process after fork, where
 /// DYLD_LIBRARY_PATH is still available for dlopen to find libkrunfw.
 ///
+/// Optional features for VM launch (SSH agent, DNS filtering, etc.).
+///
+/// Groups optional capabilities that don't affect core VM operation.
+/// New features should be added here rather than as additional parameters
+/// on manager/launcher functions.
+#[derive(Debug, Clone, Default)]
+pub struct LaunchFeatures {
+    /// Host SSH agent socket path for forwarding into the guest.
+    pub ssh_agent_socket: Option<std::path::PathBuf>,
+    /// Hostnames for DNS filtering. When set, the host starts a DNS filter
+    /// listener and the guest agent proxies DNS queries through it.
+    pub dns_filter_hosts: Option<Vec<String>>,
+}
+
+/// Configuration for launching an agent VM.
+pub struct LaunchConfig<'a> {
+    /// Path to the agent rootfs directory.
+    pub rootfs_path: &'a Path,
+    /// Storage and overlay disk handles.
+    pub disks: &'a VmDisks<'a>,
+    /// Path to the vsock Unix socket for the control channel.
+    pub vsock_socket: &'a Path,
+    /// Optional path to write console output.
+    pub console_log: Option<&'a Path>,
+    /// Host directory mounts to expose to the guest.
+    pub mounts: &'a [HostMount],
+    /// Port mappings (host:guest).
+    pub port_mappings: &'a [PortMapping],
+    /// VM resources (CPU, memory, network, disk sizes).
+    pub resources: VmResources,
+    /// Host SSH agent socket path for forwarding into the guest.
+    pub ssh_agent_socket: Option<&'a Path>,
+    /// Host DNS filter socket path. When set, the guest DNS proxy forwards
+    /// queries over vsock to this socket for filtering.
+    pub dns_filter_socket: Option<&'a Path>,
+}
+
+/// Launch the agent VM using libkrun.
+///
 /// This function never returns on success.
-pub fn launch_agent_vm(
-    rootfs_path: &Path,
-    disks: &VmDisks<'_>,
-    vsock_socket: &Path,
-    proxy_socket: Option<&Path>,
-    console_log: Option<&Path>,
-    mounts: &[HostMount],
-    port_mappings: &[PortMapping],
-    resources: VmResources,
-) -> Result<()> {
+pub fn launch_agent_vm(config: &LaunchConfig<'_>) -> Result<()> {
+    let LaunchConfig {
+        rootfs_path,
+        disks,
+        vsock_socket,
+        console_log,
+        mounts,
+        port_mappings,
+        resources,
+        ssh_agent_socket,
+        dns_filter_socket,
+    } = config;
     // Raise file descriptor limits
     raise_fd_limits();
 
@@ -212,8 +253,12 @@ pub fn launch_agent_vm(
         // TSI allows the guest to access the network via the host's network stack
         // by intercepting socket system calls and proxying them through vsock.
         //
+        // Note: TSI supports TCP/UDP but not raw sockets (e.g., ICMP/ping).
+        //
         // We must explicitly disable the implicit vsock and add our own vsock
         // to control whether network access is enabled or disabled.
+        // Without this, libkrun's implicit vsock uses heuristics that may
+        // inadvertently enable network access.
 
         // Always disable implicit vsock to take explicit control
         if krun_disable_implicit_vsock(ctx) < 0 {
@@ -224,7 +269,11 @@ pub fn launch_agent_vm(
             ));
         }
 
-        if resources.network || !port_mappings.is_empty() {
+        let has_egress_policy = resources
+            .allowed_cidrs
+            .as_ref()
+            .is_some_and(|c| !c.is_empty());
+        if resources.network || !port_mappings.is_empty() || has_egress_policy {
             // Add vsock with TSI HIJACK_INET flag to enable network access
             if krun_add_vsock(ctx, KRUN_TSI_HIJACK_INET) < 0 {
                 krun_free_ctx(ctx);
@@ -251,14 +300,60 @@ pub fn launch_agent_vm(
                 return Err(Error::agent("set port mapping", "krun_set_port_map failed"));
             }
 
+            // Set egress policy (CIDR-based filtering) if specified.
+            // Resolved via dlsym at runtime for backwards compatibility.
+            if let Some(ref cidrs) = resources.allowed_cidrs {
+                type SetEgressPolicyFn =
+                    unsafe extern "C" fn(u32, *const *const libc::c_char) -> i32;
+
+                let sym_name =
+                    CString::new("krun_set_egress_policy").expect("symbol name is static");
+                let sym = libc::dlsym(libc::RTLD_DEFAULT, sym_name.as_ptr());
+                if sym.is_null() {
+                    krun_free_ctx(ctx);
+                    return Err(Error::agent(
+                        "set egress policy",
+                        "libkrun does not support egress policy (krun_set_egress_policy not found). \
+                         Update libkrun or remove --allow-cidr flags.",
+                    ));
+                }
+                #[allow(clippy::missing_transmute_annotations)]
+                let set_egress: SetEgressPolicyFn = std::mem::transmute(sym);
+
+                let mut all_cidrs = cidrs.clone();
+                crate::data::network::ensure_dns_in_cidrs(&mut all_cidrs);
+
+                let cidr_cstrings: Vec<CString> = all_cidrs
+                    .iter()
+                    .map(|c| CString::new(c.as_str()).expect("CIDR cannot contain null bytes"))
+                    .collect();
+                let mut cidr_ptrs: Vec<*const libc::c_char> =
+                    cidr_cstrings.iter().map(|s| s.as_ptr()).collect();
+                cidr_ptrs.push(std::ptr::null());
+
+                if set_egress(ctx, cidr_ptrs.as_ptr()) < 0 {
+                    krun_free_ctx(ctx);
+                    return Err(Error::agent(
+                        "set egress policy",
+                        "krun_set_egress_policy failed",
+                    ));
+                }
+
+                tracing::debug!(
+                    cidr_count = all_cidrs.len(),
+                    "configured egress policy with CIDR filtering"
+                );
+            }
+
             tracing::debug!(
                 network = resources.network,
                 port_count = port_mappings.len(),
                 "configured TSI networking with HIJACK_INET"
             );
         } else {
-            // Add vsock without TSI features — needed for the control channel
-            // but doesn't enable network interception.
+            // Add vsock without TSI features - this is needed for the control
+            // channel but doesn't enable network interception.
+            // Using 0 for tsi_features means no network interception.
             if krun_add_vsock(ctx, 0) < 0 {
                 krun_free_ctx(ctx);
                 return Err(Error::agent("configure vsock", "krun_add_vsock failed"));
@@ -285,22 +380,20 @@ pub fn launch_agent_vm(
 
         // Add overlay disk for persistent rootfs changes (optional)
         // This is the second disk → /dev/vdb in guest
-        // NOTE: Temporarily disabled — may cause EINVAL on some libkrun versions
-        if let Some(_overlay) = disks.overlay {
-            // let overlay_id = cstr("overlay");
-            // let overlay_path = try_or_free_ctx!(
-            //     path_to_cstring(overlay.path()),
-            //     "add overlay disk",
-            //     "path contains null byte"
-            // );
-            // if krun_add_disk2(ctx, overlay_id.as_ptr(), overlay_path.as_ptr(), 0, false) < 0 {
-            //     krun_free_ctx(ctx);
-            //     return Err(Error::agent(
-            //         "add overlay disk",
-            //         "krun_add_disk2 failed for rootfs overlay",
-            //     ));
-            // }
-            tracing::debug!("overlay disk skipped (disabled for compatibility)");
+        if let Some(overlay) = disks.overlay {
+            let overlay_id = cstr("overlay");
+            let overlay_path = try_or_free_ctx!(
+                path_to_cstring(overlay.path()),
+                "add overlay disk",
+                "path contains null byte"
+            );
+            if krun_add_disk2(ctx, overlay_id.as_ptr(), overlay_path.as_ptr(), 0, false) < 0 {
+                krun_free_ctx(ctx);
+                return Err(Error::agent(
+                    "add overlay disk",
+                    "krun_add_disk2 failed for rootfs overlay",
+                ));
+            }
         }
 
         // Add vsock port for control channel (critical - host-guest communication)
@@ -317,18 +410,36 @@ pub fn launch_agent_vm(
             ));
         }
 
-        // Add vsock port for secret proxy (if configured)
-        if let Some(proxy_path) = proxy_socket {
-            let proxy_path_c = try_or_free_ctx!(
-                path_to_cstring(proxy_path),
-                "add proxy vsock port",
+        // Add vsock port for SSH agent forwarding (optional)
+        if let Some(ssh_socket) = ssh_agent_socket {
+            let ssh_path = try_or_free_ctx!(
+                path_to_cstring(ssh_socket),
+                "add ssh agent vsock port",
                 "path contains null byte"
             );
-            if krun_add_vsock_port2(ctx, ports::SECRET_PROXY, proxy_path_c.as_ptr(), true) < 0 {
-                // Non-fatal: proxy is optional enhancement
-                tracing::warn!("failed to add secret proxy vsock port");
+            // listen=false: guest connects out to this port, host receives via Unix socket
+            if krun_add_vsock_port2(ctx, ports::SSH_AGENT, ssh_path.as_ptr(), false) < 0 {
+                tracing::warn!("failed to add SSH agent vsock port — SSH forwarding disabled");
             } else {
-                tracing::debug!("configured secret proxy vsock port {}", ports::SECRET_PROXY);
+                tracing::info!(
+                    "SSH agent forwarding enabled on vsock port {}",
+                    ports::SSH_AGENT
+                );
+            }
+        }
+
+        // Add vsock port for DNS filter proxy (optional)
+        if let Some(dns_socket) = dns_filter_socket {
+            let dns_path = try_or_free_ctx!(
+                path_to_cstring(dns_socket),
+                "add dns filter vsock port",
+                "path contains null byte"
+            );
+            // listen=false: guest connects out to this port, host listens via Unix socket
+            if krun_add_vsock_port2(ctx, ports::DNS_FILTER, dns_path.as_ptr(), false) < 0 {
+                tracing::warn!("failed to add DNS filter vsock port — DNS filtering disabled");
+            } else {
+                tracing::info!("DNS filtering enabled on vsock port {}", ports::DNS_FILTER);
             }
         }
 
@@ -415,12 +526,14 @@ pub fn launch_agent_vm(
             }
         }
 
-        // Pass allowed domains for egress filtering (S03)
-        if !resources.allowed_domains.is_empty() {
-            let domains = resources.allowed_domains.join(",");
-            if let Ok(cstr) = CString::new(format!("SMOLVM_ALLOWED_DOMAINS={}", domains)) {
-                env_strings.push(cstr);
-            }
+        // Tell the agent to start SSH agent forwarding bridge
+        if ssh_agent_socket.is_some() {
+            env_strings.push(cstr("SMOLVM_SSH_AGENT=1"));
+        }
+
+        // Tell the agent to start DNS filtering proxy
+        if dns_filter_socket.is_some() {
+            env_strings.push(cstr("SMOLVM_DNS_FILTER=1"));
         }
 
         let mut envp: Vec<*const libc::c_char> = env_strings.iter().map(|s| s.as_ptr()).collect();

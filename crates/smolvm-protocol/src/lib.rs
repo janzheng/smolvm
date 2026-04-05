@@ -58,8 +58,10 @@ pub mod ports {
     pub const WORKLOAD_LOGS: u32 = 5001;
     /// Agent control port (for OCI operations and management).
     pub const AGENT_CONTROL: u32 = 6000;
-    /// Secret proxy port (for API key injection without exposing secrets in VM).
-    pub const SECRET_PROXY: u32 = 6100;
+    /// SSH agent forwarding (host SSH_AUTH_SOCK bridged to guest).
+    pub const SSH_AGENT: u32 = 6001;
+    /// DNS filtering proxy (guest forwards DNS queries to host for filtering).
+    pub const DNS_FILTER: u32 = 6002;
 }
 
 /// vsock CID constants.
@@ -171,9 +173,9 @@ pub enum AgentRequest {
         /// Allocate a pseudo-TTY for the command.
         #[serde(default)]
         tty: bool,
-        /// Run as this user (via setuid/setgid). None = root.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        user: Option<String>,
+        /// Background mode - spawn and return PID immediately without waiting.
+        #[serde(default)]
+        background: bool,
     },
 
     /// Run a command in an image's rootfs.
@@ -207,9 +209,6 @@ pub enum AgentRequest {
         /// Enables terminal features like colors, line editing, and signal handling.
         #[serde(default)]
         tty: bool,
-        /// Run as this user (via setuid/setgid). None = root.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        user: Option<String>,
     },
 
     /// Send stdin data to a running interactive command.
@@ -301,9 +300,6 @@ pub enum AgentRequest {
         /// Enables terminal features like colors, line editing, and signal handling.
         #[serde(default)]
         tty: bool,
-        /// Run as this user (via setuid/setgid). None = root.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        user: Option<String>,
     },
 }
 
@@ -900,6 +896,7 @@ mod tests {
         assert_eq!(ports::WORKLOAD_CONTROL, 5000);
         assert_eq!(ports::WORKLOAD_LOGS, 5001);
         assert_eq!(ports::AGENT_CONTROL, 6000);
+        assert_eq!(ports::SSH_AGENT, 6001);
     }
 
     #[test]

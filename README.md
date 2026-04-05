@@ -1,239 +1,150 @@
-# smolvm
+<p align="center">
+  <img src="assets/logo.png" alt="smol machines" width="80">
+</p>
 
-A small computer for agents. Each machine is an isolated micro VM with its own filesystem, network, and tools. Push code in, work on it, pull results out. Fork, snapshot, merge — like git, but for entire machines.
+<p align="center">
+  <a href="https://discord.gg/qhQ7FHZ2zd"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://github.com/smol-machines/smolvm/releases"><img src="https://img.shields.io/github/v/release/smol-machines/smolvm?label=Release" alt="Release"></a>
+  <a href="https://github.com/smol-machines/smolvm/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
+</p>
 
-Built on [smolvm](https://smolmachines.com) (libkrun micro VMs). Runs locally on macOS (Apple Silicon) or Linux (KVM). Access remotely via Cloudflare tunnel + bearer token auth.
+smolvm
+======
 
-See [docs/](docs/) for architecture and design documentation.
+Ship and run software with isolation by default.
 
-## Quick Start
+This is cli tool that lets you:
+1. Manage and run custom linux virtual machine locally with: subsecond coldstart, cross-platform (macOS,Linux), elastic memory usage.
+2. Pack a stateful virtual machine into a single file (.smolmachine) to rehydrate on any supported platforms.
 
-```bash
-# Start the server
-smolvm serve start --listen 127.0.0.1:9090
-
-# Spin up a machine
-deno task ctl up my-vm
-
-# Run commands
-deno task ctl sh my-vm "apk add git nodejs npm"
-deno task ctl sh my-vm "node --version"
-
-# Copy files in and out
-deno task ctl cp ./my-project my-vm:/workspace/my-project
-deno task ctl sh my-vm "cd /workspace/my-project && npm test"
-deno task ctl cp my-vm:/workspace/my-project/dist ./dist
-
-# Clone, diff, merge
-deno task ctl clone my-vm my-vm-fork
-deno task ctl diff my-vm my-vm-fork
-deno task ctl merge my-vm-fork my-vm
-
-# Clean up
-deno task ctl down my-vm
-```
-
-## What's Here
-
-```
-src/               Rust server source (forked from smol-machines/smolvm)
-crates/            Agent binary, protocol, pack, napi crates
-lib/               Bundled libkrun/libkrunfw dylibs
-sdk-ts/            TypeScript SDK (used by Brigade, smolctl, tests)
-cli/smolctl.ts     CLI for managing machinees (deno task ctl)
-tests/             SDK tests (*.ts) + shell integration tests (*.sh)
-playtests/         Agentic playtest scripts (e2e-playtest.sh)
-starters/          Smolfile templates (node, python, openclaw)
-docs/              API reference, security docs, research
-mcp-servers/       MCP server configs for machineed tools
-deploy/            Deployment configs
-.references/       Legacy code (gitignored, local-only)
-```
-
-## smolctl CLI
-
-Full machine management via `deno task ctl <command>`:
-
-| Command | Description |
-|---|---|
-| `up/down <name>` | Create+start / stop+delete |
-| `ls` | List machinees |
-| `sh <name> <cmd>` | Run shell command |
-| `exec <name> <cmd...>` | Run command (no shell) |
-| `cp <src> <dst>` | Copy files in/out (`./local vm:/remote`) |
-| `git clone <name> <url>` | Clone repo inside machine |
-| `clone/diff/merge` | Git-like VM workflows |
-| `snapshot push/pull/ls/rm/export/import/merge/lineage/squash` | Full snapshot management |
-| `image pull/ls` | OCI image management |
-| `run <name> <img> <cmd>` | Run in OCI overlay |
-| `files ls/cat/write/rm` | File operations |
-| `sync push/pull <name>` | Push/pull dirs (`--to /remote`, `--exclude`, `--dry-run`) |
-| `container ls/create/start/stop/rm/exec` | Manage containers inside machine |
-| `agent run/fleet/worker` | Run Claude Code agents in machinees |
-| `auth login/status/logout` | Claude subscription auth (OAuth) |
-| `job submit/ls/claim` | Work queue for agent tasks |
-| `mcp servers/tools/call` | MCP server integration |
-| `pool add/ls/rm/status` | Multi-node pool management |
-| `starter init/validate/ls/export/import` | Custom starter templates |
-| `dashboard` | Interactive TUI dashboard |
-| `tunnel start/stop` | Cloudflare/ngrok tunnel management |
-| `debug mounts/network` | Diagnostic info for troubleshooting |
-| `prune` | Delete all machinees |
-| `health` | Server health check |
-
-Exec flags: `--env KEY=VALUE`, `--workdir /path`, `--user <name>`, `--timeout <secs>`
-
-## Remote Access
+Install
+-------
 
 ```bash
-# Quick way (via smolctl — handles cloudflared lifecycle)
-smolctl tunnel start          # Starts cloudflared, prints public URL
-smolctl tunnel status         # Shows URL + PID
-smolctl tunnel stop           # Kills cloudflared
-
-# Manual way
-smolvm serve start --listen 127.0.0.1:9090 --generate-token
-cloudflared tunnel --url http://localhost:9090
-
-# From anywhere
-export SMOLVM_URL=https://your-tunnel.trycloudflare.com
-export SMOLVM_API_TOKEN=<token>
-deno task ctl ls
+curl -sSL https://smolmachines.com/install.sh | bash
 ```
 
-Requires `cloudflared` (`brew install cloudflared`). See [docs/TUNNEL.md](docs/TUNNEL.md) for the full setup guide.
+Or download from [GitHub Releases](https://github.com/smol-machines/smolvm/releases).
 
-## Running Tests
-
-### server integration tests (shell scripts, no server needed)
+Quick Start
+-----------
 
 ```bash
-cd server && ./tests/run_all.sh          # All 125 tests (6 suites)
-cd server && ./tests/run_all.sh machine   # Individual suite
-cd server && cargo test                   # Rust unit tests (200+)
+# run a command in an ephemeral VM (cleaned up after exit)
+smolvm machine run --net --image alpine -- echo "hello from a microVM"
+
+# interactive shell
+smolvm machine run --net -it --image alpine
 ```
 
-### E2E playtests (need running server + smolctl)
+Use This For
+------------
+
+**Sandbox untrusted code** — run untrusted programs in a hardware-isolated VM. Host filesystem, network, and credentials are separated by a hypervisor boundary.
 
 ```bash
-# Start server first (use cargo-make for correct env vars)
-cd server && cargo make smolvm serve start
-# Or manually: DYLD_LIBRARY_PATH=./lib ./target/release/smolvm serve start
+smolvm machine run --image alpine -- sh -c "pip install sketchy-package"
+# runs in its own kernel — can't touch your host filesystem or network
 
-# Run playtests (in a separate terminal)
-bash playtests/e2e-playtest.sh
+# lock down egress — only allow specific hosts
+smolvm machine run --allow-host registry.npmjs.org --image node:20-alpine -- npm install
+# npm install works, but malicious postinstall scripts can't phone home
 ```
 
-Results: 80 pass, 0 fail, 1 skip (dashboard — needs interactive terminal).
-Results get appended to `playtests/PLAYTEST-LOG.md`.
-
-For agent tests (PT-7), authenticate first: `smolctl auth login` (see [Claude Code Auth](#claude-code-auth)).
-For tunnel tests (PT-10), install cloudflared: `brew install cloudflared`.
-
-### TypeScript SDK tests (need running server)
+**Pack into portable executables** — turn any workload into a self-contained binary.
 
 ```bash
-smolvm serve start --listen 127.0.0.1:9090
-
-deno task test-all          # All suites
-deno task test              # Machine basics
-deno task test-capabilities # Full capability matrix
-deno task test-fleet        # Multi-machine parallelism
-deno task test-isolation    # Security + isolation
-deno task test-containers   # Container lifecycle + debug
-deno task test-sync         # Sync push/pull
+smolvm pack create --image python:3.12-alpine -o ./my-app
+./my-app run -- python3 -c "print('runs anywhere — no dependencies')"
 ```
 
-With auth: `SMOLVM_API_TOKEN=<token> deno task test-all`
+**Persistent machines for development** — create, stop, start. Installed packages survive restarts.
 
-## Claude Code Auth
-
-`smolctl agent run` launches Claude Code inside a machine. Two auth methods:
-
-**Option 1 — Claude subscription (recommended):**
 ```bash
-smolctl auth login
+smolvm machine create --net myvm
+smolvm machine start --name myvm
+smolvm machine exec --name myvm -- apk add sl
+smolvm machine exec --name myvm -it -- /bin/sh
+# try: sl, ls, uname -a — type 'exit' to leave
+smolvm machine stop --name myvm
 ```
-Opens a browser, authenticates via Claude.ai OAuth (PKCE flow), and saves tokens to the project `.env` (next to `cli/`). Uses your Claude subscription — no API key needed. Tokens auto-refresh.
 
-**Option 2 — API key:**
+**Use git and SSH without exposing keys** — forward your host SSH agent into the VM. Private keys never enter the guest — the hypervisor enforces this. Requires an SSH agent running on your host (`ssh-add -l` to check).
+
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-# or add to .env
+smolvm machine run --ssh-agent --net --image alpine -- ssh-add -l
+# lists your host keys, but they can't be extracted from inside the VM
+
+smolvm machine exec --name myvm -- git clone git@github.com:org/private-repo.git
 ```
 
-The agent run command uses subscription mode by default. Claude Code runs in `--settings` mode inside the machine so it can accept permissions headlessly.
+**Declare environments with a Smolfile** — reproducible VM config in a simple TOML file.
 
-## Performance
+```toml
+image = "python:3.12-alpine"
+net = true
 
-| Metric | Result |
-|---|---|
-| Create | 6-14ms |
-| Boot | 258-805ms |
-| First exec | 12-15ms |
-| Warm exec | 12ms |
-| Fleet (3 parallel) | 82ms/machine |
+[network]
+allow_hosts = ["api.stripe.com", "db.example.com"]
 
-## Security
+[dev]
+init = ["pip install -r requirements.txt"]
+volumes = ["./src:/app"]
 
-- Bearer token auth on all `/api/v1/*` routes (`--api-token` or `--generate-token`)
-- Non-root exec via setuid/setgid
-- Fork bomb protection (RLIMIT_NPROC)
-- Health/metrics/SwaggerUI stay public
+[auth]
+ssh_agent = true
+```
 
-## Known Upstream Bugs
-
-These need fixes in smolvm/libkrun:
-
-- **Port mapping** connections refused (use tunnels instead)
-- **Container-in-machine** 500 error
-- **VM can reach host API** via TSI (mitigated by auth token)
-- ~~**Stale overlay rootfs from machine run**~~ Fixed in upstream #41 (synced)
-
-## Notes for AI Agents
-
-Common pitfalls when working on this project:
-
-### Directory layout
-
-- **`src/`** + **`crates/`** — Our fork of smol-machines/smolvm. Rust server source + agent/protocol/pack crates. Synced with upstream + our extensions (API server, auth, snapshots, etc.)
-- **`cli/smolctl.ts`** — The TypeScript CLI that wraps the HTTP API. Run with `deno run -A cli/smolctl.ts`.
-- **`.references/`** — Legacy/experimental code (gitignored). Upstream reference copy, old prototypes. Do NOT modify.
-
-### Building server
-
-Always use `cargo make` at repo root — it handles `DYLD_LIBRARY_PATH`, `SMOLVM_AGENT_ROOTFS`, and codesigning automatically:
 ```bash
-cargo make dev                    # build + codesign
-cargo make smolvm serve start     # run with correct env vars
-cargo make smolvm machine run --net alpine -- echo hello
+smolvm machine create myvm -s Smolfile
+smolvm machine start --name myvm
 ```
 
-Running the binary directly without `DYLD_LIBRARY_PATH=./lib` will fail silently or with a cryptic dylib error. Do NOT use `cargo run` for the server — it doesn't set the library path.
+More examples: [python](https://github.com/smol-machines/smolvm/tree/main/examples/python-app) · [node](https://github.com/smol-machines/smolvm/tree/main/examples/node-app) · [doom](https://github.com/smol-machines/smolvm/tree/main/examples/doom-web)
 
-### Three test layers (don't confuse them)
+How It Works
+------------
 
-| Layer | Command | Needs server? | Needs VM env? | Count |
-|-------|---------|---------------|---------------|-------|
-| Rust unit tests | `cd server && cargo test` | No | No | 200+ |
-| Shell integration | `cd server && ./tests/run_all.sh` | No | Yes (Hypervisor.framework / KVM) | 125 |
-| E2E playtests | `bash playtests/e2e-playtest.sh` | **Yes** (server must be running) | Yes | 73 |
+Each workload gets real hardware isolation — its own kernel on [Hypervisor.framework](https://developer.apple.com/documentation/hypervisor) (macOS) or KVM (Linux). [libkrun](https://github.com/containers/libkrun) VMM with custom kernel: [libkrunfw](https://github.com/smol-machines/libkrunfw). Pack it into a `.smolmachine` and it runs anywhere the host architecture matches, with zero dependencies.
 
-For the E2E playtests, start the server in one terminal, run playtests in another.
+Defaults: 4 vCPUs, 8 GiB RAM. Memory is elastic via virtio balloon — the host only commits what the guest actually uses and reclaims the rest automatically. vCPU threads sleep in the hypervisor when idle, so over-provisioning has near-zero cost. Override with `--cpus` and `--mem`.
 
-### Server commands
+Comparison
+----------
 
-- Start: `smolvm serve start` (NOT `smolvm serve`)
-- The server listens on `127.0.0.1:9090` by default
-- With auth: `smolvm serve start --generate-token`
+|                     | smolvm | Containers | Colima | QEMU | Firecracker | Kata |
+|---------------------|--------|------------|--------|------|-------------|------|
+| Isolation           | VM per workload | Namespace (shared kernel) | Namespace (1 VM) | Separate VM | Separate VM | VM per container |
+| Boot time           | <200ms | ~100ms | ~seconds | ~15-30s | <125ms | ~500ms |
+| Architecture        | Library (libkrun) | Daemon | Daemon (in VM) | Process | Process | Runtime stack |
+| Per-workload VMs    | Yes | No | No (shared) | Yes | Yes | Yes |
+| macOS native        | Yes | Via Docker VM | Yes (krunkit) | Yes | No | No |
+| Embeddable SDK      | Yes | No | No | No | No | No |
+| Portable artifacts  | `.smolmachine` | Images (need daemon) | No | No | No | No |
 
-### Claude Code in machinees
+Platform Support
+----------------
 
-Uses **subscription mode** (OAuth), not API keys by default. Authenticate with `smolctl auth login` — opens browser, saves tokens to the project `.env`. Claude Code runs with `--settings` flag inside the machine for headless permission acceptance. See `.env.example` for all auth options.
+| Host | Guest | Requirements |
+|------|-------|-------------|
+| macOS Apple Silicon | arm64 Linux | macOS 11+ |
+| macOS Intel | x86_64 Linux | macOS 11+ (untested) |
+| Linux x86_64 | x86_64 Linux | KVM (`/dev/kvm`) |
+| Linux aarch64 | aarch64 Linux | KVM (`/dev/kvm`) |
 
-### VM storage architecture
+Known Limitations
+-----------------
 
-- Each VM gets its own ext4 disk at `/dev/vda`, mounted at `/storage/workspace`
-- Overlay rootfs means `/` is writable but changes are per-VM
-- Snapshots capture the overlay + workspace disk
-- `exitCode` (camelCase) in API responses, not `exit_code`
+* Network is opt-in (`--net` on `machine create`). The default machine has networking enabled. TCP/UDP only, no ICMP.
+* Volume mounts: directories only (no single files).
+* macOS: binary must be signed with Hypervisor.framework entitlements.
+* `--ssh-agent` requires an SSH agent running on the host (`SSH_AUTH_SOCK` must be set).
+
+Development
+-----------
+
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+> Alpha — APIs may change.
+
+[Apache-2.0](LICENSE) · made by [@binsquare](https://github.com/BinSquare) · [twitter](https://x.com/binsquares) · [github](https://github.com/smol-machines/smolvm)

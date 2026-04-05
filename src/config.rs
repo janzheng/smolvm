@@ -89,12 +89,51 @@ pub struct RestartConfig {
     /// Maximum number of restart attempts (0 = unlimited).
     #[serde(default)]
     pub max_retries: u32,
+    /// Maximum backoff duration in seconds (0 = use default 300s).
+    #[serde(default)]
+    pub max_backoff_secs: u64,
     /// Current restart count.
     #[serde(default)]
     pub restart_count: u32,
     /// Whether the user explicitly stopped this machine.
     #[serde(default)]
     pub user_stopped: bool,
+}
+
+impl RestartConfig {
+    /// Determine whether the machine should be restarted based on the policy,
+    /// exit code, and current restart count.
+    pub fn should_restart(&self, exit_code: Option<i32>) -> bool {
+        // Check max retries limit (0 = unlimited)
+        if self.max_retries > 0 && self.restart_count >= self.max_retries {
+            return false;
+        }
+        match self.policy {
+            RestartPolicy::Never => false,
+            RestartPolicy::Always => true,
+            RestartPolicy::OnFailure => exit_code != Some(0),
+            RestartPolicy::UnlessStopped => !self.user_stopped,
+        }
+    }
+
+    /// Default maximum backoff duration in seconds (5 minutes).
+    const DEFAULT_MAX_BACKOFF_SECS: u64 = 300;
+
+    /// Maximum exponent for backoff calculation (2^8 = 256s).
+    const MAX_BACKOFF_EXPONENT: u32 = 8;
+
+    /// Calculate exponential backoff duration for the current restart count.
+    ///
+    /// Formula: 2^n seconds, capped at max_backoff_secs (default 300s).
+    pub fn backoff_duration(&self) -> std::time::Duration {
+        let max_secs = if self.max_backoff_secs > 0 {
+            self.max_backoff_secs
+        } else {
+            Self::DEFAULT_MAX_BACKOFF_SECS
+        };
+        let exponent = self.restart_count.min(Self::MAX_BACKOFF_EXPONENT);
+        std::time::Duration::from_secs(2u64.pow(exponent).min(max_secs))
+    }
 }
 
 /// Global smolvm configuration with database-backed persistence.
@@ -272,7 +311,7 @@ impl SmolvmConfig {
 
 /// Record of a VM in the registry.
 ///
-/// This stores microvm configuration only. Container configuration
+/// This stores machine configuration only. Container configuration
 /// is managed separately via the container commands.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VmRecord {
@@ -342,6 +381,51 @@ pub struct VmRecord {
     /// Overlay disk size in GiB (None = default 10 GiB).
     #[serde(default)]
     pub overlay_gb: Option<u64>,
+
+    /// Allowed egress CIDR ranges. None = unrestricted, Some([]) = deny all.
+    #[serde(default)]
+    pub allowed_cidrs: Option<Vec<String>>,
+
+    /// OCI image for auto-container creation on start.
+    #[serde(default)]
+    pub image: Option<String>,
+
+    /// Entrypoint for the container.
+    #[serde(default)]
+    pub entrypoint: Vec<String>,
+
+    /// Default command for the container.
+    #[serde(default)]
+    pub cmd: Vec<String>,
+
+    /// Health check command (run inside VM to verify workload is healthy).
+    #[serde(default)]
+    pub health_cmd: Option<Vec<String>>,
+
+    /// Health check interval in seconds.
+    #[serde(default)]
+    pub health_interval_secs: Option<u64>,
+
+    /// Health check timeout in seconds.
+    #[serde(default)]
+    pub health_timeout_secs: Option<u64>,
+
+    /// Health check failure threshold before marking unhealthy.
+    #[serde(default)]
+    pub health_retries: Option<u32>,
+
+    /// Grace period in seconds before health checks start after boot.
+    #[serde(default)]
+    pub health_startup_grace_secs: Option<u64>,
+
+    /// Enable SSH agent forwarding into the VM.
+    #[serde(default)]
+    pub ssh_agent: bool,
+
+    /// Hostnames for DNS filtering. When set, the guest DNS proxy filters
+    /// queries against this allowlist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dns_filter_hosts: Option<Vec<String>>,
 }
 
 fn default_cpus() -> u8 {
@@ -380,6 +464,17 @@ impl VmRecord {
             workdir: None,
             storage_gb: None,
             overlay_gb: None,
+            allowed_cidrs: None,
+            image: None,
+            entrypoint: Vec::new(),
+            cmd: Vec::new(),
+            health_cmd: None,
+            health_interval_secs: None,
+            health_timeout_secs: None,
+            health_retries: None,
+            health_startup_grace_secs: None,
+            ssh_agent: false,
+            dns_filter_hosts: None,
         }
     }
 
@@ -411,6 +506,17 @@ impl VmRecord {
             workdir: None,
             storage_gb: None,
             overlay_gb: None,
+            allowed_cidrs: None,
+            image: None,
+            entrypoint: Vec::new(),
+            cmd: Vec::new(),
+            health_cmd: None,
+            health_interval_secs: None,
+            health_timeout_secs: None,
+            health_retries: None,
+            health_startup_grace_secs: None,
+            ssh_agent: false,
+            dns_filter_hosts: None,
         }
     }
 
@@ -467,7 +573,7 @@ impl VmRecord {
             network: self.network,
             storage_gib: self.storage_gb,
             overlay_gib: self.overlay_gb,
-            allowed_domains: Vec::new(),
+            allowed_cidrs: self.allowed_cidrs.clone(),
         }
     }
 }
@@ -498,8 +604,7 @@ mod tests {
         let restart = RestartConfig {
             policy: RestartPolicy::Always,
             max_retries: 5,
-            restart_count: 0,
-            user_stopped: false,
+            ..Default::default()
         };
         let record =
             VmRecord::new_with_restart("test".to_string(), 2, 512, vec![], vec![], false, restart);
@@ -560,6 +665,136 @@ mod tests {
         assert_eq!(config.max_retries, 0);
         assert_eq!(config.restart_count, 0);
         assert!(!config.user_stopped);
+    }
+
+    #[test]
+    fn test_should_restart() {
+        // (policy, max_retries, restart_count, user_stopped, last_exit_code, expected, desc)
+        let cases = [
+            (
+                RestartPolicy::Never,
+                0,
+                0,
+                false,
+                None,
+                false,
+                "never policy",
+            ),
+            (
+                RestartPolicy::Always,
+                0,
+                5,
+                false,
+                None,
+                true,
+                "always policy",
+            ),
+            (
+                RestartPolicy::Always,
+                3,
+                3,
+                false,
+                None,
+                false,
+                "max retries reached",
+            ),
+            (
+                RestartPolicy::Always,
+                3,
+                2,
+                false,
+                None,
+                true,
+                "under max retries",
+            ),
+            (
+                RestartPolicy::OnFailure,
+                0,
+                0,
+                false,
+                Some(1),
+                true,
+                "on-failure non-zero exit",
+            ),
+            (
+                RestartPolicy::OnFailure,
+                0,
+                0,
+                false,
+                Some(0),
+                false,
+                "on-failure clean exit",
+            ),
+            (
+                RestartPolicy::OnFailure,
+                0,
+                0,
+                false,
+                None,
+                true,
+                "on-failure unknown exit",
+            ),
+            (
+                RestartPolicy::UnlessStopped,
+                0,
+                0,
+                false,
+                None,
+                true,
+                "unless-stopped running",
+            ),
+            (
+                RestartPolicy::UnlessStopped,
+                0,
+                0,
+                true,
+                None,
+                false,
+                "unless-stopped user stopped",
+            ),
+        ];
+
+        for (policy, max_retries, restart_count, user_stopped, last_exit_code, expected, desc) in
+            cases
+        {
+            let config = RestartConfig {
+                policy,
+                max_retries,
+                restart_count,
+                user_stopped,
+                ..Default::default()
+            };
+            assert_eq!(config.should_restart(last_exit_code), expected, "{}", desc);
+        }
+    }
+
+    #[test]
+    fn test_backoff_duration() {
+        use std::time::Duration;
+        let make = |count| RestartConfig {
+            restart_count: count,
+            ..Default::default()
+        };
+        assert_eq!(make(0).backoff_duration(), Duration::from_secs(1));
+        assert_eq!(make(1).backoff_duration(), Duration::from_secs(2));
+        assert_eq!(make(2).backoff_duration(), Duration::from_secs(4));
+        assert_eq!(make(3).backoff_duration(), Duration::from_secs(8));
+        assert_eq!(make(8).backoff_duration(), Duration::from_secs(256));
+        // Exponent capped at 8 → 256s for any count >= 8
+        assert_eq!(make(9).backoff_duration(), Duration::from_secs(256));
+        assert_eq!(make(100).backoff_duration(), Duration::from_secs(256));
+    }
+
+    #[test]
+    fn test_backoff_duration_respects_max_backoff() {
+        use std::time::Duration;
+        let config = RestartConfig {
+            restart_count: 8,
+            max_backoff_secs: 30,
+            ..Default::default()
+        };
+        // 2^8 = 256, but capped at 30s
+        assert_eq!(config.backoff_duration(), Duration::from_secs(30));
     }
 
     // ========================================================================

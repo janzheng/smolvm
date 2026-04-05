@@ -19,9 +19,9 @@ pub struct ProviderInfo {
     pub version: String,
     /// Supported capabilities (e.g., ["exec", "files", "mcp", "secrets", "merge", "clone"]).
     pub capabilities: Vec<String>,
-    /// Maximum number of machinees this provider can manage (None = unlimited).
+    /// Maximum number of machines this provider can manage (None = unlimited).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_machinees: Option<usize>,
+    pub max_machines: Option<usize>,
     /// Region or location label (e.g., "local", "us-east-1").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,
@@ -69,7 +69,7 @@ pub trait MachineProvider: Send + Sync {
     /// Get machine info by name.
     async fn get(&self, id: &str) -> Result<MachineInfo, ProviderError>;
 
-    /// List all machinees managed by this provider.
+    /// List all machines managed by this provider.
     async fn list(&self) -> Result<Vec<MachineInfo>, ProviderError>;
 
     /// Execute a command in a machine.

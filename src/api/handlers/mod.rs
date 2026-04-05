@@ -8,7 +8,6 @@ pub mod health;
 pub mod images;
 pub mod jobs;
 pub mod mcp;
-pub mod microvms;
 pub mod permissions;
 pub mod provider;
 pub mod machines;

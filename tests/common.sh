@@ -112,20 +112,56 @@ log_info() {
 # Track failed test names for summary
 FAILED_TESTS=()
 
-# Run a test function
+# Fail-fast mode: stop on first failure.
+# Set FAIL_FAST=1 or pass --fail-fast to run_all.sh.
+FAIL_FAST="${FAIL_FAST:-0}"
+
+# Single test filter: only run tests whose name contains this string.
+# Usage: TEST_FILTER="from .smolmachine" bash tests/test_machine.sh
+TEST_FILTER="${TEST_FILTER:-}"
+
+# Run a test function, capturing output and showing it on failure.
 run_test() {
     local test_name="$1"
     local test_func="$2"
 
+    # Skip if filter is set and test name doesn't match
+    if [[ -n "$TEST_FILTER" ]] && [[ "$test_name" != *"$TEST_FILTER"* ]]; then
+        return 0
+    fi
+
+    # Skip remaining tests if fail-fast triggered
+    if [[ "$FAIL_FAST" == "1" ]] && [[ $TESTS_FAILED -gt 0 ]]; then
+        return 0
+    fi
+
     ((TESTS_RUN++))
     log_test "$test_name"
 
-    if $test_func; then
+    local output_file
+    output_file=$(mktemp)
+
+    if $test_func 2>&1 | tee "$output_file"; then
         log_pass "$test_name"
+        rm -f "$output_file"
         return 0
     else
         log_fail "$test_name"
         FAILED_TESTS+=("$test_name")
+
+        # Show last 10 lines on failure (may already be visible, but
+        # repeating under the FAIL marker makes it easy to find)
+        local output
+        output=$(tail -10 "$output_file" 2>/dev/null || true)
+        if [[ -n "$output" ]]; then
+            echo -e "  ${RED}Error output:${NC}"
+            echo "$output" | sed 's/^/    /'
+        fi
+        rm -f "$output_file"
+
+        if [[ "$FAIL_FAST" == "1" ]]; then
+            echo -e "\n${RED}Stopping: --fail-fast is set${NC}"
+        fi
         return 1
     fi
 }
@@ -162,7 +198,7 @@ print_summary() {
     fi
 }
 
-# Get the data directory for a named microvm.
+# Get the data directory for a named machine.
 # Mirrors the logic in src/agent/manager.rs vm_data_dir().
 #   macOS:  ~/Library/Caches/smolvm/vms/<name>
 #   Linux:  ${XDG_CACHE_HOME:-~/.cache}/smolvm/vms/<name>
@@ -175,12 +211,12 @@ vm_data_dir() {
     fi
 }
 
-# Cleanup helper - stop microvm and remove named "default" from DB
+# Cleanup helper - stop machine and remove named "default" from DB
 # so tests start from a clean slate (no leftover DB records from
 # manual testing or previous test runs).
-cleanup_microvm() {
-    $SMOLVM microvm stop 2>/dev/null || true
-    $SMOLVM microvm delete default -f 2>/dev/null || true
+cleanup_machine() {
+    $SMOLVM machine stop 2>/dev/null || true
+    $SMOLVM machine delete default -f 2>/dev/null || true
 }
 
 # Verify that a VM's data directory was removed after deletion.
@@ -195,17 +231,17 @@ ensure_data_dir_deleted() {
     fi
 }
 
-# Ensure microvm is running
+# Ensure machine is running
 # If net=true, recreate with --net (needed for container image pulls)
-ensure_microvm_running() {
+ensure_machine_running() {
     local with_net="${1:-false}"
     if [[ "$with_net" == "true" ]]; then
         # Stop and delete existing default VM, recreate with --net
-        $SMOLVM microvm stop 2>/dev/null || true
-        $SMOLVM microvm delete default -f 2>/dev/null || true
-        $SMOLVM microvm create default --net 2>/dev/null || true
+        $SMOLVM machine stop 2>/dev/null || true
+        $SMOLVM machine delete default -f 2>/dev/null || true
+        $SMOLVM machine create default --net 2>/dev/null || true
     fi
-    $SMOLVM microvm start 2>/dev/null || true
+    $SMOLVM machine start 2>/dev/null || true
 }
 
 # Extract container ID from output
@@ -217,7 +253,7 @@ extract_container_id() {
 # Cleanup container by ID
 cleanup_container() {
     local container_id="$1"
-    $SMOLVM container rm default "$container_id" -f 2>/dev/null || true
+    $SMOLVM container rm --container "$container_id" -f 2>/dev/null || true
 }
 
 # Run a command with a timeout (default 60 seconds).
@@ -264,7 +300,7 @@ run_with_timeout() {
 # Kill any orphaned smolvm processes that might be holding the database lock.
 # This includes:
 #   - smolvm serve (API server)
-#   - smolvm-bin microvm start (VM processes from previous test runs)
+#   - smolvm-bin machine start (VM processes from previous test runs)
 #   - Packed binaries running as daemons
 #
 # Call this before running tests to ensure clean state.
@@ -279,13 +315,13 @@ kill_orphan_smolvm_processes() {
         ((killed++)) || true
     fi
 
-    # Kill any orphaned microvm processes (from smolvm-bin in dist/)
-    if pkill -f "smolvm-bin microvm start" 2>/dev/null; then
+    # Kill any orphaned machine processes (from smolvm-bin in dist/)
+    if pkill -f "smolvm-bin machine start" 2>/dev/null; then
         ((killed++)) || true
     fi
 
-    # Kill any orphaned microvm processes (from target/release)
-    if pkill -f "smolvm microvm start" 2>/dev/null; then
+    # Kill any orphaned machine processes (from target/release)
+    if pkill -f "smolvm machine start" 2>/dev/null; then
         ((killed++)) || true
     fi
 
@@ -318,7 +354,7 @@ wait_for_agent_ready() {
 # Check if any smolvm processes are running that might interfere with tests
 check_smolvm_processes() {
     local procs
-    procs=$(pgrep -f "(smolvm serve|smolvm-bin microvm start|smolvm microvm start)" 2>/dev/null || true)
+    procs=$(pgrep -f "(smolvm serve|smolvm-bin machine start|smolvm machine start)" 2>/dev/null || true)
     if [[ -n "$procs" ]]; then
         return 1  # Processes found
     fi
@@ -334,6 +370,6 @@ ensure_clean_test_environment() {
     if ! check_smolvm_processes; then
         log_info "Warning: Some smolvm processes are still running after cleanup"
         log_info "Processes:"
-        ps aux | grep -E "(smolvm serve|smolvm-bin microvm|smolvm microvm)" | grep -v grep || true
+        ps aux | grep -E "(smolvm serve|smolvm-bin machine|smolvm machine)" | grep -v grep || true
     fi
 }

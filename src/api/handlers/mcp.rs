@@ -1,6 +1,6 @@
 //! MCP (Model Context Protocol) handlers.
 //!
-//! Provides stateless MCP server interaction inside machinees via the existing
+//! Provides stateless MCP server interaction inside machines via the existing
 //! exec infrastructure. Each request execs the MCP server command, sends JSON-RPC
 //! messages through stdin, and parses the response from stdout.
 
@@ -169,7 +169,7 @@ pub async fn list_mcp_tools(
         let timeout = Some(Duration::from_secs(30));
 
         let result = with_machine_client(&entry, move |c| {
-            c.vm_exec_as(command, env, workdir, timeout, None)
+            c.vm_exec(command, env, workdir, timeout)
         })
         .await;
 
@@ -280,7 +280,7 @@ pub async fn call_mcp_tool(
     let timeout = Some(Duration::from_secs(60));
 
     let (exit_code, stdout, stderr) = with_machine_client(&entry, move |c| {
-        c.vm_exec_as(command, env, workdir, timeout, None)
+        c.vm_exec(command, env, workdir, timeout)
     })
     .await?;
 
@@ -405,7 +405,7 @@ pub async fn start_mcp_server(
     let timeout = Some(Duration::from_secs(30));
 
     let result = with_machine_client(&entry, move |c| {
-        c.vm_exec_as(command, env, workdir, timeout, None)
+        c.vm_exec(command, env, workdir, timeout)
     })
     .await;
 

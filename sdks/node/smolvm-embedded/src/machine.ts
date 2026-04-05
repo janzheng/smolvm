@@ -90,12 +90,32 @@ export class Machine {
   }
 
   /**
-   * Create and start a new machine.
+   * Create a new machine. Auto-starts unless `persistent: true` is set.
    */
   static async create(config: MachineConfig): Promise<Machine> {
     const machine = new Machine(config);
-    await machine.start();
+    if (!config.persistent) {
+      await machine.start();
+    }
     return machine;
+  }
+
+  /**
+   * Connect to an already-running machine by name.
+   *
+   * Throws NotFoundError if no running VM exists with the given name.
+   */
+  static async connect(name: string): Promise<Machine> {
+    try {
+      const config: MachineConfig = { name };
+      const machine = new Machine(config);
+      // Replace native with a connected instance
+      (machine as any).native = NapiMachine.connect(name);
+      machine.started = true;
+      return machine;
+    } catch (err) {
+      throw parseNativeError(err as Error);
+    }
   }
 
   /**
@@ -118,6 +138,16 @@ export class Machine {
   /** Get the current VM state: "stopped", "starting", "running", or "stopping". */
   get state(): string {
     return this.native.state();
+  }
+
+  /** Whether the VM process is currently running. */
+  get isRunning(): boolean {
+    return this.native.isRunning;
+  }
+
+  /** The child PID of the VM process, or null if not running. */
+  get pid(): number | null {
+    return this.native.pid ?? null;
   }
 
   /**

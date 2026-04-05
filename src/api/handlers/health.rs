@@ -28,6 +28,6 @@ pub async fn health() -> Json<HealthResponse> {
 pub async fn metrics(State(state): State<Arc<ApiState>>) -> String {
     // Update active machine gauge before rendering
     let count = state.list_machines().len() as u64;
-    crate::api::metrics::set_active_machinees(count);
+    crate::api::metrics::set_active_machines(count);
     state.metrics_handle.render()
 }

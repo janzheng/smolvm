@@ -15,12 +15,12 @@ use super::openapi::OpenapiCmd;
 pub enum ServeCmd {
     /// Start the HTTP API server
     #[command(after_long_help = "\
-Machinees persist independently of the server - they continue running even if the server stops.
+Machines persist independently of the server - they continue running even if the server stops.
 
 API ENDPOINTS:
   GET    /health                       Health check
   POST   /api/v1/machines             Create machine
-  GET    /api/v1/machines             List machinees
+  GET    /api/v1/machines             List machines
   GET    /api/v1/machines/:id         Get machine status
   POST   /api/v1/machines/:id/start   Start machine
   POST   /api/v1/machines/:id/stop    Stop machine
@@ -28,7 +28,7 @@ API ENDPOINTS:
   DELETE /api/v1/machines/:id         Delete machine
 
 EXAMPLES:
-  smolvm serve start                         Listen on 127.0.0.1:9090 (default)
+  smolvm serve start                         Listen on 127.0.0.1:8080 (default)
   smolvm serve start -l 0.0.0.0:9000         Listen on all interfaces, port 9000
   smolvm serve start -v                      Enable verbose logging")]
     Start(ServeStartCmd),
@@ -52,7 +52,7 @@ pub struct ServeStartCmd {
     #[arg(
         short,
         long,
-        default_value = "127.0.0.1:9090",
+        default_value = "127.0.0.1:8080",
         value_name = "ADDR:PORT"
     )]
     listen: String,
@@ -61,43 +61,18 @@ pub struct ServeStartCmd {
     #[arg(short, long)]
     verbose: bool,
 
-    /// CORS allowed origins (repeatable). Defaults to localhost:9090 and localhost:3000.
+    /// CORS allowed origins (repeatable). Defaults to localhost:8080 and localhost:3000.
     #[arg(long = "cors-origin", value_name = "ORIGIN")]
     cors_origins: Vec<String>,
 
-    /// Output logs in JSON format (for production log aggregation)
-    #[arg(long)]
-    json_logs: bool,
-
-    /// API bearer token for authentication. Also reads SMOLVM_API_TOKEN env var.
-    /// When set, all /api/v1/* requests require `Authorization: Bearer <token>`.
-    #[arg(long = "api-token", value_name = "TOKEN")]
+    /// Bearer token for API authentication. When set, all API requests must
+    /// include `Authorization: Bearer <token>`.
+    #[arg(long, env = "SMOLVM_API_TOKEN", value_name = "TOKEN")]
     api_token: Option<String>,
 
-    /// Generate a random API token at startup and print it to stderr.
-    /// Ignored if --api-token or SMOLVM_API_TOKEN is already set.
-    #[arg(long)]
-    generate_token: bool,
-
-    /// Register a secret for the secret proxy (repeatable).
-    /// Format: NAME=VALUE (e.g., --secret anthropic=test-ant-xxx).
-    /// Also reads SMOLVM_SECRET_* environment variables.
-    /// Secrets are injected into machinees that request them via the `secrets` field,
-    /// without the real key ever entering the VM.
-    #[arg(long = "secret", value_name = "NAME=VALUE")]
-    secrets: Vec<String>,
-
-    /// Path to a TOML config file defining custom proxy services.
-    /// Defaults to ~/.smolvm/services.toml if it exists.
-    /// Custom services are merged with built-in definitions (anthropic, openai, google).
-    #[arg(long = "services-config", value_name = "PATH")]
-    services_config: Option<String>,
-
-    /// Path to the web dashboard directory (containing index.html).
-    /// Auto-detected relative to the binary if not specified.
-    /// Set to "none" to disable the web dashboard.
-    #[arg(long = "web-ui", value_name = "PATH")]
-    web_ui: Option<String>,
+    /// Directory to serve as web UI (static files at /).
+    #[arg(long, value_name = "DIR")]
+    web_ui: Option<std::path::PathBuf>,
 }
 
 impl ServeStartCmd {
@@ -129,81 +104,21 @@ impl ServeStartCmd {
     }
 
     async fn run_server(self, addr: SocketAddr) -> Result<()> {
-        // Load service definitions: explicit config > ~/.smolvm/services.toml > built-ins
-        let service_registry = if let Some(ref config_path) = self.services_config {
-            let path = std::path::Path::new(config_path);
-            let services = smolvm::proxy::services::load_services_config(path).map_err(|e| {
-                smolvm::error::Error::config("load services config", e)
-            })?;
-            let names: Vec<_> = services.keys().collect();
-            eprintln!("Loaded {} service definitions from {}: {:?}", services.len(), config_path, names);
-            services
-        } else {
-            smolvm::proxy::services::load_default_config()
-        };
-
-        // Parse secret proxy configuration using the loaded service registry
-        let proxy_config = {
-            let secrets = smolvm::proxy::parse_secrets(&self.secrets).map_err(|e| {
-                smolvm::error::Error::config("parse secrets", e)
-            })?;
-            if !secrets.is_empty() {
-                let config = smolvm::proxy::ProxyConfig::with_services(secrets.clone(), service_registry.clone());
-                let service_names: Vec<_> = config.services.keys().collect();
-                eprintln!("Secret proxy configured for: {}", service_names.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "));
-                let unknown: Vec<_> = secrets.keys()
-                    .filter(|k| !config.services.contains_key(k.as_str()))
-                    .collect();
-                if !unknown.is_empty() {
-                    eprintln!("WARNING: Unknown service names (no service definition): {:?}", unknown);
-                    eprintln!("         These secrets won't be proxied. Use --services-config to define custom services.");
-                }
-                Some(config)
-            } else {
-                None
-            }
-        };
-
-        // Resolve API token: CLI flag > env var > generate > none
-        let api_token = match self.api_token.or_else(|| std::env::var("SMOLVM_API_TOKEN").ok()) {
-            Some(token) => Some(token),
-            None if self.generate_token => {
-                let token = smolvm::api::auth::generate_token().map_err(|e| {
-                    smolvm::error::Error::config("generate token", e.to_string())
-                })?;
-                eprintln!("Generated API token: {}", token);
-                eprintln!("Use: -H \"Authorization: Bearer {}\"", token);
-                Some(token)
-            }
-            None => None,
-        };
-
-        // Security warnings
-        if api_token.is_none() {
-            eprintln!("WARNING: No API token configured. The API is unauthenticated.");
-            eprintln!("         Use --api-token <TOKEN>, set SMOLVM_API_TOKEN, or use --generate-token.");
-        }
+        // Security warning if binding to all interfaces
         if addr.ip().is_unspecified() {
             eprintln!(
                 "WARNING: Server is listening on all interfaces ({}).",
                 addr.ip()
             );
-            if api_token.is_none() {
-                eprintln!("         Any network client can control this host without authentication.");
-            }
-            eprintln!("         Consider using --listen 127.0.0.1:9090 for local-only access.");
+            eprintln!("         The API has no authentication - any network client can control this host.");
+            eprintln!("         Consider using --listen 127.0.0.1:8080 for local-only access.");
         }
 
-        // Create shared state and load persisted machinees
-        let mut api_state = ApiState::new().map_err(|e| {
+        // Create shared state and load persisted machines
+        let state = Arc::new(ApiState::new().map_err(|e| {
             smolvm::error::Error::config("initialize api state", format!("{:?}", e))
-        })?;
-        api_state.set_service_registry(service_registry);
-        if let Some(pc) = proxy_config {
-            api_state.set_proxy_config(pc);
-        }
-        let state = Arc::new(api_state);
-        let loaded = state.load_persisted_machinees();
+        })?);
+        let loaded = state.load_persisted_machines();
         if !loaded.is_empty() {
             println!(
                 "Reconnected to {} existing machine(es): {}",
@@ -223,43 +138,8 @@ impl ServeStartCmd {
             supervisor.run().await;
         });
 
-        // Resolve web-ui directory
-        let web_ui_dir = match self.web_ui.as_deref() {
-            Some("none") => None,
-            Some(path) => {
-                let p = std::path::PathBuf::from(path);
-                if p.join("index.html").exists() {
-                    Some(p)
-                } else {
-                    tracing::warn!(path = %p.display(), "web-ui dir missing index.html, disabling");
-                    None
-                }
-            }
-            None => {
-                // Auto-detect: check relative to executable, then CWD
-                let candidates = [
-                    std::env::current_exe()
-                        .ok()
-                        .and_then(|p| p.parent().map(|d| d.join("web-ui"))),
-                    std::env::current_exe()
-                        .ok()
-                        .and_then(|p| p.parent().map(|d| d.join("../web-ui"))),
-                    Some(std::path::PathBuf::from("web-ui")),
-                ];
-                candidates
-                    .into_iter()
-                    .flatten()
-                    .find(|p| p.join("index.html").exists())
-            }
-        };
-
-        if let Some(ref dir) = web_ui_dir {
-            tracing::info!(path = %dir.display(), "serving web dashboard");
-            println!("Web dashboard at http://{}/", addr);
-        }
-
         // Create router
-        let app = smolvm::api::create_router(state, self.cors_origins, api_token, web_ui_dir);
+        let app = smolvm::api::create_router(state, self.cors_origins, self.api_token.clone(), self.web_ui.clone());
 
         // Create listener
         let listener = tokio::net::TcpListener::bind(addr)

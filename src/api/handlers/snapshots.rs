@@ -1,7 +1,7 @@
 //! Snapshot push/pull handlers.
 //!
 //! Provides endpoints for exporting machine state as compressed archives
-//! (push) and importing them into new machinees (pull).
+//! (push) and importing them into new machines (pull).
 
 use axum::{
     body::Body,
@@ -304,7 +304,7 @@ async fn try_exec_in_machine(
 ) -> Option<String> {
     use crate::api::state::with_machine_client;
     let result = with_machine_client(entry, move |c| {
-        c.vm_exec_as(command, vec![], None, Some(std::time::Duration::from_secs(5)), None)
+        c.vm_exec(command, vec![], None, Some(std::time::Duration::from_secs(5)))
     })
     .await;
     match result {

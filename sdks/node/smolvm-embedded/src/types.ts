@@ -21,6 +21,8 @@ export interface MachineConfig {
   ports?: PortSpec[];
   /** VM resource configuration. */
   resources?: ResourceSpec;
+  /** If true, create() does NOT auto-start — call start() explicitly. Storage persists across stop/start. */
+  persistent?: boolean;
 }
 
 /**
@@ -59,23 +61,6 @@ export interface ResourceSpec {
   storageGb?: number;
   /** Overlay disk size in GiB (default: 10). */
   overlayGb?: number;
-}
-
-/**
- * Configuration for creating a MicroVM.
- *
- * Same shape as MachineConfig — MicroVMs are persistent named VMs
- * that survive across process invocations and support reconnection.
- */
-export interface MicroVMConfig {
-  /** Unique name for the MicroVM. Used as the VM identifier. */
-  name: string;
-  /** Host directories to mount into the VM. */
-  mounts?: MountSpec[];
-  /** Port mappings from host to guest. */
-  ports?: PortSpec[];
-  /** VM resource configuration. */
-  resources?: ResourceSpec;
 }
 
 // ============================================================================

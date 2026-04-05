@@ -21,12 +21,12 @@ pub fn init() -> PrometheusHandle {
 
 /// Record a machine creation event.
 pub fn record_machine_created() {
-    counter!("smolvm_machinees_created_total").increment(1);
+    counter!("smolvm_machines_created_total").increment(1);
 }
 
 /// Record a machine deletion event.
 pub fn record_machine_deleted() {
-    counter!("smolvm_machinees_deleted_total").increment(1);
+    counter!("smolvm_machines_deleted_total").increment(1);
 }
 
 /// Record machine boot time in seconds.
@@ -44,9 +44,9 @@ pub fn record_exec_called() {
     counter!("smolvm_exec_total").increment(1);
 }
 
-/// Set the current number of active machinees.
-pub fn set_active_machinees(n: u64) {
-    gauge!("smolvm_machinees_active").set(n as f64);
+/// Set the current number of active machines.
+pub fn set_active_machines(n: u64) {
+    gauge!("smolvm_machines_active").set(n as f64);
 }
 
 #[cfg(test)]
@@ -70,6 +70,6 @@ mod tests {
         record_exec_called();
         record_exec_duration(0.5);
         record_machine_boot_time(1.2);
-        set_active_machinees(3);
+        set_active_machines(3);
     }
 }

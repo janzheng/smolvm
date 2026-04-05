@@ -1,4 +1,4 @@
-//! Secret proxy for safe API key injection into machinees.
+//! Secret proxy for safe API key injection into machines.
 //!
 //! The secret proxy prevents API key exfiltration by keeping real keys on the
 //! host side. Inside the VM, SDKs are configured with `*_BASE_URL=http://localhost:9800/<service>`

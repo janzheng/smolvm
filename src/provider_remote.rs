@@ -1,7 +1,7 @@
 //! Remote machine provider — talks to a remote smolvm instance via HTTP.
 //!
 //! This enables multi-node topologies: a local smolvm instance can manage
-//! machinees on a remote smolvm server by delegating over the REST API.
+//! machines on a remote smolvm server by delegating over the REST API.
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -89,7 +89,7 @@ impl MachineProvider for RemoteProvider {
             .into_iter()
             .map(String::from)
             .collect(),
-            max_machinees: None,
+            max_machines: None,
             region: Some(self.base_url.clone()),
         }
     }
@@ -165,7 +165,7 @@ impl MachineProvider for RemoteProvider {
             .json()
             .await
             .map_err(|e| ProviderError::Internal(format!("JSON decode: {}", e)))?;
-        Ok(body.machinees)
+        Ok(body.machines)
     }
 
     async fn exec(

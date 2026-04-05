@@ -45,7 +45,7 @@ test_pack_help() {
 test_pack_requires_output() {
     # Pack should fail without -o flag
     local exit_code=0
-    $SMOLVM pack create alpine:latest 2>&1 || exit_code=$?
+    $SMOLVM pack create --image alpine:latest 2>&1 || exit_code=$?
     [[ $exit_code -ne 0 ]]
 }
 
@@ -53,7 +53,7 @@ test_pack_alpine() {
     # Pack a minimal image
     local output="$TEST_DIR/test-alpine"
     local result
-    result=$($SMOLVM pack create alpine:latest -o "$output" 2>&1)
+    result=$($SMOLVM pack create --image alpine:latest -o "$output" 2>&1)
 
     # Binary should exist
     [[ -f "$output" ]]
@@ -68,11 +68,11 @@ test_pack_alpine() {
 test_pack_with_custom_resources() {
     # Pack with custom CPU/memory defaults
     local output="$TEST_DIR/test-resources"
-    $SMOLVM pack create alpine:latest -o "$output" --cpus 2 --mem 512 2>&1
+    $SMOLVM pack create --image alpine:latest -o "$output" --cpus 2 --mem 512 2>&1
 
     # Verify manifest has custom values
     local info
-    info=$("$output" --info 2>&1)
+    info=$("$output" info 2>&1)
     [[ "$info" == *"CPUs:"*"2"* ]] && [[ "$info" == *"Memory:"*"512"* ]]
 }
 
@@ -88,14 +88,14 @@ test_pack_with_platform() {
         host_arch="linux/amd64"
     fi
 
-    $SMOLVM pack create alpine:latest -o "$output" --oci-platform "$host_arch" 2>&1
+    $SMOLVM pack create --image alpine:latest -o "$output" --oci-platform "$host_arch" 2>&1
 
     # Binary should exist
     [[ -f "$output" ]]
 
     # Verify manifest shows correct platform
     local info
-    info=$("$output" --info 2>&1)
+    info=$("$output" info 2>&1)
     [[ "$info" == *"Platform:"* ]]
 }
 
@@ -108,12 +108,12 @@ test_packed_info() {
 
     # Ensure we have a packed binary
     if [[ ! -f "$output" ]]; then
-        $SMOLVM pack create alpine:latest -o "$output" 2>&1
+        $SMOLVM pack create --image alpine:latest -o "$output" 2>&1
     fi
 
-    # Test --info
+    # Test info subcommand
     local info_output
-    info_output=$("$output" --info 2>&1)
+    info_output=$("$output" info 2>&1)
     [[ "$info_output" == *"Image:"* ]] && \
     [[ "$info_output" == *"Platform:"* ]] && \
     [[ "$info_output" == *"Checksum:"* ]] || return 1
@@ -123,24 +123,28 @@ test_packed_version() {
     local output="$TEST_DIR/test-alpine"
 
     if [[ ! -f "$output" ]]; then
-        $SMOLVM pack create alpine:latest -o "$output" 2>&1
+        $SMOLVM pack create --image alpine:latest -o "$output" 2>&1
     fi
 
+    # --version should succeed and print the smolvm version
     local result
-    result=$("$output" --version 2>&1) || true
-    [[ "$result" == *"alpine"* ]]
+    local exit_code=0
+    result=$("$output" --version 2>&1) || exit_code=$?
+    [[ $exit_code -eq 0 ]] || return 1
+    # Should contain a version-like string (e.g., "packed-binary 0.2.0")
+    [[ "$result" =~ [0-9]+\.[0-9]+ ]]
 }
 
 test_packed_help() {
     local output="$TEST_DIR/test-alpine"
 
     if [[ ! -f "$output" ]]; then
-        $SMOLVM pack create alpine:latest -o "$output" 2>&1
+        $SMOLVM pack create --image alpine:latest -o "$output" 2>&1
     fi
 
     local result
     result=$("$output" --help 2>&1) || true
-    [[ "$result" == *"--volume"* ]] || [[ "$result" == *"-v"* ]]
+    [[ "$result" == *"run"* ]] || [[ "$result" == *"start"* ]]
 }
 
 test_sidecar_has_magic() {
@@ -174,6 +178,52 @@ test_binary_is_clean_macho() {
     [[ "$file_result" == *"Mach-O"* ]]
 }
 
+test_sidecar_has_no_libs() {
+    local output="$TEST_DIR/test-alpine"
+
+    if [[ ! -f "$output.smolmachine" ]]; then
+        echo "SKIP: No sidecar"
+        return 0
+    fi
+
+    # Extract sidecar and verify no lib/ directory (V3: libs are in stub)
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    # Sidecar is: [assets.tar.zst][manifest json][64-byte footer]
+    # Read footer to get assets_size, then extract just the tar.zst
+    # Simpler: just list the tar contents and check for lib/
+    local footer_size=64
+    local file_size
+    file_size=$(stat -f%z "$output.smolmachine" 2>/dev/null || stat -c%s "$output.smolmachine" 2>/dev/null)
+
+    # The assets tar.zst starts at offset 0 in the sidecar
+    # Check that decompressed tar has no lib/ entries
+    if command -v zstd >/dev/null 2>&1; then
+        # Use head to get just the compressed portion (before manifest+footer)
+        # This is approximate but sufficient — if lib/ is in the tar, tar -t will find it
+        zstd -d < "$output.smolmachine" 2>/dev/null | tar -t 2>/dev/null | grep -q "^lib/" && return 1
+    else
+        echo "SKIP: zstd not installed"
+    fi
+
+    rm -rf "$tmpdir"
+    return 0
+}
+
+test_stub_has_libs_footer() {
+    local output="$TEST_DIR/test-alpine"
+
+    if [[ ! -f "$output" ]]; then
+        echo "SKIP: No packed binary"
+        return 0
+    fi
+
+    # Check last 32 bytes for SMOLLIBS magic
+    local magic
+    magic=$(tail -c 32 "$output" | head -c 8 2>/dev/null) || true
+    [[ "$magic" == "SMOLLIBS" ]]
+}
+
 # =============================================================================
 # Packed Binary - Ephemeral Execution (Requires VM)
 # =============================================================================
@@ -183,12 +233,12 @@ test_packed_run_echo() {
 
     # Ensure we have a packed binary with sidecar
     if [[ ! -f "$output" ]] || [[ ! -f "$output.smolmachine" ]]; then
-        $SMOLVM pack create alpine:latest -o "$output" 2>&1
+        $SMOLVM pack create --image alpine:latest -o "$output" 2>&1
     fi
 
     # Run with 60s timeout to prevent indefinite hangs
     local result
-    result=$(run_with_timeout 60 "$output" echo "pack-test-marker-12345" 2>&1)
+    result=$(run_with_timeout 60 "$output" run -- echo "pack-test-marker-12345" 2>&1)
     local exit_code=$?
 
     if [[ $exit_code -eq 124 ]]; then
@@ -204,17 +254,17 @@ test_packed_exit_code() {
 
     # Ensure we have a packed binary
     if [[ ! -f "$output" ]]; then
-        $SMOLVM pack create alpine:latest -o "$output" 2>&1
+        $SMOLVM pack create --image alpine:latest -o "$output" 2>&1
     fi
 
     # Exit code 0 (with timeout)
-    run_with_timeout 60 "$output" sh -c "exit 0" 2>&1
+    run_with_timeout 60 "$output" run -- sh -c "exit 0" 2>&1
     local exit_zero=$?
     [[ $exit_zero -eq 124 ]] && { echo "TIMEOUT"; return 1; }
 
     # Exit code 42 (with timeout)
     local exit_42=0
-    run_with_timeout 60 "$output" sh -c "exit 42" 2>&1 || exit_42=$?
+    run_with_timeout 60 "$output" run -- sh -c "exit 42" 2>&1 || exit_42=$?
     [[ $exit_42 -eq 124 ]] && { echo "TIMEOUT"; return 1; }
 
     [[ $exit_zero -eq 0 ]] && [[ $exit_42 -eq 42 ]]
@@ -225,11 +275,11 @@ test_packed_env_var() {
 
     # Ensure we have a packed binary
     if [[ ! -f "$output" ]]; then
-        $SMOLVM pack create alpine:latest -o "$output" 2>&1
+        $SMOLVM pack create --image alpine:latest -o "$output" 2>&1
     fi
 
     local result
-    result=$(run_with_timeout 60 "$output" -e TEST_VAR=hello_pack sh -c 'echo $TEST_VAR' 2>&1)
+    result=$(run_with_timeout 60 "$output" run -e TEST_VAR=hello_pack -- sh -c 'echo $TEST_VAR' 2>&1)
     [[ $? -eq 124 ]] && { echo "TIMEOUT"; return 1; }
     [[ "$result" == *"hello_pack"* ]]
 }
@@ -239,11 +289,11 @@ test_packed_workdir() {
 
     # Ensure we have a packed binary
     if [[ ! -f "$output" ]]; then
-        $SMOLVM pack create alpine:latest -o "$output" 2>&1
+        $SMOLVM pack create --image alpine:latest -o "$output" 2>&1
     fi
 
     local result
-    result=$(run_with_timeout 60 "$output" -w /tmp pwd 2>&1)
+    result=$(run_with_timeout 60 "$output" run -w /tmp -- pwd 2>&1)
     [[ $? -eq 124 ]] && { echo "TIMEOUT"; return 1; }
     [[ "$result" == *"/tmp"* ]]
 }
@@ -256,7 +306,7 @@ test_sidecar_required() {
     local output="$TEST_DIR/test-sidecar"
 
     if [[ ! -f "$output" ]]; then
-        $SMOLVM pack create alpine:latest -o "$output" 2>&1
+        $SMOLVM pack create --image alpine:latest -o "$output" 2>&1
     fi
 
     # Remove sidecar
@@ -264,10 +314,10 @@ test_sidecar_required() {
 
     # Binary should fail without sidecar
     local exit_code=0
-    "$output" --info 2>&1 || exit_code=$?
+    "$output" info 2>&1 || exit_code=$?
 
     # Restore sidecar for other tests
-    $SMOLVM pack create alpine:latest -o "$output" 2>&1 >/dev/null
+    $SMOLVM pack create --image alpine:latest -o "$output" 2>&1 >/dev/null
 
     [[ $exit_code -ne 0 ]]
 }
@@ -279,7 +329,7 @@ test_sidecar_required() {
 test_single_file_pack() {
     # Pack with --single-file flag
     local output="$TEST_DIR/test-single-file"
-    $SMOLVM pack create alpine:latest -o "$output" --single-file 2>&1
+    $SMOLVM pack create --image alpine:latest -o "$output" --single-file 2>&1
 
     # Binary should exist and be executable
     [[ -f "$output" ]] || return 1
@@ -293,7 +343,7 @@ test_single_file_pack() {
     mkdir -p "$new_dir"
     cp "$output" "$new_dir/myapp"
     local info_output
-    info_output=$("$new_dir/myapp" --info 2>&1)
+    info_output=$("$new_dir/myapp" info 2>&1)
     [[ "$info_output" == *"Image:"* ]]
 }
 
@@ -301,12 +351,12 @@ test_single_file_run_echo() {
     local output="$TEST_DIR/test-single-file"
 
     if [[ ! -f "$output" ]]; then
-        $SMOLVM pack create alpine:latest -o "$output" --single-file 2>&1
+        $SMOLVM pack create --image alpine:latest -o "$output" --single-file 2>&1
     fi
 
     # Run with 60s timeout to prevent indefinite hangs
     local result
-    result=$(run_with_timeout 60 "$output" echo "single-file-test-marker" 2>&1)
+    result=$(run_with_timeout 60 "$output" run -- echo "single-file-test-marker" 2>&1)
     local exit_code=$?
 
     if [[ $exit_code -eq 124 ]]; then
@@ -331,7 +381,7 @@ test_pack_run_info() {
 
     # Ensure we have a packed binary with sidecar
     if [[ ! -f "$output.smolmachine" ]]; then
-        $SMOLVM pack create alpine:latest -o "$output" 2>&1
+        $SMOLVM pack create --image alpine:latest -o "$output" 2>&1
     fi
 
     # Test --info via pack run
@@ -354,7 +404,7 @@ test_pack_run_auto_detect() {
     local output="$TEST_DIR/test-alpine"
 
     if [[ ! -f "$output.smolmachine" ]]; then
-        $SMOLVM pack create alpine:latest -o "$output" 2>&1
+        $SMOLVM pack create --image alpine:latest -o "$output" 2>&1
     fi
 
     # Create a temp dir with a single .smolmachine file
@@ -390,7 +440,7 @@ test_pack_run_resource_override() {
     local output="$TEST_DIR/test-alpine"
 
     if [[ ! -f "$output.smolmachine" ]]; then
-        $SMOLVM pack create alpine:latest -o "$output" 2>&1
+        $SMOLVM pack create --image alpine:latest -o "$output" 2>&1
     fi
 
     # Verify resource override flags are accepted (boot with custom resources)
@@ -410,7 +460,7 @@ test_pack_run_force_extract() {
     local output="$TEST_DIR/test-alpine"
 
     if [[ ! -f "$output.smolmachine" ]]; then
-        $SMOLVM pack create alpine:latest -o "$output" 2>&1
+        $SMOLVM pack create --image alpine:latest -o "$output" 2>&1
     fi
 
     # Run with --force-extract and --debug to verify re-extraction
@@ -429,7 +479,7 @@ test_pack_run_cached_fast() {
     local output="$TEST_DIR/test-alpine"
 
     if [[ ! -f "$output.smolmachine" ]]; then
-        $SMOLVM pack create alpine:latest -o "$output" 2>&1
+        $SMOLVM pack create --image alpine:latest -o "$output" 2>&1
     fi
 
     # First run ensures cache exists
@@ -453,7 +503,7 @@ test_pack_run_python() {
     local output="$TEST_DIR/test-python"
 
     if [[ ! -f "$output.smolmachine" ]]; then
-        $SMOLVM pack create python:3.12-slim -o "$output" 2>&1
+        $SMOLVM pack create --image python:3.12-slim -o "$output" 2>&1
     fi
 
     local result
@@ -472,48 +522,48 @@ FROM_VM_OUTPUT="$TEST_DIR/test-from-vm"
 
 test_from_vm_setup() {
     # Create a named VM with network, install a package, then stop it
-    $SMOLVM microvm stop "$FROM_VM_NAME" 2>/dev/null || true
-    $SMOLVM microvm delete "$FROM_VM_NAME" -f 2>/dev/null || true
+    $SMOLVM machine stop --name "$FROM_VM_NAME" 2>/dev/null || true
+    $SMOLVM machine delete "$FROM_VM_NAME" -f 2>/dev/null || true
 
-    $SMOLVM microvm create "$FROM_VM_NAME" --net 2>&1 || return 1
-    $SMOLVM microvm start "$FROM_VM_NAME" 2>&1 || {
-        $SMOLVM microvm delete "$FROM_VM_NAME" -f 2>/dev/null
+    $SMOLVM machine create "$FROM_VM_NAME" --net 2>&1 || return 1
+    $SMOLVM machine start --name "$FROM_VM_NAME" 2>&1 || {
+        $SMOLVM machine delete "$FROM_VM_NAME" -f 2>/dev/null
         return 1
     }
 
     # Install curl so we can verify it persists into the packed binary
-    $SMOLVM microvm exec --name "$FROM_VM_NAME" -- apk add --no-cache curl 2>&1 || {
-        $SMOLVM microvm stop "$FROM_VM_NAME" 2>/dev/null || true
-        $SMOLVM microvm delete "$FROM_VM_NAME" -f 2>/dev/null || true
+    $SMOLVM machine exec --name "$FROM_VM_NAME" -- apk add --no-cache curl 2>&1 || {
+        $SMOLVM machine stop --name "$FROM_VM_NAME" 2>/dev/null || true
+        $SMOLVM machine delete "$FROM_VM_NAME" -f 2>/dev/null || true
         return 1
     }
 
     # Verify curl was installed
     local which_output
-    which_output=$($SMOLVM microvm exec --name "$FROM_VM_NAME" -- which curl 2>&1) || {
-        $SMOLVM microvm stop "$FROM_VM_NAME" 2>/dev/null || true
-        $SMOLVM microvm delete "$FROM_VM_NAME" -f 2>/dev/null || true
+    which_output=$($SMOLVM machine exec --name "$FROM_VM_NAME" -- which curl 2>&1) || {
+        $SMOLVM machine stop --name "$FROM_VM_NAME" 2>/dev/null || true
+        $SMOLVM machine delete "$FROM_VM_NAME" -f 2>/dev/null || true
         return 1
     }
     [[ "$which_output" == *"/usr/bin/curl"* ]] || {
-        $SMOLVM microvm stop "$FROM_VM_NAME" 2>/dev/null || true
-        $SMOLVM microvm delete "$FROM_VM_NAME" -f 2>/dev/null || true
+        $SMOLVM machine stop --name "$FROM_VM_NAME" 2>/dev/null || true
+        $SMOLVM machine delete "$FROM_VM_NAME" -f 2>/dev/null || true
         return 1
     }
 
     # Stop the VM (pack requires it to be stopped)
-    $SMOLVM microvm stop "$FROM_VM_NAME" 2>&1
+    $SMOLVM machine stop --name "$FROM_VM_NAME" 2>&1
 }
 
 test_from_vm_rejects_running() {
     # --from-vm should fail if the VM is still running
     local vm_name="pack-running-test-$$"
-    $SMOLVM microvm stop "$vm_name" 2>/dev/null || true
-    $SMOLVM microvm delete "$vm_name" -f 2>/dev/null || true
+    $SMOLVM machine stop --name "$vm_name" 2>/dev/null || true
+    $SMOLVM machine delete "$vm_name" -f 2>/dev/null || true
 
-    $SMOLVM microvm create "$vm_name" 2>&1 || return 1
-    $SMOLVM microvm start "$vm_name" 2>&1 || {
-        $SMOLVM microvm delete "$vm_name" -f 2>/dev/null
+    $SMOLVM machine create "$vm_name" 2>&1 || return 1
+    $SMOLVM machine start --name "$vm_name" 2>&1 || {
+        $SMOLVM machine delete "$vm_name" -f 2>/dev/null
         return 1
     }
 
@@ -521,8 +571,8 @@ test_from_vm_rejects_running() {
     $SMOLVM pack create --from-vm "$vm_name" -o "$TEST_DIR/should-fail" 2>&1 || exit_code=$?
 
     # Clean up
-    $SMOLVM microvm stop "$vm_name" 2>/dev/null || true
-    $SMOLVM microvm delete "$vm_name" -f 2>/dev/null || true
+    $SMOLVM machine stop --name "$vm_name" 2>/dev/null || true
+    $SMOLVM machine delete "$vm_name" -f 2>/dev/null || true
 
     [[ $exit_code -ne 0 ]]
 }
@@ -543,19 +593,18 @@ test_from_vm_run_finds_installed_package() {
         return 1
     fi
 
-    # The packed binary should have curl from the VM snapshot.
-    # Use "ls /usr/bin/curl" instead of "which curl" because the packed
-    # binary's minimal environment may not have "which" or a full PATH.
-    local result exit_code=0
-    result=$(run_with_timeout 60 "$FROM_VM_OUTPUT" -- ls /usr/bin/curl 2>&1) || exit_code=$?
+    # The packed binary should have curl from the VM snapshot
+    local result
+    result=$(run_with_timeout 60 "$FROM_VM_OUTPUT" run -- which curl 2>&1)
+    local exit_code=$?
 
     [[ $exit_code -eq 124 ]] && { echo "TIMEOUT"; return 1; }
     [[ "$result" == *"/usr/bin/curl"* ]]
 }
 
 test_from_vm_cleanup() {
-    $SMOLVM microvm stop "$FROM_VM_NAME" 2>/dev/null || true
-    $SMOLVM microvm delete "$FROM_VM_NAME" -f 2>/dev/null || true
+    $SMOLVM machine stop --name "$FROM_VM_NAME" 2>/dev/null || true
+    $SMOLVM machine delete "$FROM_VM_NAME" -f 2>/dev/null || true
     rm -f "$FROM_VM_OUTPUT" "$FROM_VM_OUTPUT.smolmachine"
     return 0
 }
@@ -567,7 +616,7 @@ test_from_vm_cleanup() {
 test_pack_nonexistent_image() {
     local output="$TEST_DIR/test-nonexistent"
     local exit_code=0
-    $SMOLVM pack create nonexistent-image-that-does-not-exist:v999 -o "$output" 2>&1 || exit_code=$?
+    $SMOLVM pack create --image nonexistent-image-that-does-not-exist:v999 -o "$output" 2>&1 || exit_code=$?
     [[ $exit_code -ne 0 ]]
 }
 
@@ -582,7 +631,7 @@ test_pack_python() {
     fi
 
     local output="$TEST_DIR/test-python"
-    $SMOLVM pack create python:3.12-slim -o "$output" 2>&1
+    $SMOLVM pack create --image python:3.12-slim -o "$output" 2>&1
 
     [[ -f "$output" ]] && [[ -f "$output.smolmachine" ]]
 }
@@ -596,11 +645,11 @@ test_packed_python_run() {
     local output="$TEST_DIR/test-python"
 
     if [[ ! -f "$output" ]]; then
-        $SMOLVM pack create python:3.12-slim -o "$output" 2>&1
+        $SMOLVM pack create --image python:3.12-slim -o "$output" 2>&1
     fi
 
     local result
-    result=$(run_with_timeout 90 "$output" python -c "print('Hello from packed Python')" 2>&1)
+    result=$(run_with_timeout 90 "$output" run -- python -c "print('Hello from packed Python')" 2>&1)
     [[ $? -eq 124 ]] && { echo "TIMEOUT"; return 1; }
     [[ "$result" == *"Hello from packed Python"* ]]
 }
@@ -626,6 +675,8 @@ run_test "Packed --info" test_packed_info || true
 run_test "Packed --version" test_packed_version || true
 run_test "Packed --help" test_packed_help || true
 run_test "Sidecar has SMOLPACK magic" test_sidecar_has_magic || true
+run_test "Sidecar has no libs (V3)" test_sidecar_has_no_libs || true
+run_test "Stub has SMOLLIBS footer" test_stub_has_libs_footer || true
 run_test "Binary is clean Mach-O" test_binary_is_clean_macho || true
 
 echo ""
@@ -679,6 +730,159 @@ if [[ "$QUICK_MODE" != "true" ]]; then
     run_test "from-vm: finds installed package" test_from_vm_run_finds_installed_package || true
     run_test "from-vm: cleanup" test_from_vm_cleanup || true
 fi
+
+# =============================================================================
+# Packed Binary - Bare Invocation (no subcommand)
+# =============================================================================
+
+test_packed_bare_invocation() {
+    local output="$TEST_DIR/test-alpine"
+
+    # Ensure we have a packed binary
+    if [[ ! -f "$output" ]]; then
+        $SMOLVM pack create --image alpine:latest -o "$output" 2>&1
+    fi
+
+    # ./my-app with no subcommand should run the manifest entrypoint.
+    # Alpine's default is /bin/sh — without -it it reads stdin, gets EOF,
+    # and exits 0.  That exit-0 proves the VM booted and ran the entrypoint
+    # instead of printing clap usage (which would exit non-zero).
+    local exit_code=0
+    run_with_timeout 30 "$output" </dev/null 2>&1 || exit_code=$?
+
+    if [[ $exit_code -eq 124 ]]; then
+        echo "TIMEOUT: bare invocation hung"
+        return 1
+    fi
+
+    [[ $exit_code -eq 0 ]]
+}
+
+# =============================================================================
+# Packed Binary - Daemon Lifecycle (start/exec/status/stop)
+# =============================================================================
+
+test_packed_daemon_lifecycle() {
+    local output="$TEST_DIR/test-alpine"
+
+    # Ensure we have a packed binary
+    if [[ ! -f "$output" ]] || [[ ! -f "$output.smolmachine" ]]; then
+        $SMOLVM pack create --image alpine:latest -o "$output" 2>&1
+    fi
+
+    # 1. Start the daemon
+    local start_result
+    start_result=$(run_with_timeout 60 "$output" start 2>&1)
+    local start_exit=$?
+    [[ $start_exit -eq 124 ]] && { echo "TIMEOUT on start"; return 1; }
+    [[ "$start_result" == *"Daemon started"* ]] || { echo "Start failed: $start_result"; return 1; }
+
+    # 2. Check status
+    local status_result
+    status_result=$("$output" status 2>&1) || true
+    [[ "$status_result" == *"running"* ]] || { echo "Status failed: $status_result"; "$output" stop 2>/dev/null || true; return 1; }
+
+    # 3. Exec a command
+    local exec_result
+    exec_result=$(run_with_timeout 30 "$output" exec -- echo "daemon-exec-marker" 2>&1)
+    local exec_exit=$?
+    [[ $exec_exit -eq 124 ]] && { echo "TIMEOUT on exec"; "$output" stop 2>/dev/null || true; return 1; }
+    [[ "$exec_result" == *"daemon-exec-marker"* ]] || { echo "Exec failed: $exec_result"; "$output" stop 2>/dev/null || true; return 1; }
+
+    # 4. Stop the daemon
+    local stop_result
+    stop_result=$("$output" stop 2>&1) || true
+    [[ "$stop_result" == *"Daemon stopped"* ]] || { echo "Stop failed: $stop_result"; return 1; }
+
+    # 5. Verify stopped
+    local status_after
+    status_after=$("$output" status 2>&1) || true
+    [[ "$status_after" == *"not running"* ]]
+}
+
+test_packed_daemon_already_running() {
+    local output="$TEST_DIR/test-alpine"
+
+    if [[ ! -f "$output" ]] || [[ ! -f "$output.smolmachine" ]]; then
+        $SMOLVM pack create --image alpine:latest -o "$output" 2>&1
+    fi
+
+    # Start the daemon
+    run_with_timeout 60 "$output" start 2>&1 || { echo "Initial start failed"; return 1; }
+
+    # Starting again should say already running (not error)
+    local result
+    result=$("$output" start 2>&1) || true
+    [[ "$result" == *"already running"* ]] || { "$output" stop 2>/dev/null || true; echo "Expected 'already running': $result"; return 1; }
+
+    # Clean up
+    "$output" stop 2>/dev/null || true
+}
+
+test_packed_exec_without_daemon() {
+    local output="$TEST_DIR/test-alpine"
+
+    if [[ ! -f "$output" ]] || [[ ! -f "$output.smolmachine" ]]; then
+        $SMOLVM pack create --image alpine:latest -o "$output" 2>&1
+    fi
+
+    # Make sure daemon is not running
+    "$output" stop 2>/dev/null || true
+
+    # exec without a running daemon should fail with a clear message
+    local result
+    local exit_code=0
+    result=$("$output" exec -- echo hello 2>&1) || exit_code=$?
+    [[ $exit_code -ne 0 ]] || return 1
+    [[ "$result" == *"not running"* ]]
+}
+
+test_packed_stop_without_daemon() {
+    local output="$TEST_DIR/test-alpine"
+
+    if [[ ! -f "$output" ]] || [[ ! -f "$output.smolmachine" ]]; then
+        $SMOLVM pack create --image alpine:latest -o "$output" 2>&1
+    fi
+
+    # Make sure daemon is not running
+    "$output" stop 2>/dev/null || true
+
+    # stop without a running daemon should succeed gracefully
+    local result
+    result=$("$output" stop 2>&1) || true
+    [[ "$result" == *"not running"* ]] || [[ "$result" == *"Daemon stopped"* ]]
+}
+
+test_packed_info_subcommand() {
+    local output="$TEST_DIR/test-alpine"
+
+    if [[ ! -f "$output" ]]; then
+        $SMOLVM pack create --image alpine:latest -o "$output" 2>&1
+    fi
+
+    # Test info as subcommand
+    local info_output
+    info_output=$("$output" info 2>&1)
+    [[ "$info_output" == *"Image:"* ]] && \
+    [[ "$info_output" == *"Platform:"* ]] && \
+    [[ "$info_output" == *"Checksum:"* ]] || return 1
+}
+
+echo ""
+echo "Running Packed Binary Bare Invocation Tests (requires VM)..."
+echo ""
+
+run_test "Packed bare invocation (no subcommand)" test_packed_bare_invocation || true
+
+echo ""
+echo "Running Packed Daemon Lifecycle Tests (requires VM)..."
+echo ""
+
+run_test "Daemon lifecycle: start -> exec -> status -> stop" test_packed_daemon_lifecycle || true
+run_test "Daemon already running" test_packed_daemon_already_running || true
+run_test "Exec without daemon" test_packed_exec_without_daemon || true
+run_test "Stop without daemon" test_packed_stop_without_daemon || true
+run_test "Info subcommand" test_packed_info_subcommand || true
 
 echo ""
 echo "Running Error Handling Tests..."

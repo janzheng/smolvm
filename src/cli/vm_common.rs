@@ -1,6 +1,6 @@
-//! Shared helpers for microvm and machine CLI commands.
+//! Shared helpers for machine CLI commands.
 //!
-//! Both `microvm` and `machine` expose the same lifecycle commands
+//! The `machine` subcommand exposes lifecycle commands
 //! (create, start, stop, delete, ls) with only cosmetic differences.
 //! This module provides the common implementations, parameterised by
 //! [`VmKind`].
@@ -18,42 +18,31 @@ use smolvm::storage::{DEFAULT_OVERLAY_SIZE_GIB, DEFAULT_STORAGE_SIZE_GIB};
 // VmKind
 // ============================================================================
 
-/// Distinguishes microvm vs machine for display strings and minor
-/// behavioural differences.
+/// VM kind for display strings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VmKind {
-    Microvm,
     Machine,
 }
 
 impl VmKind {
-    /// Lowercase label used in user-facing messages ("microvm" / "machine").
+    /// Lowercase label used in user-facing messages.
     pub fn label(self) -> &'static str {
-        match self {
-            VmKind::Microvm => "microvm",
-            VmKind::Machine => "machine",
-        }
+        "machine"
     }
 
-    /// Title-case label ("MicroVM" / "Machine").
+    /// Title-case label.
     pub fn display_name(self) -> &'static str {
-        match self {
-            VmKind::Microvm => "MicroVM",
-            VmKind::Machine => "Machine",
-        }
+        "Machine"
     }
 
-    /// CLI prefix for help text ("smolvm microvm" / "smolvm machine").
+    /// CLI prefix for help text.
     pub fn cli_prefix(self) -> &'static str {
-        match self {
-            VmKind::Microvm => "smolvm microvm",
-            VmKind::Machine => "smolvm machine",
-        }
+        "smolvm machine"
     }
 
     /// Whether the JSON list output should include the `network` field.
     pub fn include_network_in_json(self) -> bool {
-        matches!(self, VmKind::Machine)
+        true
     }
 }
 
@@ -99,7 +88,7 @@ pub fn vm_label(name: &Option<String>) -> String {
 
 /// Ensure a VM is running and return a connected client.
 ///
-/// This is the common pattern used by exec commands in both microvm and machine.
+/// This is the common pattern used by exec commands in the machine subcommand.
 /// It resolves the VM manager, checks connectivity, and establishes a client connection.
 pub fn ensure_running_and_connect(
     name: &Option<String>,
@@ -159,7 +148,7 @@ pub fn get_or_start_vm(name: &str) -> smolvm::Result<AgentManager> {
     let manager = get_vm_manager(&name_opt)?;
 
     if manager.try_connect_existing().is_none() {
-        println!("Starting microvm '{}'...", name);
+        println!("Starting machine '{}'...", name);
         manager.ensure_running()?;
     }
 
@@ -173,6 +162,9 @@ pub fn get_or_start_vm(name: &str) -> smolvm::Result<AgentManager> {
 /// Parameters for [`create_vm`].
 pub struct CreateVmParams {
     pub name: String,
+    pub image: Option<String>,
+    pub entrypoint: Vec<String>,
+    pub cmd: Vec<String>,
     pub cpus: u8,
     pub mem: u32,
     pub volume: Vec<String>,
@@ -183,12 +175,24 @@ pub struct CreateVmParams {
     pub workdir: Option<String>,
     pub storage_gb: Option<u64>,
     pub overlay_gb: Option<u64>,
+    pub allowed_cidrs: Option<Vec<String>>,
+    pub restart_policy: Option<smolvm::config::RestartPolicy>,
+    pub restart_max_retries: Option<u32>,
+    pub restart_max_backoff_secs: Option<u64>,
+    pub health_cmd: Option<Vec<String>>,
+    pub health_interval_secs: Option<u64>,
+    pub health_timeout_secs: Option<u64>,
+    pub health_retries: Option<u32>,
+    pub health_startup_grace_secs: Option<u64>,
+    pub ssh_agent: bool,
+    /// Hostnames for DNS filtering (from --allow-host / [network].allow_hosts).
+    pub dns_filter_hosts: Option<Vec<String>>,
 }
 
-/// Maximum length for VM/machine names.
+/// Maximum length for machine names.
 const MAX_NAME_LENGTH: usize = 40;
 
-/// Validate a VM/machine name for CLI commands.
+/// Validate a machine name for CLI commands.
 ///
 /// Same rules as the API validation but returns `smolvm::Error` instead of `ApiError`.
 fn validate_name(name: &str, kind: VmKind) -> smolvm::Result<()> {
@@ -245,7 +249,7 @@ fn validate_name(name: &str, kind: VmKind) -> smolvm::Result<()> {
     Ok(())
 }
 
-/// Create a named VM/machine configuration (does not start it).
+/// Create a named machine configuration (does not start it).
 pub fn create_vm(kind: VmKind, params: CreateVmParams) -> smolvm::Result<()> {
     // Validate name before touching the database
     validate_name(&params.name, kind)?;
@@ -283,20 +287,40 @@ pub fn create_vm(kind: VmKind, params: CreateVmParams) -> smolvm::Result<()> {
         })
         .collect();
 
-    // Create record
-    let mut record = VmRecord::new(
+    // Create record with restart policy if configured
+    let restart = smolvm::config::RestartConfig {
+        policy: params
+            .restart_policy
+            .unwrap_or(smolvm::config::RestartPolicy::Never),
+        max_retries: params.restart_max_retries.unwrap_or(0),
+        max_backoff_secs: params.restart_max_backoff_secs.unwrap_or(0),
+        ..Default::default()
+    };
+    let mut record = VmRecord::new_with_restart(
         params.name.clone(),
         params.cpus,
         params.mem,
         mounts,
         ports,
         params.net,
+        restart,
     );
     record.init = params.init.clone();
     record.env = env;
     record.workdir = params.workdir.clone();
     record.storage_gb = params.storage_gb;
     record.overlay_gb = params.overlay_gb;
+    record.allowed_cidrs = params.allowed_cidrs.clone();
+    record.image = params.image.clone();
+    record.entrypoint = params.entrypoint.clone();
+    record.cmd = params.cmd.clone();
+    record.health_cmd = params.health_cmd.clone();
+    record.health_interval_secs = params.health_interval_secs;
+    record.health_timeout_secs = params.health_timeout_secs;
+    record.health_retries = params.health_retries;
+    record.health_startup_grace_secs = params.health_startup_grace_secs;
+    record.ssh_agent = params.ssh_agent;
+    record.dns_filter_hosts = params.dns_filter_hosts.clone();
 
     // Store in config (persisted immediately to database)
     config.insert_vm(params.name.clone(), record)?;
@@ -319,8 +343,8 @@ pub fn create_vm(kind: VmKind, params: CreateVmParams) -> smolvm::Result<()> {
         kind.label(),
     );
     println!(
-        "Then use 'smolvm container create {}' to run containers",
-        params.name,
+        "Then use 'smolvm container create -m {} --image <image>' to run containers",
+        params.name
     );
 
     Ok(())
@@ -330,7 +354,7 @@ pub fn create_vm(kind: VmKind, params: CreateVmParams) -> smolvm::Result<()> {
 // Start
 // ============================================================================
 
-/// Start a named VM/machine that has a config record.
+/// Start a named machine that has a config record.
 ///
 /// Uses direct DB operations instead of SmolvmConfig::load() to avoid
 /// loading all config settings and all VM records. Only reads the single
@@ -381,8 +405,28 @@ pub fn start_vm_named(kind: VmKind, name: &str) -> smolvm::Result<()> {
         port_info
     );
 
+    // Resolve SSH agent socket path if enabled
+    let ssh_agent_socket = if record.ssh_agent {
+        match std::env::var("SSH_AUTH_SOCK") {
+            Ok(path) => Some(std::path::PathBuf::from(path)),
+            Err(_) => {
+                return Err(Error::config(
+                    "ssh-agent",
+                    "SSH_AUTH_SOCK is not set. Start an SSH agent with: eval $(ssh-agent) && ssh-add",
+                ));
+            }
+        }
+    } else {
+        None
+    };
+
+    let features = smolvm::agent::LaunchFeatures {
+        ssh_agent_socket,
+        dns_filter_hosts: record.dns_filter_hosts.clone(),
+    };
+
     let _ = manager
-        .ensure_running_with_full_config(mounts, ports, resources)
+        .ensure_running_with_full_config(mounts, ports, resources, features)
         .map_err(|e| Error::agent(format!("start {}", kind.label()), e.to_string()))?;
 
     // Get PID immediately (cheap) and print output before DB write
@@ -397,21 +441,85 @@ pub fn start_vm_named(kind: VmKind, name: &str) -> smolvm::Result<()> {
             let (exit_code, _stdout, stderr) =
                 client.vm_exec(argv, record.env.clone(), record.workdir.clone(), None)?;
             if exit_code != 0 {
-                eprintln!("init[{}] failed (exit {}): {}", i, exit_code, stderr.trim());
+                if let Err(e) = manager.stop() {
+                    tracing::warn!(error = %e, "failed to stop machine after init failure");
+                }
+                return Err(smolvm::Error::agent(
+                    "init",
+                    format!("init[{}] failed (exit {}): {}", i, exit_code, stderr.trim()),
+                ));
             }
         }
     }
 
-    println!(
-        "{} '{}' running (PID: {})",
-        kind.display_name(),
-        name,
-        pid.unwrap_or(0)
-    );
-    println!(
-        "\nUse 'smolvm container create {} <image>' to run containers",
-        name,
-    );
+    // Auto-create container if image is configured (from Smolfile)
+    if let Some(ref image) = record.image {
+        let mut client = smolvm::agent::AgentClient::connect_with_retry(manager.vsock_socket())?;
+
+        println!("Pulling {}...", image);
+        let image_info = crate::cli::pull_with_progress(&mut client, image, None)?;
+
+        // Build command: record (from Smolfile) > image metadata > idle default
+        let ep = if !record.entrypoint.is_empty() {
+            record.entrypoint.clone()
+        } else {
+            image_info.entrypoint.clone()
+        };
+        let args = if !record.cmd.is_empty() {
+            record.cmd.clone()
+        } else {
+            image_info.cmd.clone()
+        };
+        let mut command = ep;
+        command.extend(args);
+        if command.is_empty() {
+            command = smolvm::DEFAULT_IDLE_CMD
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+        }
+
+        let env = record.env.clone();
+        let mount_bindings =
+            crate::cli::parsers::mounts_to_virtiofs_bindings(&record.host_mounts());
+
+        let info =
+            client.create_container(image, command, env, record.workdir.clone(), mount_bindings)?;
+
+        println!(
+            "{} '{}' running (PID: {}, container: {})",
+            kind.display_name(),
+            name,
+            pid.unwrap_or(0),
+            &info.id[..12]
+        );
+    } else {
+        // No image — bare VM mode. Run entrypoint+cmd if configured.
+        let mut bare_cmd = record.entrypoint.clone();
+        bare_cmd.extend(record.cmd.clone());
+        if !bare_cmd.is_empty() {
+            let mut client =
+                smolvm::agent::AgentClient::connect_with_retry(manager.vsock_socket())?;
+            let env = record.env.clone();
+            let (exit_code, stdout, stderr) =
+                client.vm_exec(bare_cmd, env, record.workdir.clone(), None)?;
+            if !stdout.is_empty() {
+                print!("{}", stdout);
+            }
+            if !stderr.is_empty() {
+                eprint!("{}", stderr);
+            }
+            if exit_code != 0 {
+                eprintln!("workload exited with code {}", exit_code);
+            }
+        }
+        println!(
+            "{} '{}' running (PID: {})",
+            kind.display_name(),
+            name,
+            pid.unwrap_or(0)
+        );
+    }
 
     // Persist running state after output — 1 write cycle (not on critical path)
     let pid_start_time = pid.and_then(smolvm::process::process_start_time);
@@ -468,6 +576,10 @@ pub fn persist_default_running(
                 r.init = o.init.clone();
                 r.env = o.env.clone();
                 r.workdir = o.workdir.clone();
+                r.image = o.image.clone();
+                r.entrypoint = o.entrypoint.clone();
+                r.cmd = o.cmd.clone();
+                r.ssh_agent = o.ssh_agent;
             }
         })
         .is_none()
@@ -488,9 +600,13 @@ pub struct DefaultVmOverrides {
     pub init: Vec<String>,
     pub env: Vec<(String, String)>,
     pub workdir: Option<String>,
+    pub image: Option<String>,
+    pub entrypoint: Vec<String>,
+    pub cmd: Vec<String>,
+    pub ssh_agent: bool,
 }
 
-/// Start the default VM/machine.
+/// Start the default machine.
 pub fn start_vm_default(kind: VmKind) -> smolvm::Result<()> {
     let manager = AgentManager::new_default()?;
 
@@ -524,7 +640,13 @@ pub fn start_vm_default(kind: VmKind) -> smolvm::Result<()> {
                 let (exit_code, _stdout, stderr) =
                     client.vm_exec(argv, record.env.clone(), record.workdir.clone(), None)?;
                 if exit_code != 0 {
-                    eprintln!("init[{}] failed (exit {}): {}", i, exit_code, stderr.trim());
+                    if let Err(e) = manager.stop() {
+                        tracing::warn!(error = %e, "failed to stop machine after init failure");
+                    }
+                    return Err(smolvm::Error::agent(
+                        "init",
+                        format!("init[{}] failed (exit {}): {}", i, exit_code, stderr.trim()),
+                    ));
                 }
             }
         }
@@ -544,7 +666,7 @@ pub fn start_vm_default(kind: VmKind) -> smolvm::Result<()> {
 // Stop
 // ============================================================================
 
-/// Stop a named VM/machine that has a config record (or fall back to
+/// Stop a named machine that has a config record (or fall back to
 /// agent-only stop if the name is not in config).
 pub fn stop_vm_named(kind: VmKind, name: &str) -> smolvm::Result<()> {
     let mut config = SmolvmConfig::load()?;
@@ -597,7 +719,7 @@ pub fn stop_vm_named(kind: VmKind, name: &str) -> smolvm::Result<()> {
     Ok(())
 }
 
-/// Stop the default VM/machine.
+/// Stop the default machine.
 pub fn stop_vm_default(kind: VmKind) -> smolvm::Result<()> {
     let manager = AgentManager::new_default()?;
 
@@ -625,13 +747,13 @@ pub fn stop_vm_default(kind: VmKind) -> smolvm::Result<()> {
 // Delete
 // ============================================================================
 
-/// Options that vary between microvm and machine delete.
+/// Options for machine delete behavior.
 pub struct DeleteVmOptions {
     /// If true, stop the VM before deleting when it is running.
     pub stop_if_running: bool,
 }
 
-/// Delete a named VM/machine configuration.
+/// Delete a named machine configuration.
 pub fn delete_vm(
     kind: VmKind,
     name: &str,
@@ -646,7 +768,7 @@ pub fn delete_vm(
         .ok_or_else(|| smolvm::Error::vm_not_found(name))?
         .clone();
 
-    // Stop if running (machine does this, microvm does not)
+    // Stop if running (machine run does this)
     if options.stop_if_running && record.actual_state() == RecordState::Running {
         if let Ok(manager) = AgentManager::for_vm(name) {
             println!("Stopping {} '{}'...", kind.label(), name);
@@ -691,7 +813,7 @@ pub fn delete_vm(
 // Status
 // ============================================================================
 
-/// Show status of a named or default VM/machine.
+/// Show status of a named or default machine.
 ///
 /// The `extra` callback is invoked when the VM is running, allowing callers
 /// to display additional information (e.g., machine lists containers).
@@ -718,15 +840,12 @@ where
 // List
 // ============================================================================
 
-/// List all VMs/machinees.
+/// List all machines.
 pub fn list_vms(kind: VmKind, verbose: bool, json: bool) -> smolvm::Result<()> {
     let config = SmolvmConfig::load()?;
     let vms: Vec<_> = config.list_vms().collect();
 
-    let empty_label = match kind {
-        VmKind::Microvm => "No VMs found",
-        VmKind::Machine => "No machines found",
-    };
+    let empty_label = "No machines found";
 
     if vms.is_empty() {
         if !json {
@@ -753,6 +872,9 @@ pub fn list_vms(kind: VmKind, verbose: bool, json: bool) -> smolvm::Result<()> {
                     "created_at": record.created_at,
                     "storage_gb": record.storage_gb,
                     "overlay_gb": record.overlay_gb,
+                    "image": record.image,
+                    "entrypoint": record.entrypoint,
+                    "cmd": record.cmd,
                 });
                 if kind.include_network_in_json() {
                     obj.as_object_mut()

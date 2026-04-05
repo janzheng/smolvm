@@ -103,15 +103,20 @@ pub async fn create_machine(
         storage_gb: None,
         overlay_gb: None,
         allowed_domains: None,
+        allowed_cidrs: None,
     });
 
     // Get network setting from resources (default to false).
-    // If allowed_domains is set, network is implicitly enabled.
+    // If allowed_domains or allowed_cidrs is set, network is implicitly enabled.
     let has_allowed_domains = resources
         .allowed_domains
         .as_ref()
         .is_some_and(|d| !d.is_empty());
-    let network = resources.network.unwrap_or(false) || has_allowed_domains;
+    let has_allowed_cidrs = resources
+        .allowed_cidrs
+        .as_ref()
+        .is_some_and(|c| !c.is_empty());
+    let network = resources.network.unwrap_or(false) || has_allowed_domains || has_allowed_cidrs;
 
     // Parse restart configuration
     let restart_config = restart_spec_to_config(req.restart.as_ref());
@@ -337,18 +342,18 @@ pub async fn create_machine(
     }))
 }
 
-/// List all machinees.
+/// List all machines.
 #[utoipa::path(
     get,
     path = "/api/v1/machines",
     tag = "Machinees",
     responses(
-        (status = 200, description = "List of machinees", body = ListMachinesResponse)
+        (status = 200, description = "List of machines", body = ListMachinesResponse)
     )
 )]
 pub async fn list_machines(State(state): State<Arc<ApiState>>) -> Json<ListMachinesResponse> {
-    let machinees = state.list_machines();
-    Json(ListMachinesResponse { machinees })
+    let machines = state.list_machines();
+    Json(ListMachinesResponse { machines })
 }
 
 /// Get machine status.
@@ -753,9 +758,9 @@ pub async fn clone_machine(
     }))
 }
 
-/// Compare two machinees.
+/// Compare two machines.
 ///
-/// Lists files that differ between two machinees by executing commands
+/// Lists files that differ between two machines by executing commands
 /// inside each VM and comparing the results.
 #[utoipa::path(
     get,
@@ -787,7 +792,7 @@ pub async fn diff_machines(
         .await
         .map_err(classify_ensure_running_error)?;
 
-    // Get file listing with checksums from both machinees
+    // Get file listing with checksums from both machines
     // Exclude /proc, /sys, /dev, /tmp to focus on meaningful differences
     let hash_cmd = vec![
         "sh".to_string(),
@@ -885,7 +890,7 @@ pub async fn merge_machines(
         .await
         .map_err(classify_ensure_running_error)?;
 
-    // Get file listing with checksums from both machinees (reuse diff logic)
+    // Get file listing with checksums from both machines (reuse diff logic)
     let hash_cmd = vec![
         "sh".to_string(),
         "-c".to_string(),

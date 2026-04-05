@@ -32,7 +32,7 @@ pub async fn list_secrets(
 ///
 /// Merges the provided secrets into the existing configuration.
 /// New secrets are added, existing secrets are overwritten.
-/// Note: Running machinees use a copy of secrets from when they were created;
+/// Note: Running machines use a copy of secrets from when they were created;
 /// only new machine creations will pick up the updated secrets.
 #[utoipa::path(
     put,

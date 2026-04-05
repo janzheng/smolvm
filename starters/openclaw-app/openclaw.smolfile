@@ -1,17 +1,32 @@
 # OpenClaw gateway in a hardware-isolated microVM
 #
-# Sandbox (quick, ephemeral):
-#   smolvm sandbox run --net -d -s examples/openclaw-app/openclaw.smolfile alpine/openclaw:main -- openclaw gateway --port 18789 --allow-unconfigured
+# Run:
+#   smolvm machine run -d -s examples/openclaw-app/openclaw.smolfile
 #   curl http://localhost:18789/health
 #
-# Microvm + Container (persistent):
-#   smolvm microvm create openclaw -s examples/openclaw-app/openclaw.smolfile
-#   smolvm microvm start openclaw
-#   smolvm container create openclaw alpine/openclaw:main -- openclaw gateway --port 18789 --allow-unconfigured
-#   curl http://localhost:18789/health
+# Persistent:
+#   smolvm machine create openclaw -s examples/openclaw-app/openclaw.smolfile
+#   smolvm machine start --name openclaw
+
+image = "alpine/openclaw:main"
+entrypoint = ["openclaw"]
+cmd = ["gateway", "--port", "18789", "--allow-unconfigured"]
 
 cpus = 2
 memory = 1024
 net = true
 
+# Network policy: OpenClaw only needs to reach LLM provider APIs.
+# All other outbound traffic (including exfiltration attempts) is blocked.
+[network]
+allow_hosts = [
+    "api.openai.com",
+    "api.anthropic.com",
+    "generativelanguage.googleapis.com",
+    "api.mistral.ai",
+    "api.groq.com",
+    "api.together.xyz",
+]
+
+[dev]
 ports = ["18789:18789"]

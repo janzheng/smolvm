@@ -1,14 +1,8 @@
 //! Command execution handlers.
 
 use axum::{
-    extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, Query, State,
-    },
-    response::{
-        sse::{Event, KeepAlive, Sse},
-        IntoResponse,
-    },
+    extract::{Path, Query, State},
+    response::sse::{Event, KeepAlive, Sse},
     Json,
 };
 use std::convert::Infallible;
@@ -23,53 +17,9 @@ use crate::api::types::{
     ApiErrorResponse, EnvVar, ExecRequest, ExecResponse, LogsQuery, RunRequest,
 };
 use crate::api::validation::validate_command;
-use futures_util::stream::StreamExt;
-use futures_util::sink::SinkExt;
-use smolvm_protocol::AgentResponse;
 use crate::data::consts::BYTES_PER_MIB;
 use crate::data::storage::HostMount;
 use tokio::sync::Semaphore;
-
-use crate::api::state::MachineEntry;
-
-// User switching is now handled agent-side via setuid/setgid in the wire protocol.
-// The old `wrap_command_for_user` su -l approach has been removed.
-
-/// Sanitize env vars and inject proxy defaults for a machine.
-///
-/// When a machine has secrets configured:
-/// 1. Strip user-provided env vars that match protected key names (e.g., ANTHROPIC_API_KEY)
-/// 2. Inject proxy defaults (BASE_URL + placeholder key) for any keys not already set
-///
-/// This prevents real API keys from entering the VM via `--env` overrides.
-fn apply_secret_proxy_env(
-    env: &mut Vec<(String, String)>,
-    entry: &MachineEntry,
-    state: &ApiState,
-) {
-    if entry.default_env.is_empty() && entry.secrets.is_empty() {
-        return;
-    }
-
-    let config_guard = state.proxy_config.read();
-    if let Some(ref proxy_config) = *config_guard {
-        let stripped = proxy_config.sanitize_env(env, &entry.secrets, &entry.default_env);
-        if stripped > 0 {
-            tracing::warn!(
-                count = stripped,
-                "stripped env var(s) that conflict with secret proxy"
-            );
-        }
-    } else {
-        // No proxy config — just inject defaults without stripping
-        let user_keys: std::collections::HashSet<_> = env.iter().map(|(k, _)| k.clone()).collect();
-        for (k, v) in &entry.default_env {
-            if !user_keys.contains(k) {
-                env.push((k.clone(), v.clone()));
-            }
-        }
-    }
-}
 
 /// Execute a command in a machine.
 ///
@@ -104,24 +54,12 @@ pub async fn exec_command(
         .map_err(classify_ensure_running_error)?;
 
     let command = req.command.clone();
-    let mut env = EnvVar::to_tuples(&req.env);
+    let env = EnvVar::to_tuples(&req.env);
     let workdir = req.workdir.clone();
     let timeout = req.timeout_secs.map(Duration::from_secs);
-    let user = req.user.clone();
-
-    // Sanitize env vars and inject proxy defaults
-    {
-        let entry_lock = entry.lock();
-        apply_secret_proxy_env(&mut env, &entry_lock, &state);
-    }
-
-    crate::api::metrics::record_exec_called();
-    let exec_start = std::time::Instant::now();
 
     let (exit_code, stdout, stderr) =
-        with_machine_client(&entry, move |c| c.vm_exec_as(command, env, workdir, timeout, user)).await?;
-
-    crate::api::metrics::record_exec_duration(exec_start.elapsed().as_secs_f64());
+        with_machine_client(&entry, move |c| c.vm_exec(command, env, workdir, timeout)).await?;
 
     Ok(Json(ExecResponse {
         exit_code,
@@ -164,16 +102,13 @@ pub async fn run_command(
 
     let image = req.image.clone();
     let command = req.command.clone();
-    let mut env = EnvVar::to_tuples(&req.env);
+    let env = EnvVar::to_tuples(&req.env);
     let workdir = req.workdir.clone();
     let timeout = req.timeout_secs.map(Duration::from_secs);
-    let user = req.user.clone();
 
     // Get mounts from machine config (converted to protocol format)
-    // Also sanitize env vars for secret proxy protection
     let mounts_config = {
         let entry = entry.lock();
-        apply_secret_proxy_env(&mut env, &entry, &state);
         entry
             .mounts
             .iter()
@@ -186,7 +121,7 @@ pub async fn run_command(
     };
 
     let (exit_code, stdout, stderr) = with_machine_client(&entry, move |c| {
-        c.run_with_mounts_timeout_and_user(&image, command, env, workdir, mounts_config, timeout, user)
+        c.run_with_mounts_and_timeout(&image, command, env, workdir, mounts_config, timeout)
     })
     .await?;
 
@@ -421,399 +356,4 @@ fn read_from_position(path: &std::path::Path, pos: u64) -> std::io::Result<(Stri
 
     let text = String::from_utf8_lossy(&buf).into_owned();
     Ok((text, new_pos))
-}
-
-/// Stream exec output over WebSocket.
-///
-/// The client sends the first message as a JSON `ExecRequest`, then receives
-/// streaming output as JSON messages with `type` field ("stdout", "stderr",
-/// "exit", "error").
-pub async fn exec_stream(
-    State(state): State<Arc<ApiState>>,
-    Path(id): Path<String>,
-    ws: WebSocketUpgrade,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_exec_ws(state, id, socket))
-}
-
-/// WebSocket message sent to clients.
-#[derive(serde::Serialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-enum WsExecMessage {
-    Stdout { data: String },
-    Stderr { data: String },
-    Exit { code: i32 },
-    Error { message: String },
-}
-
-/// WebSocket message received from clients for interactive terminal.
-#[derive(serde::Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-enum WsTerminalInput {
-    /// Stdin data (base64-encoded bytes for binary safety).
-    Stdin { data: String },
-    /// Terminal resize event.
-    Resize { cols: u16, rows: u16 },
-}
-
-/// Interactive terminal WebSocket endpoint.
-///
-/// Unlike `exec_stream`, this endpoint supports bidirectional communication:
-/// - Client → Server: stdin data and resize events
-/// - Server → Client: stdout, stderr, exit, error
-///
-/// First message must be an ExecRequest JSON. Subsequent messages are
-/// WsTerminalInput (stdin/resize).
-pub async fn exec_interactive(
-    State(state): State<Arc<ApiState>>,
-    Path(id): Path<String>,
-    ws: WebSocketUpgrade,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_interactive_ws(state, id, socket))
-}
-
-async fn handle_interactive_ws(state: Arc<ApiState>, id: String, socket: WebSocket) {
-    use crate::agent::InteractiveInput;
-    use tokio::sync::mpsc;
-
-    let (mut ws_sender, mut ws_receiver) = socket.split();
-
-    // Read first message as ExecRequest
-    let req: ExecRequest = match ws_receiver.next().await {
-        Some(Ok(Message::Text(text))) => match serde_json::from_str(&text) {
-            Ok(req) => req,
-            Err(e) => {
-                let msg = WsExecMessage::Error {
-                    message: format!("invalid request: {}", e),
-                };
-                let _ = ws_sender
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
-                    .await;
-                return;
-            }
-        },
-        _ => {
-            let msg = WsExecMessage::Error {
-                message: "expected JSON text message with ExecRequest".into(),
-            };
-            let _ = ws_sender
-                .send(Message::Text(serde_json::to_string(&msg).unwrap()))
-                .await;
-            return;
-        }
-    };
-
-    if req.command.is_empty() {
-        let msg = WsExecMessage::Error {
-            message: "command cannot be empty".into(),
-        };
-        let _ = ws_sender
-            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
-            .await;
-        return;
-    }
-
-    // Get machine and ensure running
-    let entry = match state.get_machine(&id) {
-        Ok(e) => e,
-        Err(e) => {
-            let msg = WsExecMessage::Error {
-                message: format!("{:?}", e),
-            };
-            let _ = ws_sender
-                .send(Message::Text(serde_json::to_string(&msg).unwrap()))
-                .await;
-            return;
-        }
-    };
-
-    if let Err(e) = ensure_running_and_persist(&state, &id, &entry)
-        .await
-        .map_err(classify_ensure_running_error)
-    {
-        let msg = WsExecMessage::Error {
-            message: format!("{:?}", e),
-        };
-        let _ = ws_sender
-            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
-            .await;
-        return;
-    }
-
-    // Channels for bidirectional communication
-    let (output_tx, mut output_rx) = mpsc::channel::<AgentResponse>(64);
-    let (stdin_tx, stdin_rx) = std::sync::mpsc::channel::<InteractiveInput>();
-
-    let command = req.command.clone();
-    let mut env = EnvVar::to_tuples(&req.env);
-    let workdir = req.workdir.clone();
-    let timeout = req.timeout_secs.map(Duration::from_secs);
-
-    // Sanitize env vars and inject proxy defaults
-    {
-        let entry_lock = entry.lock();
-        apply_secret_proxy_env(&mut env, &entry_lock, &state);
-    }
-
-    // Spawn the blocking exec task
-    let manager = {
-        let entry = entry.lock();
-        std::sync::Arc::clone(&entry.manager)
-    };
-
-    // Bridge std channel to tokio channel for output
-    let (std_output_tx, std_output_rx) = std::sync::mpsc::channel::<AgentResponse>();
-    let output_tx_bridge = output_tx.clone();
-    std::thread::spawn(move || {
-        while let Ok(msg) = std_output_rx.recv() {
-            let is_exit = matches!(msg, AgentResponse::Exited { .. });
-            if output_tx_bridge.blocking_send(msg).is_err() {
-                break;
-            }
-            if is_exit {
-                break;
-            }
-        }
-    });
-
-    tokio::task::spawn_blocking(move || {
-        match manager.connect() {
-            Ok(mut client) => {
-                let _ = client.vm_exec_interactive_streaming(
-                    command, env, workdir, timeout, true, std_output_tx, stdin_rx,
-                );
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "failed to connect for interactive exec");
-                let _ = output_tx.blocking_send(AgentResponse::Error {
-                    message: format!("connection failed: {}", e),
-                    code: None,
-                });
-            }
-        }
-    });
-
-    // Task to read from WebSocket and forward to stdin channel
-    let stdin_tx_clone = stdin_tx.clone();
-    tokio::spawn(async move {
-        while let Some(msg_result) = ws_receiver.next().await {
-            match msg_result {
-                Ok(Message::Text(text)) => {
-                    if let Ok(input) = serde_json::from_str::<WsTerminalInput>(&text) {
-                        match input {
-                            WsTerminalInput::Stdin { data } => {
-                                // Data is sent as plain text (not base64) for simplicity
-                                let _ = stdin_tx_clone
-                                    .send(InteractiveInput::Data(data.into_bytes()));
-                            }
-                            WsTerminalInput::Resize { cols, rows } => {
-                                let _ =
-                                    stdin_tx_clone.send(InteractiveInput::Resize { cols, rows });
-                            }
-                        }
-                    }
-                }
-                Ok(Message::Binary(data)) => {
-                    // Raw binary data treated as stdin
-                    let _ = stdin_tx_clone.send(InteractiveInput::Data(data.to_vec()));
-                }
-                Ok(Message::Close(_)) | Err(_) => {
-                    let _ = stdin_tx_clone.send(InteractiveInput::Eof);
-                    break;
-                }
-                _ => {}
-            }
-        }
-    });
-
-    // Forward output to WebSocket
-    while let Some(resp) = output_rx.recv().await {
-        let ws_msg = match resp {
-            AgentResponse::Stdout { data } => {
-                let text = String::from_utf8_lossy(&data).to_string();
-                WsExecMessage::Stdout { data: text }
-            }
-            AgentResponse::Stderr { data } => {
-                let text = String::from_utf8_lossy(&data).to_string();
-                WsExecMessage::Stderr { data: text }
-            }
-            AgentResponse::Exited { exit_code } => {
-                let msg = WsExecMessage::Exit { code: exit_code };
-                let _ = ws_sender
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
-                    .await;
-                break;
-            }
-            AgentResponse::Error { message, .. } => WsExecMessage::Error { message },
-            _ => continue,
-        };
-
-        if ws_sender
-            .send(Message::Text(serde_json::to_string(&ws_msg).unwrap()))
-            .await
-            .is_err()
-        {
-            break;
-        }
-    }
-}
-
-// ============================================================================
-// Tests
-// ============================================================================
-
-// Note: wrap_command_for_user tests were removed when user switching moved
-// to the agent side (setuid/setgid in wire protocol).
-// Secret proxy env sanitization tests live in proxy::handler::tests.
-
-async fn handle_exec_ws(state: Arc<ApiState>, id: String, mut socket: WebSocket) {
-    // Read first message as ExecRequest
-    let req: ExecRequest = match socket.recv().await {
-        Some(Ok(Message::Text(text))) => match serde_json::from_str(&text) {
-            Ok(req) => req,
-            Err(e) => {
-                let msg = WsExecMessage::Error {
-                    message: format!("invalid request: {}", e),
-                };
-                let _ = socket
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
-                    .await;
-                return;
-            }
-        },
-        _ => {
-            let msg = WsExecMessage::Error {
-                message: "expected JSON text message with ExecRequest".into(),
-            };
-            let _ = socket
-                .send(Message::Text(serde_json::to_string(&msg).unwrap()))
-                .await;
-            return;
-        }
-    };
-
-    // Validate command
-    if req.command.is_empty() {
-        let msg = WsExecMessage::Error {
-            message: "command cannot be empty".into(),
-        };
-        let _ = socket
-            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
-            .await;
-        return;
-    }
-
-    // Get machine and ensure running
-    let entry = match state.get_machine(&id) {
-        Ok(e) => e,
-        Err(e) => {
-            let msg = WsExecMessage::Error {
-                message: format!("{:?}", e),
-            };
-            let _ = socket
-                .send(Message::Text(serde_json::to_string(&msg).unwrap()))
-                .await;
-            return;
-        }
-    };
-
-    if let Err(e) = ensure_running_and_persist(&state, &id, &entry)
-        .await
-        .map_err(classify_ensure_running_error)
-    {
-        let msg = WsExecMessage::Error {
-            message: format!("{:?}", e),
-        };
-        let _ = socket
-            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
-            .await;
-        return;
-    }
-
-    // Use tokio mpsc channel — the sender has blocking_send() for use from
-    // sync code, and the receiver is async-native.
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<AgentResponse>(64);
-
-    let command = req.command.clone();
-    let mut env = EnvVar::to_tuples(&req.env);
-    let workdir = req.workdir.clone();
-    let timeout = req.timeout_secs.map(Duration::from_secs);
-    let _user = req.user.clone(); // TODO: pass to vm_exec_streaming for interactive user switching
-    let entry_clone = entry.clone();
-
-    // Sanitize env vars and inject proxy defaults
-    {
-        let entry_lock = entry.lock();
-        apply_secret_proxy_env(&mut env, &entry_lock, &state);
-    }
-
-    // Run exec in blocking task — clone Arc<AgentManager> to avoid holding entry lock
-    let manager = {
-        let entry = entry_clone.lock();
-        std::sync::Arc::clone(&entry.manager)
-    };
-    tokio::task::spawn_blocking(move || {
-        match manager.connect() {
-            Ok(mut client) => {
-                // Use std channel internally since vm_exec_streaming expects it,
-                // then bridge to tokio channel
-                let (std_tx, std_rx) = std::sync::mpsc::channel::<AgentResponse>();
-                let tx_bridge = tx.clone();
-
-                // Spawn a thread to bridge std → tokio channel
-                let bridge = std::thread::spawn(move || {
-                    while let Ok(msg) = std_rx.recv() {
-                        let is_exit = matches!(msg, AgentResponse::Exited { .. });
-                        if tx_bridge.blocking_send(msg).is_err() {
-                            break; // Receiver dropped
-                        }
-                        if is_exit {
-                            break;
-                        }
-                    }
-                });
-
-                let _ = client.vm_exec_streaming(command, env, workdir, timeout, std_tx);
-                let _ = bridge.join();
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "failed to connect for streaming exec");
-                let _ = tx.blocking_send(AgentResponse::Error {
-                    message: format!("connection failed: {}", e),
-                    code: None,
-                });
-            }
-        }
-    });
-
-    // Forward tokio channel messages to WebSocket
-    while let Some(resp) = rx.recv().await {
-        let ws_msg = match resp {
-            AgentResponse::Stdout { data } => {
-                let text = String::from_utf8_lossy(&data).to_string();
-                WsExecMessage::Stdout { data: text }
-            }
-            AgentResponse::Stderr { data } => {
-                let text = String::from_utf8_lossy(&data).to_string();
-                WsExecMessage::Stderr { data: text }
-            }
-            AgentResponse::Exited { exit_code } => {
-                let msg = WsExecMessage::Exit { code: exit_code };
-                let _ = socket
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
-                    .await;
-                break;
-            }
-            AgentResponse::Error { message, .. } => WsExecMessage::Error { message },
-            _ => continue,
-        };
-
-        if socket
-            .send(Message::Text(serde_json::to_string(&ws_msg).unwrap()))
-            .await
-            .is_err()
-        {
-            break; // Client disconnected
-        }
-    }
 }

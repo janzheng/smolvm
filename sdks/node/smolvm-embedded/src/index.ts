@@ -27,7 +27,6 @@
 
 // Core classes
 export { Machine, withMachine, quickExec, quickRun } from "./machine.js";
-export { MicroVM, withMicroVM } from "./microvm.js";
 export { ExecResult, ExecutionError } from "./execution.js";
 
 // Presets
@@ -47,7 +46,6 @@ export {
 // Types
 export type {
   MachineConfig,
-  MicroVMConfig,
   MountSpec,
   PortSpec,
   ResourceSpec,

@@ -120,6 +120,9 @@ pub struct CreateMachineRequest {
     /// These are queried on-demand via exec when tools are listed or called.
     #[serde(default)]
     pub mcp_servers: Vec<McpServerConfig>,
+    /// Allowed egress CIDR ranges.
+    #[serde(default)]
+    pub allowed_cidrs: Option<Vec<String>>,
 }
 
 /// Request to clone an existing machine.
@@ -130,16 +133,16 @@ pub struct CloneMachineRequest {
     pub name: String,
 }
 
-/// Response from comparing two machinees.
+/// Response from comparing two machines.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DiffResponse {
     /// Source machine name.
     pub source: String,
     /// Target machine name.
     pub target: String,
-    /// Files that differ between the two machinees.
+    /// Files that differ between the two machines.
     pub differences: Vec<String>,
-    /// Whether the machinees are identical.
+    /// Whether the machines are identical.
     pub identical: bool,
 }
 
@@ -165,7 +168,7 @@ pub enum MergeStrategy {
     Ours,
 }
 
-/// Response from merging two machinees.
+/// Response from merging two machines.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct MergeResponse {
     /// Source machine name.
@@ -248,6 +251,10 @@ pub struct ResourceSpec {
     /// Implies `network: true`. Requires VMM-level enforcement (future work).
     #[serde(default)]
     pub allowed_domains: Option<Vec<String>>,
+    /// Allowed egress CIDR ranges. When set, only these IP ranges are reachable.
+    /// Omit for unrestricted egress. Empty list denies all egress.
+    #[serde(default)]
+    pub allowed_cidrs: Option<Vec<String>>,
 }
 
 /// Machine status information.
@@ -277,11 +284,11 @@ pub struct MachineInfo {
     pub restart_count: Option<u32>,
 }
 
-/// List machinees response.
+/// List machines response.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ListMachinesResponse {
-    /// List of machinees.
-    pub machinees: Vec<MachineInfo>,
+    /// List of machines.
+    pub machines: Vec<MachineInfo>,
 }
 
 // ============================================================================
@@ -1501,9 +1508,9 @@ pub struct ProviderInfoResponse {
     pub version: String,
     /// Supported capabilities.
     pub capabilities: Vec<String>,
-    /// Maximum number of machinees (null = unlimited).
+    /// Maximum number of machines (null = unlimited).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_machinees: Option<usize>,
+    pub max_machines: Option<usize>,
     /// Provider region / location.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,

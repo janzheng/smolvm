@@ -14,19 +14,19 @@ use smolvm_protocol::{
 };
 use std::io::{Read, Write};
 use std::os::unix::io::AsRawFd;
-use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use tracing::{debug, error, info, warn};
 
 mod container;
 mod crun;
+mod dns_proxy;
 mod oci;
 mod paths;
 mod process;
-mod proxy;
 #[cfg(target_os = "linux")]
 mod pty;
 mod retry;
+mod ssh_agent;
 mod storage;
 mod vsock;
 
@@ -116,12 +116,6 @@ fn main() {
     mount_storage_disk();
     info!(duration_ms = uptime_ms() - t0, "storage disk mounted");
 
-    // Set up network firewall to block VM→host access (S01 security fix).
-    // Must run after mounts (needs /proc) but before accepting connections.
-    let t0 = uptime_ms();
-    setup_network_firewall();
-    info!(duration_ms = uptime_ms() - t0, "network firewall configured");
-
     // Initialize packed layers support (if SMOLVM_PACKED_LAYERS env var is set)
     let t0 = uptime_ms();
     if let Some(packed_dir) = storage::get_packed_layers_dir() {
@@ -148,14 +142,18 @@ fn main() {
     // instance survive, so this work (~30-50ms for crun list + JSON parse)
     // is wasted if no container operations are requested.
 
-    // Start guest-side secret proxy (bridges localhost:9800 -> vsock:6100 -> host proxy).
-    // This is a no-op if vsock port 6100 is not mapped (no secrets configured).
-    match proxy::start_guest_proxy() {
-        Ok(()) => info!("guest secret proxy started on port {}", proxy::GUEST_PROXY_PORT),
-        Err(e) => {
-            // Non-fatal: proxy is an optional feature
-            debug!(error = %e, "guest secret proxy not started (vsock port may not be mapped)");
-        }
+    // Start SSH agent forwarding bridge if enabled by host
+    if ssh_agent::is_enabled() {
+        info!("SSH agent forwarding enabled, starting guest bridge");
+        ssh_agent::start();
+        // Set env so all child processes (git, ssh, etc.) find the agent socket
+        std::env::set_var("SSH_AUTH_SOCK", ssh_agent::GUEST_SSH_AUTH_SOCK);
+    }
+
+    // Start DNS filtering proxy if enabled by host (when --allow-host is used)
+    if dns_proxy::is_enabled() {
+        info!("DNS filtering enabled, starting guest proxy");
+        dns_proxy::start();
     }
 
     info!(
@@ -203,11 +201,12 @@ fn signal_ready_to_host() {
     ];
 
     for path in &paths {
-        if Path::new(path).parent().is_some_and(|p| p.exists())
-            && std::fs::write(path, content.as_bytes()).is_ok() {
+        if Path::new(path).parent().map_or(false, |p| p.exists()) {
+            if std::fs::write(path, content.as_bytes()).is_ok() {
                 debug!(path = path, "ready marker written");
                 return;
             }
+        }
     }
 }
 
@@ -268,201 +267,6 @@ impl MountEntry {
 
         Ok(())
     }
-}
-
-/// Look up a Unix user by name, returning (uid, gid, home_dir).
-/// Parses /etc/passwd directly to avoid libc getpwnam (which may not work in minimal rootfs).
-fn lookup_user(username: &str) -> std::result::Result<(u32, u32, String), String> {
-    let passwd = std::fs::read_to_string("/etc/passwd")
-        .map_err(|e| format!("cannot read /etc/passwd: {}", e))?;
-
-    for line in passwd.lines() {
-        let fields: Vec<&str> = line.split(':').collect();
-        if fields.len() >= 6 && fields[0] == username {
-            let uid: u32 = fields[2].parse().map_err(|_| "invalid uid")?;
-            let gid: u32 = fields[3].parse().map_err(|_| "invalid gid")?;
-            let home = fields[5].to_string();
-            return Ok((uid, gid, home));
-        }
-    }
-
-    Err(format!("user '{}' not found in /etc/passwd", username))
-}
-
-/// Set up network firewall to prevent VM from reaching host services.
-///
-/// S01 security fix: Without this, TSI (Transparent Socket Impersonation) allows
-/// the VM to reach any port on the host via the vsock proxy. This means a machine
-/// with `network: true` could hit the smolvm API on port 8080 and manage other
-/// machinees — a critical privilege escalation.
-///
-/// We detect the default gateway (host) IP from /proc/net/route and add iptables
-/// rules to block access to sensitive host ports. Also enforces domain allowlists
-/// if SMOLVM_ALLOWED_DOMAINS is set (S03).
-#[cfg(target_os = "linux")]
-fn setup_network_firewall() {
-    // Detect gateway IP from /proc/net/route
-    let gateway_ip = match detect_gateway_ip() {
-        Some(ip) => ip,
-        None => {
-            warn!("could not detect gateway IP, skipping firewall setup");
-            return;
-        }
-    };
-
-    info!(gateway = %gateway_ip, "detected host gateway IP");
-
-    // NOTE: With TSI (Transparent Socket Impersonation), iptables rules have no effect
-    // because TSI intercepts socket syscalls before they reach netfilter.
-    // These rules only apply if libkrun switches to a real network device (virtio-net).
-    // For TSI-based networking, port blocking must be done at the libkrun/TSI layer.
-
-    // Block access to common host service ports via the gateway.
-    // These are the ports most likely to be running host services
-    // that a machine should never be able to reach.
-    let blocked_ports: &[u16] = &[
-        9090,  // smolvm API server
-        22,    // SSH
-        5432,  // PostgreSQL
-        3306,  // MySQL
-        6379,  // Redis
-        27017, // MongoDB
-    ];
-
-    for port in blocked_ports {
-        run_iptables(&[
-            "-A", "OUTPUT",
-            "-d", &gateway_ip,
-            "-p", "tcp",
-            "--dport", &port.to_string(),
-            "-j", "REJECT",
-            "--reject-with", "tcp-reset",
-        ]);
-    }
-
-    // Also block UDP to the same ports (e.g., DNS on gateway)
-    // but allow DNS to external resolvers
-    run_iptables(&[
-        "-A", "OUTPUT",
-        "-d", &gateway_ip,
-        "-p", "udp",
-        "--dport", "53",
-        "-j", "REJECT",
-    ]);
-
-    info!(
-        blocked_ports = ?blocked_ports,
-        gateway = %gateway_ip,
-        "firewall rules applied: host service ports blocked"
-    );
-
-    // S03: Enforce domain allowlist if configured
-    if let Ok(domains) = std::env::var("SMOLVM_ALLOWED_DOMAINS") {
-        if !domains.is_empty() {
-            setup_domain_allowlist(&domains, &gateway_ip);
-        }
-    }
-}
-
-/// Parse gateway IP from /proc/net/route.
-/// The default route (destination 00000000) has the gateway in hex.
-#[cfg(target_os = "linux")]
-fn detect_gateway_ip() -> Option<String> {
-    let content = std::fs::read_to_string("/proc/net/route").ok()?;
-    for line in content.lines().skip(1) {
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        if fields.len() < 3 {
-            continue;
-        }
-        // Default route: destination is 00000000
-        if fields[1] == "00000000" {
-            let hex = fields[2];
-            if let Ok(ip_u32) = u32::from_str_radix(hex, 16) {
-                // /proc/net/route stores IPs in little-endian hex
-                let a = ip_u32 & 0xFF;
-                let b = (ip_u32 >> 8) & 0xFF;
-                let c = (ip_u32 >> 16) & 0xFF;
-                let d = (ip_u32 >> 24) & 0xFF;
-                return Some(format!("{}.{}.{}.{}", a, b, c, d));
-            }
-        }
-    }
-    None
-}
-
-/// Run an iptables command, logging but not failing on error.
-#[cfg(target_os = "linux")]
-fn run_iptables(args: &[&str]) {
-    match Command::new("iptables").args(args).output() {
-        Ok(output) => {
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                warn!(args = ?args, stderr = %stderr, "iptables rule failed (iptables may not be available)");
-            }
-        }
-        Err(e) => {
-            // iptables not installed in rootfs — this is expected in minimal Alpine
-            debug!(error = %e, "iptables not found, firewall rules not applied");
-        }
-    }
-}
-
-/// S03: Set up domain allowlist using iptables.
-///
-/// When SMOLVM_ALLOWED_DOMAINS is set, we resolve each domain and create
-/// iptables rules that only allow outbound connections to those IPs.
-/// All other outbound TCP/UDP (except DNS to external resolvers) is blocked.
-#[cfg(target_os = "linux")]
-fn setup_domain_allowlist(domains: &str, gateway_ip: &str) {
-    info!(domains = %domains, "setting up domain allowlist");
-
-    // Parse comma-separated domain list
-    let domain_list: Vec<&str> = domains.split(',').map(|d| d.trim()).filter(|d| !d.is_empty()).collect();
-
-    if domain_list.is_empty() {
-        return;
-    }
-
-    // Allow loopback
-    run_iptables(&["-A", "OUTPUT", "-o", "lo", "-j", "ACCEPT"]);
-
-    // Allow established/related connections
-    run_iptables(&["-A", "OUTPUT", "-m", "state", "--state", "ESTABLISHED,RELATED", "-j", "ACCEPT"]);
-
-    // Allow DNS to external resolvers (needed to resolve the allowed domains)
-    run_iptables(&["-A", "OUTPUT", "-p", "udp", "--dport", "53", "-j", "ACCEPT"]);
-    run_iptables(&["-A", "OUTPUT", "-p", "tcp", "--dport", "53", "-j", "ACCEPT"]);
-
-    // Resolve each domain and allow its IPs
-    for domain in &domain_list {
-        // Use getent to resolve the domain
-        if let Ok(output) = Command::new("getent").args(["ahosts", domain]).output() {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                for line in stdout.lines() {
-                    if let Some(ip) = line.split_whitespace().next() {
-                        // Allow TCP and UDP to this IP
-                        run_iptables(&["-A", "OUTPUT", "-d", ip, "-j", "ACCEPT"]);
-                    }
-                }
-                info!(domain = %domain, "allowed domain resolved and permitted");
-            } else {
-                warn!(domain = %domain, "failed to resolve domain for allowlist");
-            }
-        }
-    }
-
-    // Block the gateway (host) entirely — already done by S01 rules above,
-    // but make it explicit in allowlist mode
-    run_iptables(&["-A", "OUTPUT", "-d", gateway_ip, "-j", "REJECT"]);
-
-    // Default policy: drop everything else
-    // Note: We use REJECT on the OUTPUT chain rather than changing policy,
-    // because changing policy to DROP would break vsock communication
-    run_iptables(&["-A", "OUTPUT", "-p", "tcp", "-j", "REJECT", "--reject-with", "tcp-reset"]);
-    run_iptables(&["-A", "OUTPUT", "-p", "udp", "-j", "REJECT"]);
-
-    info!(allowed = ?domain_list, "domain allowlist enforced");
 }
 
 /// Mount essential filesystems (proc, sysfs, devtmpfs, devpts).
@@ -813,7 +617,7 @@ fn setup_signal_handlers() {
         libc::_exit(0);
     }
 
-    // SAFETY: Setting up signal handlers with valid function pointer
+    // SAFETY: Setting up signal handlers with valid function pointers
     unsafe {
         // Handle SIGTERM (sent by VM stop)
         libc::signal(
@@ -825,6 +629,10 @@ fn setup_signal_handlers() {
             libc::SIGINT,
             handle_term_signal as *const () as libc::sighandler_t,
         );
+        // Note: We do NOT install a SIGCHLD handler here because it would
+        // race with Child::wait() in synchronous exec paths. Instead,
+        // background exec children are reaped by reap_background_children()
+        // called periodically in the accept loop.
     }
 }
 
@@ -837,7 +645,6 @@ fn setup_signal_handlers() {
 /// Mount the storage disk at /storage.
 /// This is done by the agent (instead of init script) to allow vsock listener
 /// to be created first, reducing cold start latency.
-#[cfg(target_os = "linux")]
 fn mount_storage_disk() {
     use std::process::Command;
 
@@ -971,14 +778,6 @@ fn mount_storage_disk() {
     }
 }
 
-/// Stub for non-Linux platforms.
-#[cfg(not(target_os = "linux"))]
-fn mount_storage_disk() {}
-
-/// Stub for non-Linux platforms.
-#[cfg(not(target_os = "linux"))]
-fn setup_network_firewall() {}
-
 /// Run the vsock server with a pre-created listener.
 /// The listener is created early (before initialization) to ensure the kernel
 /// has a listener ready when the host connects.
@@ -991,6 +790,9 @@ fn run_server_with_listener(
     info!(uptime_ms = uptime_ms(), "entering vsock accept loop");
 
     loop {
+        // Reap any exited background children to prevent zombie accumulation
+        reap_background_children();
+
         match listener.accept() {
             Ok(mut stream) => {
                 if first_connection {
@@ -1240,6 +1042,15 @@ fn handle_request(request: AgentRequest) -> AgentResponse {
             }
         }
 
+        // VM-level background exec — spawn and return PID immediately
+        AgentRequest::VmExec {
+            command,
+            env,
+            workdir,
+            background: true,
+            ..
+        } => handle_vm_exec_background(&command, &env, workdir.as_deref()),
+
         // VM-level exec (direct command execution in VM, not container)
         AgentRequest::VmExec {
             command,
@@ -1248,8 +1059,8 @@ fn handle_request(request: AgentRequest) -> AgentResponse {
             timeout_ms,
             interactive: false,
             tty: false,
-            user,
-        } => handle_vm_exec(&command, &env, workdir.as_deref(), timeout_ms, user.as_deref()),
+            ..
+        } => handle_vm_exec(&command, &env, workdir.as_deref(), timeout_ms),
 
         AgentRequest::VmExec { .. } => {
             // Interactive mode should be handled by handle_interactive_vm_exec
@@ -1268,7 +1079,6 @@ fn handle_request(request: AgentRequest) -> AgentResponse {
             timeout_ms,
             interactive: false,
             tty: false,
-            user,
         } => handle_run(
             &image,
             &command,
@@ -1276,7 +1086,6 @@ fn handle_request(request: AgentRequest) -> AgentResponse {
             workdir.as_deref(),
             &mounts,
             timeout_ms,
-            user.as_deref(),
         ),
 
         AgentRequest::Run { .. } => {
@@ -1323,7 +1132,6 @@ fn handle_request(request: AgentRequest) -> AgentResponse {
             timeout_ms,
             interactive: false,
             tty: false,
-            ..
         } => handle_exec(
             &container_id,
             &command,
@@ -2172,11 +1980,10 @@ fn handle_run(
     workdir: Option<&str>,
     mounts: &[(String, String, bool)],
     timeout_ms: Option<u64>,
-    user: Option<&str>,
 ) -> AgentResponse {
-    info!(image = %image, command = ?command, mounts = ?mounts, timeout_ms = ?timeout_ms, user = ?user, "running command");
+    info!(image = %image, command = ?command, mounts = ?mounts, timeout_ms = ?timeout_ms, "running command");
 
-    match storage::run_command(image, command, env, workdir, mounts, timeout_ms, user) {
+    match storage::run_command(image, command, env, workdir, mounts, timeout_ms) {
         Ok(result) => AgentResponse::Completed {
             exit_code: result.exit_code,
             stdout: result.stdout,
@@ -2400,33 +2207,87 @@ fn handle_storage_status() -> AgentResponse {
 
 /// Handle VM-level exec (non-interactive).
 /// Executes command directly in the VM's rootfs without any container isolation.
-fn handle_vm_exec(
+/// Reap any exited background children to prevent zombie accumulation.
+///
+/// Called periodically in the accept loop. Uses `waitpid(-1, WNOHANG)`
+/// to collect all exited children without blocking. Safe to call even
+/// when no background children exist.
+#[cfg(target_os = "linux")]
+fn reap_background_children() {
+    loop {
+        let ret = unsafe { libc::waitpid(-1, std::ptr::null_mut(), libc::WNOHANG) };
+        if ret <= 0 {
+            break;
+        }
+        debug!(pid = ret, "reaped background child");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn reap_background_children() {}
+
+/// Handle background VM exec — spawn and return PID immediately.
+///
+/// The process runs detached from the agent's control. stdout/stderr
+/// go to /dev/null. Zombie children are reaped by reap_background_children()
+/// in the accept loop.
+fn handle_vm_exec_background(
     command: &[String],
     env: &[(String, String)],
     workdir: Option<&str>,
-    timeout_ms: Option<u64>,
-    user: Option<&str>,
 ) -> AgentResponse {
-    info!(command = ?command, user = ?user, "executing directly in VM");
+    info!(command = ?command, "background VM exec");
 
     if command.is_empty() {
         return AgentResponse::error("command cannot be empty", error_codes::INVALID_REQUEST);
     }
 
-    // If a user is specified, validate it exists and get uid/gid
-    let user_ids = if let Some(username) = user {
-        match lookup_user(username) {
-            Ok(ids) => Some(ids),
-            Err(msg) => {
-                return AgentResponse::error(
-                    format!("user '{}': {}", username, msg),
-                    error_codes::INVALID_REQUEST,
-                );
+    let mut cmd = Command::new(&command[0]);
+    cmd.args(&command[1..]);
+
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
+    if let Some(wd) = workdir {
+        cmd.current_dir(wd);
+    }
+
+    // Detach: stdout/stderr to /dev/null so the process doesn't block on pipe writes
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    cmd.stdin(Stdio::null());
+
+    match cmd.spawn() {
+        Ok(child) => {
+            let pid = child.id();
+            // Don't wait — let the child run independently.
+            // reap_background_children() in the accept loop collects the exit status.
+            std::mem::forget(child);
+            info!(pid = pid, "background process started");
+            AgentResponse::Completed {
+                exit_code: 0,
+                stdout: format!("{}", pid),
+                stderr: String::new(),
             }
         }
-    } else {
-        None
-    };
+        Err(e) => AgentResponse::error(
+            format!("failed to spawn background command: {}", e),
+            error_codes::SPAWN_FAILED,
+        ),
+    }
+}
+
+fn handle_vm_exec(
+    command: &[String],
+    env: &[(String, String)],
+    workdir: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> AgentResponse {
+    info!(command = ?command, "executing directly in VM");
+
+    if command.is_empty() {
+        return AgentResponse::error("command cannot be empty", error_codes::INVALID_REQUEST);
+    }
 
     let mut cmd = Command::new(&command[0]);
     cmd.args(&command[1..]);
@@ -2439,47 +2300,6 @@ fn handle_vm_exec(
     // Set working directory
     if let Some(wd) = workdir {
         cmd.current_dir(wd);
-    }
-
-    // If running as a different user, set uid/gid before exec
-    if let Some((uid, gid, home)) = &user_ids {
-        let uid = *uid;
-        let gid = *gid;
-        let home = home.clone();
-        unsafe {
-            cmd.pre_exec(move || {
-                // Set supplementary groups, then gid, then uid
-                // Order matters: must set gid before dropping root via setuid
-                if libc::setgroups(0, std::ptr::null()) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                if libc::setgid(gid) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                if libc::setuid(uid) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-        cmd.env("HOME", &home);
-        cmd.env("USER", user.unwrap_or("root"));
-    }
-
-    // Apply RLIMIT_NPROC to cap forked processes (fork bomb protection).
-    // This applies to all exec calls, not just non-root users.
-    unsafe {
-        cmd.pre_exec(|| {
-            let nproc_limit = libc::rlimit {
-                rlim_cur: 256,
-                rlim_max: 512,
-            };
-            if libc::setrlimit(libc::RLIMIT_NPROC, &nproc_limit) != 0 {
-                // Log but don't fail — rlimit is defense-in-depth
-                eprintln!("warning: failed to set RLIMIT_NPROC");
-            }
-            Ok(())
-        });
     }
 
     cmd.stdout(Stdio::piped());
@@ -2496,50 +2316,47 @@ fn handle_vm_exec(
         }
     };
 
-    // Handle timeout
+    // Drain stdout and stderr concurrently in background threads to prevent
+    // pipe deadlock. Without this, a child writing >64KB to stderr blocks on
+    // write() while the agent blocks waiting for the child to exit — neither
+    // side makes progress. See docs/exec-streaming-unification.md for the
+    // long-term fix (streaming exec).
+    const MAX_OUTPUT: usize = 16 * 1024 * 1024;
+
+    let stdout_handle = child.stdout.take().map(|out| {
+        std::thread::Builder::new()
+            .name("exec-stdout".into())
+            .spawn(move || {
+                let mut buf = String::new();
+                let _ = out.take(MAX_OUTPUT as u64).read_to_string(&mut buf);
+                buf
+            })
+    });
+
+    let stderr_handle = child.stderr.take().map(|err| {
+        std::thread::Builder::new()
+            .name("exec-stderr".into())
+            .spawn(move || {
+                let mut buf = String::new();
+                let _ = err.take(MAX_OUTPUT as u64).read_to_string(&mut buf);
+                buf
+            })
+    });
+
+    // Wait for exit with timeout
     let deadline =
         timeout_ms.map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms));
 
-    loop {
-        // Check if process has exited
+    let exit_code = loop {
         match child.try_wait() {
-            Ok(Some(status)) => {
-                // Process exited, collect output (capped at 16 MiB to prevent OOM)
-                const MAX_OUTPUT: usize = 16 * 1024 * 1024;
-                let mut stdout = String::new();
-                let mut stderr = String::new();
-
-                if let Some(out) = child.stdout.take() {
-                    let _ = out.take(MAX_OUTPUT as u64).read_to_string(&mut stdout);
-                }
-                if let Some(err) = child.stderr.take() {
-                    let _ = err.take(MAX_OUTPUT as u64).read_to_string(&mut stderr);
-                }
-
-                return AgentResponse::Completed {
-                    exit_code: status.code().unwrap_or(-1),
-                    stdout,
-                    stderr,
-                };
-            }
+            Ok(Some(status)) => break status.code().unwrap_or(-1),
             Ok(None) => {
-                // Still running, check timeout
                 if let Some(deadline) = deadline {
                     if std::time::Instant::now() >= deadline {
-                        // Timeout - kill process
                         warn!("VM exec command timed out, killing process");
-                        if let Err(e) = child.kill() {
-                            warn!(error = %e, "failed to kill timed out process");
-                        }
-                        // Wait to reap the process and avoid zombies
-                        if let Err(e) = child.wait() {
-                            warn!(error = %e, "failed to wait for killed process");
-                        }
-                        return AgentResponse::Completed {
-                            exit_code: 124, // Standard timeout exit code
-                            stdout: String::new(),
-                            stderr: "command timed out".to_string(),
-                        };
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break 124; // Standard timeout exit code
                     }
                 }
                 std::thread::sleep(std::time::Duration::from_millis(PROCESS_POLL_INTERVAL_MS));
@@ -2551,6 +2368,22 @@ fn handle_vm_exec(
                 );
             }
         }
+    };
+
+    // Join reader threads (they'll finish now that the child has exited or been killed)
+    let stdout = stdout_handle
+        .and_then(|h| h.ok())
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
+    let stderr = stderr_handle
+        .and_then(|h| h.ok())
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
+
+    AgentResponse::Completed {
+        exit_code,
+        stdout,
+        stderr,
     }
 }
 

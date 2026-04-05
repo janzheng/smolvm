@@ -1,6 +1,6 @@
 //! HTTP API server for smolvm.
 //!
-//! This module provides an HTTP API for managing machinees, containers, and images
+//! This module provides an HTTP API for managing machines, containers, and images
 //! without CLI overhead.
 //!
 //! # Example
@@ -49,16 +49,16 @@ use state::ApiState;
     info(
         title = "smolvm API",
         version = "0.1.6",
-        description = "OCI-native microVM runtime API for managing machinees, containers, images, and microvms.",
+        description = "OCI-native microVM runtime API for managing machines, containers, images, and microvms.",
         license(name = "Apache-2.0", url = "https://www.apache.org/licenses/LICENSE-2.0")
     ),
     tags(
         (name = "Health", description = "Health check endpoints"),
         (name = "Machines", description = "Machine lifecycle management"),
-        (name = "Execution", description = "Command execution in machinees"),
+        (name = "Execution", description = "Command execution in machines"),
         (name = "Logs", description = "Log streaming"),
-        (name = "Files", description = "File CRUD operations in machinees"),
-        (name = "Containers", description = "Container management within machinees"),
+        (name = "Files", description = "File CRUD operations in machines"),
+        (name = "Containers", description = "Container management within machines"),
         (name = "Images", description = "OCI image management"),
         (name = "MicroVMs", description = "Persistent microVM management"),
         (name = "Jobs", description = "Work queue and job dispatch"),
@@ -115,15 +115,6 @@ use state::ApiState;
         // Images
         handlers::images::list_images,
         handlers::images::pull_image,
-        // MicroVMs
-        handlers::microvms::create_microvm,
-        handlers::microvms::list_microvms,
-        handlers::microvms::get_microvm,
-        handlers::microvms::start_microvm,
-        handlers::microvms::stop_microvm,
-        handlers::microvms::delete_microvm,
-        handlers::microvms::exec_microvm,
-        handlers::microvms::resize_microvm,
         // Stats
         handlers::stats::machine_stats,
         // Jobs
@@ -274,9 +265,7 @@ pub fn create_router(state: Arc<ApiState>, cors_origins: Vec<String>, api_token:
 
     // Streaming routes (no timeout - run indefinitely)
     let logs_route = Router::new()
-        .route("/:id/logs", get(handlers::exec::stream_logs))
-        .route("/:id/exec/stream", get(handlers::exec::exec_stream))
-        .route("/:id/exec/interactive", get(handlers::exec::exec_interactive));
+        .route("/:id/logs", get(handlers::exec::stream_logs));
 
     // Machine routes with timeout
     let machine_routes_with_timeout = Router::new()
@@ -374,19 +363,7 @@ pub fn create_router(state: Arc<ApiState>, cors_origins: Vec<String>, api_token:
         .merge(logs_route)
         .merge(machine_routes_with_timeout);
 
-    // MicroVM routes
-    let microvm_routes = Router::new()
-        .route("/", post(handlers::microvms::create_microvm))
-        .route("/", get(handlers::microvms::list_microvms))
-        .route("/:name", get(handlers::microvms::get_microvm))
-        .route("/:name/start", post(handlers::microvms::start_microvm))
-        .route("/:name/stop", post(handlers::microvms::stop_microvm))
-        .route("/:name", delete(handlers::microvms::delete_microvm))
-        .route("/:name/exec", post(handlers::microvms::exec_microvm))
-        .route("/:name/resize", post(handlers::microvms::resize_microvm))
-        .layer(TimeoutLayer::new(Duration::from_secs(
-            API_REQUEST_TIMEOUT_SECS,
-        )));
+    // MicroVM routes removed — unified into machines
 
     // Snapshot streaming routes (no timeout - large file transfers can take minutes)
     let snapshot_streaming_routes = Router::new()
@@ -457,7 +434,6 @@ pub fn create_router(state: Arc<ApiState>, cors_origins: Vec<String>, api_token:
     // API v1 routes
     let api_v1 = Router::new()
         .nest("/machines", machine_routes)
-        .nest("/microvms", microvm_routes)
         .nest("/snapshots", snapshot_routes)
         .nest("/starters", starters_route)
         .nest("/jobs", job_routes)

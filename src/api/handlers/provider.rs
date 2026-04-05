@@ -31,7 +31,7 @@ pub async fn get_provider_info() -> Json<ProviderInfoResponse> {
             "containers".into(),
             "images".into(),
         ],
-        max_machinees: None,
+        max_machines: None,
         region: Some("local".into()),
     })
 }

@@ -1,15 +1,17 @@
 # Python dev environment in a hardware-isolated microVM
 #
-#   smolvm microvm create dev -s python.smolfile
-#   smolvm microvm start dev
-#   smolvm microvm exec --name dev -- python3 --version
+#   smolvm machine run -s examples/python-app/python.smolfile
+#   smolvm machine create dev -s python.smolfile
+#   smolvm machine start dev
+#   smolvm machine exec --name dev -- python3 --version
+
+image = "python:3.12-alpine"
+entrypoint = ["python3"]
 
 cpus = 2
 memory = 512
 net = true
 
+[dev]
 ports = ["8080:8080"]
-
-init = [
-    "apk add --no-cache python3",
-]
+init = ["pip install --no-cache-dir ipython"]

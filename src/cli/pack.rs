@@ -11,9 +11,9 @@ use clap::{Args, Subcommand};
 use smolvm::agent::{AgentClient, AgentManager, PullOptions, VmResources};
 use smolvm::data::resources::DEFAULT_MICROVM_CPU_COUNT;
 
-/// Default memory for packed VMs (lower than machine/microvm because
+/// Default memory for packed VMs (lower than machine create because
 /// packed VMs are typically single-purpose, minimal workloads).
-const PACK_DEFAULT_MEMORY_MIB: u32 = 256;
+pub(crate) const PACK_DEFAULT_MEMORY_MIB: u32 = 256;
 use smolvm::config::{RecordState, SmolvmConfig};
 use smolvm::platform::{Arch, Os, VmExecutor};
 use smolvm::Error;
@@ -33,6 +33,9 @@ pub enum PackCmd {
 
     /// Run a VM from a packed .smolmachine sidecar file
     Run(super::pack_run::PackRunCmd),
+
+    /// Clean up cached pack extractions to free disk space
+    Prune(PackPruneCmd),
 }
 
 impl PackCmd {
@@ -40,6 +43,7 @@ impl PackCmd {
         match self {
             PackCmd::Create(cmd) => cmd.run(),
             PackCmd::Run(cmd) => cmd.run(),
+            PackCmd::Prune(cmd) => cmd.run(),
         }
     }
 }
@@ -62,8 +66,10 @@ impl PackCmd {
 pub struct PackCreateCmd {
     /// Container image to pack (e.g., alpine:latest, python:3.11-slim)
     #[arg(
+        long,
+        short = 'I',
         value_name = "IMAGE",
-        required_unless_present = "from_vm",
+        required_unless_present_any = ["from_vm", "smolfile"],
         conflicts_with = "from_vm"
     )]
     pub image: Option<String>,
@@ -80,7 +86,7 @@ pub struct PackCreateCmd {
     #[arg(long, default_value_t = DEFAULT_MICROVM_CPU_COUNT, value_name = "N")]
     pub cpus: u8,
 
-    /// Default memory in MiB for the packed VM (lower than machine/microvm
+    /// Default memory in MiB for the packed VM (lower than machine create
     /// because packed VMs are typically single-purpose, minimal workloads)
     #[arg(long, default_value_t = PACK_DEFAULT_MEMORY_MIB, value_name = "MiB")]
     pub mem: u32,
@@ -118,16 +124,38 @@ pub struct PackCreateCmd {
     /// Path to agent rootfs directory
     #[arg(long, value_name = "DIR", hide = true)]
     pub rootfs_dir: Option<PathBuf>,
+
+    /// Load workload configuration from a Smolfile (TOML)
+    #[arg(long = "smolfile", visible_short_alias = 's', value_name = "PATH")]
+    pub smolfile: Option<PathBuf>,
 }
 
 impl PackCreateCmd {
     pub fn run(self) -> smolvm::Result<()> {
         if let Some(vm_name) = self.from_vm.clone() {
+            if self.oci_platform.is_some() {
+                warn!("--oci-platform is ignored with --from-vm (VM snapshot is arch-fixed)");
+            }
             info!(vm = %vm_name, output = %self.output.display(), "packing from VM");
             return self.pack_from_vm(vm_name);
         }
 
-        let image = self.image.clone().unwrap();
+        // Resolve config from Smolfile + CLI
+        let pack_config = crate::cli::smolfile::resolve_pack_config(
+            self.image.clone(),
+            self.entrypoint.clone(),
+            self.cpus,
+            self.mem,
+            self.oci_platform.clone(),
+            self.smolfile.clone(),
+        )?;
+
+        let image = pack_config.image.ok_or_else(|| {
+            Error::config(
+                "pack create",
+                "no image specified. Provide IMAGE argument or set 'image' in Smolfile",
+            )
+        })?;
         info!(image = %image, output = %self.output.display(), "packing image");
 
         // Create temporary staging directory
@@ -208,7 +236,7 @@ impl PackCreateCmd {
                 network: true,
                 storage_gib: None,
                 overlay_gib: None,
-                allowed_domains: Vec::new(),
+                allowed_cidrs: None,
             },
         )?;
         let mut guard = PackVmGuard {
@@ -221,7 +249,7 @@ impl PackCreateCmd {
         // Pull image
         println!("Pulling {}...", image);
         let mut pull_opts = PullOptions::new().use_registry_config(true);
-        if let Some(ref oci_platform) = self.oci_platform {
+        if let Some(ref oci_platform) = pack_config.oci_platform {
             pull_opts = pull_opts.oci_platform(oci_platform);
         }
         let image_info = client.pull(&image, pull_opts)?;
@@ -263,18 +291,41 @@ impl PackCreateCmd {
         // Build manifest
         let platform = format!("{}/{}", image_info.os, image_info.architecture);
         let mut manifest = PackManifest::new(image, image_info.digest.clone(), platform);
-        manifest.cpus = self.cpus;
-        manifest.mem = self.mem;
+        manifest.cpus = pack_config.cpus;
+        manifest.mem = pack_config.mem;
 
-        // Copy OCI config fields from image (CMD, ENTRYPOINT, ENV, WORKDIR)
+        // Start with OCI image config as baseline
         manifest.entrypoint = image_info.entrypoint.clone();
         manifest.cmd = image_info.cmd.clone();
         manifest.env = image_info.env.clone();
         manifest.workdir = image_info.workdir.clone();
 
-        // Override entrypoint if user provided one
-        if let Some(ref ep) = self.entrypoint {
-            manifest.entrypoint = vec![ep.clone()];
+        // Layer Smolfile top-level env on top of image env
+        if !pack_config.env.is_empty() {
+            for e in &pack_config.env {
+                if let Some((key, _)) = e.split_once('=') {
+                    // Remove any existing image env with the same key
+                    manifest
+                        .env
+                        .retain(|existing| !existing.starts_with(&format!("{}=", key)));
+                }
+                manifest.env.push(e.clone());
+            }
+        }
+
+        // Smolfile workdir overrides image workdir
+        if pack_config.workdir.is_some() {
+            manifest.workdir = pack_config.workdir;
+        }
+
+        // Override entrypoint from Smolfile or CLI
+        if !pack_config.entrypoint.is_empty() {
+            manifest.entrypoint = pack_config.entrypoint;
+        }
+
+        // Override cmd from Smolfile
+        if !pack_config.cmd.is_empty() {
+            manifest.cmd = pack_config.cmd;
         }
 
         self.finalize_pack(manifest, collector, staging_dir)
@@ -293,7 +344,7 @@ impl PackCreateCmd {
             return Err(Error::agent(
                 "pack from VM",
                 format!(
-                    "VM '{}' is running. Stop it first with: smolvm microvm stop {}",
+                    "VM '{}' is running. Stop it first with: smolvm machine stop --name {}",
                     vm_name, vm_name
                 ),
             ));
@@ -329,22 +380,62 @@ impl PackCreateCmd {
             .add_overlay_template(&overlay_path)
             .map_err(|e| Error::agent("collect overlay", e.to_string()))?;
 
-        // 5. Build manifest
+        // 5. Resolve Smolfile overrides if provided
+        //    Precedence: CLI > [artifact] > Smolfile top-level > VmRecord > default
+        let pack_config = crate::cli::smolfile::resolve_pack_config(
+            None, // no image for --from-vm
+            self.entrypoint.clone(),
+            self.cpus,
+            self.mem,
+            self.oci_platform.clone(),
+            self.smolfile.clone(),
+        )?;
+
+        // 6. Build manifest
         let platform = format!("linux/{}", Arch::current().oci_arch());
         let mut manifest =
             PackManifest::new(format!("vm://{}", vm_name), "none".to_string(), platform);
         manifest.mode = PackMode::Vm;
-        manifest.cpus = self.cpus;
-        manifest.mem = self.mem;
-        manifest.entrypoint = vec!["/bin/sh".to_string()];
+        manifest.cpus = pack_config.cpus;
+        manifest.mem = pack_config.mem;
 
-        // Inherit env/workdir from VmRecord
+        // Entrypoint baseline: VmRecord > /bin/sh default
+        manifest.entrypoint = if !vm.entrypoint.is_empty() {
+            vm.entrypoint.clone()
+        } else {
+            vec!["/bin/sh".to_string()]
+        };
+        manifest.cmd = vm.cmd.clone();
+
+        // Start with VmRecord env/workdir as baseline
         manifest.env = vm.env.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
         manifest.workdir = vm.workdir.clone();
 
-        // Override entrypoint if user provided one
-        if let Some(ref ep) = self.entrypoint {
-            manifest.entrypoint = vec![ep.clone()];
+        // Layer Smolfile env on top of VmRecord env
+        if !pack_config.env.is_empty() {
+            for e in &pack_config.env {
+                if let Some((key, _)) = e.split_once('=') {
+                    manifest
+                        .env
+                        .retain(|existing| !existing.starts_with(&format!("{}=", key)));
+                }
+                manifest.env.push(e.clone());
+            }
+        }
+
+        // Smolfile workdir overrides VmRecord workdir
+        if pack_config.workdir.is_some() {
+            manifest.workdir = pack_config.workdir;
+        }
+
+        // Override entrypoint from Smolfile/[artifact] or CLI
+        if !pack_config.entrypoint.is_empty() {
+            manifest.entrypoint = pack_config.entrypoint;
+        }
+
+        // Override cmd from Smolfile/[artifact]
+        if !pack_config.cmd.is_empty() {
+            manifest.cmd = pack_config.cmd;
         }
 
         self.finalize_pack(manifest, collector, staging_dir)
@@ -384,7 +475,7 @@ impl PackCreateCmd {
 
         manifest.assets = collector.into_inventory();
 
-        let collector = AssetCollector::new(staging_dir)
+        let collector = AssetCollector::new(staging_dir.clone())
             .map_err(|e| Error::agent("collect assets", e.to_string()))?;
 
         let packer = Packer::new(manifest)
@@ -429,6 +520,12 @@ impl PackCreateCmd {
             } else {
                 println!("Signed successfully");
             }
+        }
+
+        // Embed libs in stub AFTER signing — SMOLLIBS footer must be at end of file
+        if !self.single_file {
+            smolvm_pack::packer::embed_libs_in_binary(&self.output, &staging_dir)
+                .map_err(|e| Error::agent("embed libraries", e.to_string()))?;
         }
 
         println!("\nRun with: {}", self.output.display());
@@ -490,6 +587,13 @@ impl PackCreateCmd {
     }
 
     /// Find the agent rootfs directory.
+    ///
+    /// Search order:
+    /// 1. Explicit `--rootfs-dir` flag
+    /// 2. `SMOLVM_AGENT_ROOTFS` env var (same as VM boot path)
+    /// 3. Build output (`target/agent-rootfs`)
+    /// 4. Next to the executable (`exe-dir/agent-rootfs`)
+    /// 5. User data dir (`~/Library/Application Support/smolvm/agent-rootfs`)
     fn find_rootfs_dir(&self) -> smolvm::Result<PathBuf> {
         if let Some(ref dir) = self.rootfs_dir {
             return Ok(dir.clone());
@@ -497,8 +601,10 @@ impl PackCreateCmd {
 
         // Check common locations
         let candidates = [
+            // SMOLVM_AGENT_ROOTFS env var (consistent with VM boot path)
+            std::env::var("SMOLVM_AGENT_ROOTFS").ok().map(PathBuf::from),
             // Build output
-            Some(PathBuf::from("target/agent-rootfs/rootfs")),
+            Some(PathBuf::from("target/agent-rootfs")),
             // Distribution
             std::env::current_exe()
                 .ok()
@@ -620,4 +726,174 @@ impl PackCreateCmd {
             }
         }
     }
+}
+
+// ============================================================================
+// Pack Prune Command
+// ============================================================================
+
+/// Clean up cached pack extractions to free disk space.
+///
+/// Removes old extracted pack caches from ~/.cache/smolvm-pack/ and
+/// ~/.cache/smolvm-libs/. By default keeps the 5 most recently used.
+///
+/// Examples:
+///   smolvm pack prune              # keep 5 most recent
+///   smolvm pack prune --keep 2     # keep 2 most recent
+///   smolvm pack prune --all        # remove everything
+///   smolvm pack prune --dry-run    # show what would be removed
+#[derive(Args, Debug)]
+pub struct PackPruneCmd {
+    /// Number of cached extractions to keep (default: 5)
+    #[arg(long, default_value = "5", value_name = "N")]
+    pub keep: usize,
+
+    /// Remove all cached extractions
+    #[arg(long)]
+    pub all: bool,
+
+    /// Show what would be removed without actually removing
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+impl PackPruneCmd {
+    pub fn run(self) -> smolvm::Result<()> {
+        let keep = if self.all { 0 } else { self.keep };
+
+        let mut total_freed: u64 = 0;
+        let mut total_removed: usize = 0;
+
+        // Clean pack sidecar cache
+        if let Some(base) = dirs::cache_dir() {
+            let pack_cache = base.join("smolvm-pack");
+            let (freed, removed) = self.prune_cache_dir(&pack_cache, keep, "pack cache")?;
+            total_freed += freed;
+            total_removed += removed;
+
+            // Clean libs cache
+            let libs_cache = base.join("smolvm-libs");
+            let (freed, removed) = self.prune_cache_dir(&libs_cache, keep, "libs cache")?;
+            total_freed += freed;
+            total_removed += removed;
+        }
+
+        if total_removed > 0 {
+            if self.dry_run {
+                println!(
+                    "Would remove {} cached entries ({})",
+                    total_removed,
+                    crate::cli::format_bytes(total_freed)
+                );
+            } else {
+                println!(
+                    "Removed {} cached entries, freed {}",
+                    total_removed,
+                    crate::cli::format_bytes(total_freed)
+                );
+            }
+        } else {
+            println!("No cached entries to remove.");
+        }
+
+        Ok(())
+    }
+
+    fn prune_cache_dir(
+        &self,
+        base: &std::path::Path,
+        keep: usize,
+        label: &str,
+    ) -> smolvm::Result<(u64, usize)> {
+        if !base.exists() {
+            return Ok((0, 0));
+        }
+
+        // Collect entries with modification time (skip entries we can't stat)
+        let mut entries: Vec<(std::path::PathBuf, std::time::SystemTime, u64)> = vec![];
+        let read_dir = match std::fs::read_dir(base) {
+            Ok(rd) => rd,
+            Err(e) => {
+                tracing::warn!(error = %e, path = %base.display(), "cannot read {}", label);
+                return Ok((0, 0));
+            }
+        };
+        for entry in read_dir {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let metadata = match std::fs::metadata(&path) {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::warn!(error = %e, path = %path.display(), "skipping unreadable entry in {}", label);
+                    continue;
+                }
+            };
+            let modified = metadata
+                .modified()
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            let size = dir_size(&path);
+            entries.push((path, modified, size));
+        }
+
+        // Sort by most recently modified (newest first)
+        entries.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Remove entries beyond keep count
+        let to_remove = if entries.len() > keep {
+            &entries[keep..]
+        } else {
+            return Ok((0, 0));
+        };
+
+        let mut freed: u64 = 0;
+        let mut removed: usize = 0;
+
+        for (path, _, size) in to_remove {
+            if self.dry_run {
+                println!(
+                    "  would remove: {} ({})",
+                    path.display(),
+                    crate::cli::format_bytes(*size)
+                );
+            } else {
+                if let Err(e) = std::fs::remove_dir_all(path) {
+                    tracing::warn!(error = %e, path = %path.display(), "failed to remove {}", label);
+                    continue;
+                }
+                // Also remove lock file if present
+                let lock = path.with_extension("lock");
+                let _ = std::fs::remove_file(&lock);
+            }
+            freed += size;
+            removed += 1;
+        }
+
+        Ok((freed, removed))
+    }
+}
+
+/// Calculate the total size of a directory (recursive).
+fn dir_size(path: &std::path::Path) -> u64 {
+    std::fs::read_dir(path)
+        .ok()
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .map(|e| {
+                    let meta = e.metadata().ok();
+                    if e.path().is_dir() {
+                        dir_size(&e.path())
+                    } else {
+                        meta.map(|m| m.len()).unwrap_or(0)
+                    }
+                })
+                .sum()
+        })
+        .unwrap_or(0)
 }

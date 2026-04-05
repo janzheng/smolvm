@@ -1,4 +1,4 @@
-//! DNS-based egress filtering for machinees.
+//! DNS-based egress filtering for machines.
 //!
 //! When `allowed_domains` is set on a machine, this module generates shell
 //! commands that configure application-layer DNS filtering inside the VM.

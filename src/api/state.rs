@@ -16,7 +16,7 @@ use std::sync::Arc;
 /// Shared API server state.
 pub struct ApiState {
     /// Registry of machine managers by name.
-    machinees: RwLock<HashMap<String, Arc<parking_lot::Mutex<MachineEntry>>>>,
+    machines: RwLock<HashMap<String, Arc<parking_lot::Mutex<MachineEntry>>>>,
     /// Reserved machine names (creation in progress).
     /// This prevents race conditions during machine creation.
     reserved_names: RwLock<HashSet<String>>,
@@ -162,7 +162,7 @@ impl ApiState {
         })?;
         let metrics_handle = crate::api::metrics::init();
         Ok(Self {
-            machinees: RwLock::new(HashMap::new()),
+            machines: RwLock::new(HashMap::new()),
             reserved_names: RwLock::new(HashSet::new()),
             db,
             metrics_handle,
@@ -178,7 +178,7 @@ impl ApiState {
     pub fn with_db(db: SmolvmDb) -> Self {
         let metrics_handle = crate::api::metrics::init();
         Self {
-            machinees: RwLock::new(HashMap::new()),
+            machines: RwLock::new(HashMap::new()),
             reserved_names: RwLock::new(HashSet::new()),
             db,
             metrics_handle,
@@ -261,9 +261,9 @@ impl ApiState {
         Some((secrets, services))
     }
 
-    /// Load existing machinees from persistent database.
+    /// Load existing machines from persistent database.
     /// Call this on server startup to reconnect to running VMs.
-    pub fn load_persisted_machinees(&self) -> Vec<String> {
+    pub fn load_persisted_machines(&self) -> Vec<String> {
         let vms = match self.db.list_vms() {
             Ok(vms) => vms,
             Err(e) => {
@@ -310,7 +310,8 @@ impl ApiState {
                 network: Some(record.network),
                 storage_gb: record.storage_gb,
                 overlay_gb: record.overlay_gb,
-                allowed_domains: None, // Not persisted in DB yet
+                allowed_domains: None,
+                allowed_cidrs: record.allowed_cidrs.clone(),
             };
 
             // Create AgentManager and try to reconnect
@@ -334,8 +335,8 @@ impl ApiState {
                         tracing::info!(machine = %name, pid = ?record.pid, "machine alive but not yet reachable, registering for later reconnect");
                     }
 
-                    let mut machinees = self.machinees.write();
-                    machinees.insert(
+                    let mut machines = self.machines.write();
+                    machines.insert(
                         name.clone(),
                         Arc::new(parking_lot::Mutex::new(MachineEntry {
                             manager: Arc::new(manager),
@@ -347,7 +348,7 @@ impl ApiState {
                             allowed_domains: None, // Not persisted in DB yet
                             secrets: Vec::new(),
                             default_env: Vec::new(),
-                            owner_token_hash: None, // Legacy machinees have no RBAC
+                            owner_token_hash: None, // Legacy machines have no RBAC
                             permissions: Vec::new(),
                             mcp_servers: Vec::new(),
                         })),
@@ -371,8 +372,8 @@ impl ApiState {
         &self,
         name: &str,
     ) -> Result<Arc<parking_lot::Mutex<MachineEntry>>, ApiError> {
-        let machinees = self.machinees.read();
-        machinees
+        let machines = self.machines.read();
+        machines
             .get(name)
             .cloned()
             .ok_or_else(|| ApiError::NotFound(format!("machine '{}' not found", name)))
@@ -384,7 +385,7 @@ impl ApiState {
         name: &str,
     ) -> Result<Arc<parking_lot::Mutex<MachineEntry>>, ApiError> {
         // Quick existence check with read lock (fast path for 404).
-        if !self.machinees.read().contains_key(name) {
+        if !self.machines.read().contains_key(name) {
             return Err(ApiError::NotFound(format!("machine '{}' not found", name)));
         }
 
@@ -406,8 +407,8 @@ impl ApiState {
         }
 
         // Brief write lock for in-memory removal only.
-        let mut machinees = self.machinees.write();
-        match machinees.remove(name) {
+        let mut machines = self.machines.write();
+        match machines.remove(name) {
             Some(entry) => Ok(entry),
             None => {
                 // Concurrent delete already removed it
@@ -441,10 +442,10 @@ impl ApiState {
         }
     }
 
-    /// List all machinees.
+    /// List all machines.
     pub fn list_machines(&self) -> Vec<MachineInfo> {
-        let machinees = self.machinees.read();
-        machinees
+        let machines = self.machines.read();
+        machines
             .iter()
             .map(|(name, entry)| {
                 let entry = entry.lock();
@@ -455,7 +456,7 @@ impl ApiState {
 
     /// Check if a machine exists.
     pub fn machine_exists(&self, name: &str) -> bool {
-        self.machinees.read().contains_key(name)
+        self.machines.read().contains_key(name)
     }
 
     // ========================================================================
@@ -472,7 +473,7 @@ impl ApiState {
     /// Returns `Err(Conflict)` if the name is already taken or reserved.
     pub fn reserve_machine_name(&self, name: &str) -> Result<(), ApiError> {
         // Fast-path checks without holding the write lock.
-        if self.machinees.read().contains_key(name) {
+        if self.machines.read().contains_key(name) {
             return Err(ApiError::Conflict(format!(
                 "machine '{}' already exists",
                 name
@@ -502,7 +503,7 @@ impl ApiState {
                 name
             )));
         }
-        if self.machinees.read().contains_key(name) {
+        if self.machines.read().contains_key(name) {
             return Err(ApiError::Conflict(format!(
                 "machine '{}' already exists",
                 name
@@ -564,8 +565,8 @@ impl ApiState {
         match self.db.insert_vm_if_not_exists(&name, &record) {
             Ok(true) => {
                 // Successfully inserted, now add to in-memory registry
-                let mut machinees = self.machinees.write();
-                machinees.insert(
+                let mut machines = self.machines.write();
+                machines.insert(
                     name,
                     Arc::new(parking_lot::Mutex::new(MachineEntry {
                         manager: Arc::new(reg.manager),
@@ -614,13 +615,13 @@ impl ApiState {
 
     /// List all machine names.
     pub fn list_machine_names(&self) -> Vec<String> {
-        self.machinees.read().keys().cloned().collect()
+        self.machines.read().keys().cloned().collect()
     }
 
     /// Get restart config for a machine from the in-memory registry.
     pub fn get_restart_config(&self, name: &str) -> Option<RestartConfig> {
-        let machinees = self.machinees.read();
-        machinees.get(name).map(|entry| {
+        let machines = self.machines.read();
+        machines.get(name).map(|entry| {
             let entry = entry.lock();
             entry.restart.clone()
         })
@@ -642,7 +643,7 @@ impl ApiState {
 
     /// Increment restart count for a machine.
     pub fn increment_restart_count(&self, name: &str) {
-        if let Some(entry) = self.machinees.read().get(name) {
+        if let Some(entry) = self.machines.read().get(name) {
             entry.lock().restart.restart_count += 1;
         }
         self.update_vm_best_effort(name, "increment_restart_count", |r| {
@@ -652,7 +653,7 @@ impl ApiState {
 
     /// Mark machine as user-stopped.
     pub fn mark_user_stopped(&self, name: &str, stopped: bool) {
-        if let Some(entry) = self.machinees.read().get(name) {
+        if let Some(entry) = self.machines.read().get(name) {
             entry.lock().restart.user_stopped = stopped;
         }
         self.update_vm_best_effort(name, "mark_user_stopped", |r| {
@@ -662,7 +663,7 @@ impl ApiState {
 
     /// Reset restart count (on successful start).
     pub fn reset_restart_count(&self, name: &str) {
-        if let Some(entry) = self.machinees.read().get(name) {
+        if let Some(entry) = self.machines.read().get(name) {
             entry.lock().restart.restart_count = 0;
         }
         self.update_vm_best_effort(name, "reset_restart_count", |r| {
@@ -693,7 +694,7 @@ impl ApiState {
     /// PID file. This is start-time-aware to avoid false positives from PID
     /// reuse, and covers orphan processes not tracked in-memory.
     pub fn is_machine_alive(&self, name: &str) -> bool {
-        if let Some(entry) = self.machinees.read().get(name) {
+        if let Some(entry) = self.machines.read().get(name) {
             let entry = entry.lock();
             entry.manager.is_process_alive()
         } else {
@@ -868,7 +869,7 @@ pub async fn ensure_machine_running(
         (Arc::clone(&entry.manager), mounts, ports, resources)
     };
     tokio::task::spawn_blocking(move || {
-        manager.ensure_running_with_full_config(mounts, ports, resources)?;
+        manager.ensure_running_with_full_config(mounts, ports, resources, Default::default())?;
         Ok(())
     })
     .await
@@ -1010,20 +1011,20 @@ pub fn resource_spec_to_vm_resources(spec: &ResourceSpec, network: bool) -> VmRe
         network,
         storage_gib: spec.storage_gb,
         overlay_gib: spec.overlay_gb,
-        allowed_domains: spec.allowed_domains.clone().unwrap_or_default(),
+        allowed_cidrs: spec.allowed_cidrs.clone(),
     }
 }
 
 /// Convert VmResources to ResourceSpec.
 pub fn vm_resources_to_spec(res: VmResources) -> ResourceSpec {
-    let domains = if res.allowed_domains.is_empty() { None } else { Some(res.allowed_domains) };
     ResourceSpec {
         cpus: Some(res.cpus),
         memory_mb: Some(res.memory_mib),
         network: Some(res.network),
         storage_gb: res.storage_gib,
         overlay_gb: res.overlay_gib,
-        allowed_domains: domains,
+        allowed_domains: None,
+        allowed_cidrs: res.allowed_cidrs,
     }
 }
 
@@ -1039,6 +1040,7 @@ pub fn restart_spec_to_config(spec: Option<&RestartSpec>) -> RestartConfig {
             RestartConfig {
                 policy,
                 max_retries: spec.max_retries.unwrap_or(0),
+                max_backoff_secs: 300,
                 restart_count: 0,
                 user_stopped: false,
             }
@@ -1085,6 +1087,7 @@ mod tests {
             storage_gb: None,
             overlay_gb: None,
             allowed_domains: None,
+            allowed_cidrs: None,
         };
         let res = resource_spec_to_vm_resources(&spec, false);
         assert_eq!(res.cpus, DEFAULT_MICROVM_CPU_COUNT);
@@ -1114,7 +1117,7 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_load_persisted_machinees_removes_dead_records() {
+    fn test_load_persisted_machines_removes_dead_records() {
         let (_dir, state) = temp_api_state();
 
         // Insert a record with a PID that doesn't exist (dead process)
@@ -1127,7 +1130,7 @@ mod tests {
         assert!(state.db.get_vm("dead-machine").unwrap().is_some());
 
         // Load should detect dead process and clean up DB record
-        let loaded = state.load_persisted_machinees();
+        let loaded = state.load_persisted_machines();
         assert!(loaded.is_empty(), "dead machine should not be loaded");
 
         // DB record should be cleaned up
@@ -1141,7 +1144,7 @@ mod tests {
     }
 
     #[test]
-    fn test_load_persisted_machinees_dead_record_does_not_block_name() {
+    fn test_load_persisted_machines_dead_record_does_not_block_name() {
         let (_dir, state) = temp_api_state();
 
         // Insert a dead record with no PID (definitely dead)
@@ -1149,7 +1152,7 @@ mod tests {
         state.db.insert_vm("ghost", &record).unwrap();
 
         // Load should remove it (no PID = dead)
-        let loaded = state.load_persisted_machinees();
+        let loaded = state.load_persisted_machines();
         assert!(loaded.is_empty());
 
         // Name should not be blocked
@@ -1160,7 +1163,7 @@ mod tests {
     }
 
     #[test]
-    fn test_load_persisted_machinees_preserves_alive_unreachable_records() {
+    fn test_load_persisted_machines_preserves_alive_unreachable_records() {
         let (_dir, state) = temp_api_state();
 
         // Use our own PID (always alive and owned by us, so kill(pid,0)==0).
@@ -1175,7 +1178,7 @@ mod tests {
 
         // Load — reconnect will fail (no agent socket), but record should
         // be preserved in DB since process is alive
-        let _loaded = state.load_persisted_machinees();
+        let _loaded = state.load_persisted_machines();
 
         // DB record should still exist (not deleted)
         assert!(

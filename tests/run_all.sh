@@ -6,7 +6,6 @@
 #   ./tests/run_all.sh              # Run all tests
 #   ./tests/run_all.sh cli          # Run only CLI tests
 #   ./tests/run_all.sh machine      # Run only machine tests
-#   ./tests/run_all.sh microvm      # Run only microvm tests
 #   ./tests/run_all.sh container    # Run only container tests
 #   ./tests/run_all.sh api          # Run only HTTP API tests
 #   ./tests/run_all.sh pack         # Run only pack tests
@@ -15,8 +14,12 @@
 #   ./tests/run_all.sh bench-vm     # Run VM startup benchmark only
 #   ./tests/run_all.sh bench-container # Run container benchmark only
 #
+# Flags:
+#   --fail-fast          Stop on first test failure (useful for debugging)
+#
 # Environment:
 #   SMOLVM=/path/to/smolvm   # Use specific binary
+#   FAIL_FAST=1              # Same as --fail-fast
 
 set -euo pipefail
 
@@ -53,12 +56,18 @@ run_suite() {
     fi
 }
 
-# Determine which tests to run
-if [[ $# -eq 0 ]]; then
-    TESTS_TO_RUN="all"
-else
-    TESTS_TO_RUN="$1"
-fi
+# Parse arguments
+TESTS_TO_RUN="all"
+for arg in "$@"; do
+    case "$arg" in
+        --fail-fast)
+            export FAIL_FAST=1
+            ;;
+        *)
+            TESTS_TO_RUN="$arg"
+            ;;
+    esac
+done
 
 echo ""
 echo "=========================================="
@@ -74,7 +83,7 @@ echo -e "${BLUE}[INFO]${NC} Cleaning up any orphan smolvm processes..."
 kill_orphan_smolvm_processes
 if ! check_smolvm_processes; then
     echo -e "${YELLOW}[WARN]${NC} Some smolvm processes still running - tests may fail with database lock errors"
-    ps aux | grep -E "(smolvm serve|smolvm-bin microvm|smolvm microvm)" | grep -v grep || true
+    ps aux | grep -E "(smolvm serve|smolvm-bin machine|smolvm machine)" | grep -v grep || true
 else
     echo -e "${GREEN}[OK]${NC} No orphan processes detected"
 fi
@@ -85,9 +94,6 @@ case "$TESTS_TO_RUN" in
         ;;
     machine)
         run_suite "Machine Tests" "$SCRIPT_DIR/test_machine.sh"
-        ;;
-    microvm)
-        run_suite "MicroVM Tests" "$SCRIPT_DIR/test_microvm.sh"
         ;;
     container)
         run_suite "Container Tests" "$SCRIPT_DIR/test_container.sh"
@@ -116,17 +122,21 @@ case "$TESTS_TO_RUN" in
         bash "$SCRIPT_DIR/bench_container.sh"
         exit 0
         ;;
+    smolfile)
+        bash "$SCRIPT_DIR/test_smolfile.sh"
+        exit 0
+        ;;
     all)
         run_suite "CLI Tests" "$SCRIPT_DIR/test_cli.sh"
         run_suite "Machine Tests" "$SCRIPT_DIR/test_machine.sh"
-        run_suite "MicroVM Tests" "$SCRIPT_DIR/test_microvm.sh"
         run_suite "Container Tests" "$SCRIPT_DIR/test_container.sh"
         run_suite "HTTP API Tests" "$SCRIPT_DIR/test_api.sh"
         run_suite "Pack Tests" "$SCRIPT_DIR/test_pack.sh"
+        run_suite "Smolfile & SSH Agent Tests" "$SCRIPT_DIR/test_smolfile.sh"
         ;;
     *)
         echo "Unknown test suite: $TESTS_TO_RUN"
-        echo "Available: cli, machine, microvm, container, api, pack, pack-quick, bench, bench-vm, bench-container, all"
+        echo "Available: cli, machine, container, smolfile, api, pack, pack-quick, bench, bench-vm, bench-container, all"
         exit 1
         ;;
 esac

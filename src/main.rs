@@ -5,19 +5,15 @@ use tracing_subscriber::EnvFilter;
 
 mod cli;
 
-/// smolvm - OCI-native microVM runtime
+/// smolvm - build and run portable, self-contained virtual machines
 #[derive(Parser, Debug)]
 #[command(name = "smolvm")]
-#[command(about = "Run containers in lightweight VMs with VM-level isolation")]
 #[command(
-    long_about = "smolvm is an OCI-native microVM runtime for macOS and Linux.\n\n\
-It runs container images inside lightweight VMs using libkrun, providing \
-VM-level isolation with container-like UX.\n\n\
-Quick start:\n  \
-smolvm machine run alpine -- echo hello\n  \
-smolvm machine run -d nginx -p 8080:80\n\n\
-For programmatic access:\n  \
-smolvm serve"
+    about = "Build and run portable, self-contained virtual machines",
+    after_help = "Agents: run `smolvm --help` for full documentation including CLI reference and Smolfile schema"
+)]
+#[command(
+    long_about = include_str!("../AGENTS.md")
 )]
 #[command(version)]
 struct Cli {
@@ -27,15 +23,11 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Run containers quickly (ephemeral or detached)
-    #[command(subcommand, visible_alias = "sb")]
+    /// Manage machines (create, start, stop, exec)
+    #[command(subcommand, visible_alias = "vm")]
     Machine(cli::machine::MachineCmd),
 
-    /// Manage persistent microVMs
-    #[command(subcommand, visible_alias = "vm")]
-    Microvm(cli::microvm::MicrovmCmd),
-
-    /// Manage containers inside a microVM
+    /// Manage containers inside a machine
     #[command(subcommand, visible_alias = "ct")]
     Container(cli::container::ContainerCmd),
 
@@ -50,6 +42,13 @@ enum Commands {
     /// Manage smolvm configuration (registries, defaults)
     #[command(subcommand)]
     Config(cli::config::ConfigCmd),
+
+    /// Internal: boot a VM subprocess (not for direct use)
+    #[command(name = "_boot-vm", hide = true)]
+    BootVm {
+        /// Path to boot config JSON file
+        config: std::path::PathBuf,
+    },
 }
 
 fn main() {
@@ -60,24 +59,21 @@ fn main() {
         cli::pack_run::run_as_packed_binary(mode);
     }
 
-    // Check for --json-logs before parsing (it's a serve-subcommand flag)
-    let json_logs = std::env::args().any(|a| a == "--json-logs");
-
     let cli = Cli::parse();
 
     // Initialize logging based on RUST_LOG or default to warn
-    init_logging(json_logs);
+    init_logging();
 
     tracing::debug!(version = smolvm::VERSION, "starting smolvm");
 
     // Execute command
     let result = match cli.command {
         Commands::Machine(cmd) => cmd.run(),
-        Commands::Microvm(cmd) => cmd.run(),
         Commands::Container(cmd) => cmd.run(),
         Commands::Serve(cmd) => cmd.run(),
         Commands::Pack(cmd) => cmd.run(),
         Commands::Config(cmd) => cmd.run(),
+        Commands::BootVm { config } => cli::internal_boot::run(config),
     };
 
     // Handle errors
@@ -89,20 +85,12 @@ fn main() {
 }
 
 /// Initialize the tracing subscriber.
-/// `json` enables JSON output format for production log aggregation.
-fn init_logging(json: bool) {
+fn init_logging() {
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("smolvm=warn"));
 
-    if json {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .json()
-            .init();
-    } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .with_target(false)
-            .init();
-    }
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .init();
 }

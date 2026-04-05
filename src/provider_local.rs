@@ -16,7 +16,7 @@ use crate::api::types::{
 };
 use crate::provider::{ProviderError, ProviderInfo, MachineProvider};
 
-/// Local provider that manages machinees on the current machine via `ApiState`.
+/// Local provider that manages machines on the current machine via `ApiState`.
 pub struct LocalProvider {
     state: Arc<ApiState>,
 }
@@ -54,7 +54,7 @@ impl MachineProvider for LocalProvider {
             .into_iter()
             .map(String::from)
             .collect(),
-            max_machinees: None,
+            max_machines: None,
             region: Some("local".into()),
         }
     }
@@ -156,11 +156,10 @@ impl MachineProvider for LocalProvider {
         let env = EnvVar::to_tuples(&req.env);
         let workdir = req.workdir.clone();
         let timeout = req.timeout_secs.map(std::time::Duration::from_secs);
-        let user = req.user.clone();
 
         let (exit_code, stdout, stderr) =
             with_machine_client(&entry, move |c| {
-                c.vm_exec_as(command, env, workdir, timeout, user)
+                c.vm_exec(command, env, workdir, timeout)
             })
             .await
             .map_err(api_err_to_provider)?;
