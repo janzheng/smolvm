@@ -22,8 +22,12 @@ web-ui/
 # Task files (local working docs)
 TASKS*.md
 
-# Deno
+# Deno / Node
 node_modules/
+
+# Python
+__pycache__/
+*.pyc
 
 # Logs
 *.log
