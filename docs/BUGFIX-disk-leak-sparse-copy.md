@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-22
 **Files changed:**
-- `smolvm-plus/src/api/handlers/machinees.rs` — machine delete cleanup
+- `smolvm-plus/src/api/handlers/machines.rs` — machine delete cleanup
 - `smolvm-plus/src/api/handlers/snapshots.rs` — sparse-aware extraction
 
 ## Problem
@@ -28,7 +28,7 @@ regions — producing **dense** files that consume their full apparent size on
 disk.
 
 **Result:** Each snapshot pull created ~30 GB of real disk usage instead of
-~25 MB. Combined with bug #1 (never cleaning up), leaked machinees accumulated
+~25 MB. Combined with bug #1 (never cleaning up), leaked machines accumulated
 to hundreds of GB.
 
 ### Measured impact
@@ -40,7 +40,7 @@ to hundreds of GB.
 
 ## Fix
 
-### Machine delete cleanup (`machinees.rs`)
+### Machine delete cleanup (`machines.rs`)
 
 Added `std::fs::remove_dir_all(vm_data_dir(&name))` to `delete_machine` after
 stopping the VM process. This ensures `overlay.raw`, `storage.raw`, and all

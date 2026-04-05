@@ -14,7 +14,7 @@ NVIDIA OpenShell is an open-source runtime for executing autonomous AI agents in
 
 - **Docker-based, not VM-based**: OpenShell runs inside Docker containers, not micro VMs. The isolation comes from Linux kernel security modules (Landlock, seccomp, network namespaces), not hardware virtualization.
 - **Gateway/Machine architecture**: A control-plane "gateway" manages machine lifecycle. Machinees are the data plane. Gateway can run local (Docker), remote (SSH), or cloud (reverse proxy).
-- **Declarative YAML policies**: All security is policy-driven. Filesystem paths (read-only vs read-write), network endpoints (host+port+binary), process identity (unprivileged, no sudo). Network policies are hot-reloadable without restarting machinees.
+- **Declarative YAML policies**: All security is policy-driven. Filesystem paths (read-only vs read-write), network endpoints (host+port+binary), process identity (unprivileged, no sudo). Network policies are hot-reloadable without restarting machines.
 - **Per-binary network control**: Network policies pair allowed destinations with allowed binaries — both must match. e.g., only `/usr/bin/pip` can reach `pypi.org`. This is more granular than smolvm's current approach.
 - **REST endpoint inspection**: For `protocol: rest` + `tls: terminate`, the proxy decrypts TLS and checks HTTP method + path. Can allow GET but deny POST on specific API paths.
 - **Privacy/inference routing**: Built-in `inference.local` endpoint routes LLM API calls through a managed proxy that strips machine credentials and injects backend credentials. Supports OpenAI, Anthropic, NVIDIA providers.
@@ -89,7 +89,7 @@ OpenShell and smolvm solve the same problem (safe agent execution) from opposite
 
 The interesting question is: **does smolvm need OpenShell-style policies?** The VM boundary already provides strong isolation, but fine-grained network control (which binary can talk to which endpoint, HTTP method filtering) would be valuable for production agent deployments. The privacy router for inference is also compelling — agents shouldn't need raw API keys.
 
-OpenShell's Docker dependency is a meaningful limitation for macOS-native workflows. smolvm's ability to run micro VMs natively on macOS via Hypervisor.framework is a real advantage. But OpenShell's policy engine could potentially be adapted to run in front of smolvm machinees.
+OpenShell's Docker dependency is a meaningful limitation for macOS-native workflows. smolvm's ability to run micro VMs natively on macOS via Hypervisor.framework is a real advantage. But OpenShell's policy engine could potentially be adapted to run in front of smolvm machines.
 
 ### Strengths & Weaknesses Summary
 
@@ -119,7 +119,7 @@ Re-examined the actual repo code (not just docs). Key new findings:
 
 2. **K3s dependency is heavy** — the whole thing runs as a K3s cluster inside Docker. Opposite of our single-binary philosophy.
 
-3. **No snapshots/clone/diff** — machinees are ephemeral K8s pods. No state management whatsoever. This is a major gap vs smolvm.
+3. **No snapshots/clone/diff** — machines are ephemeral K8s pods. No state management whatsoever. This is a major gap vs smolvm.
 
 4. **Actionable insight — proxy-level filtering**: Our secret proxy (vsock:6100) already intercepts all LLM API traffic. We could add allow/deny rules *at the proxy level* without waiting for upstream TSI fixes:
    - L4: block/allow by destination host
@@ -139,7 +139,7 @@ Captured from:
 - https://docs.nvidia.com/openshell/latest/about/overview.html (overview)
 - https://docs.nvidia.com/openshell/latest/about/architecture.html (architecture)
 - https://docs.nvidia.com/openshell/latest/about/supported-agents.html (agents)
-- https://docs.nvidia.com/openshell/latest/machines/index.html (machinees)
+- https://docs.nvidia.com/openshell/latest/machines/index.html (machines)
 - https://docs.nvidia.com/openshell/latest/machines/policies.html (policies)
 - https://docs.nvidia.com/openshell/latest/inference/index.html (inference)
 - https://github.com/NVIDIA/OpenShell (repo)

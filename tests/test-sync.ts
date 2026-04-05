@@ -261,7 +261,7 @@ console.log("\nDry-run:");
 console.log("\nCleanup:");
 {
   await cleanup(MACHINE_NAME);
-  const getResp = await apiGet(`/machinees/${MACHINE_NAME}`);
+  const getResp = await apiGet(`/machines/${MACHINE_NAME}`);
   test("Machine cleaned up (404)", getResp.status === 404);
 
   // Clean temp dirs

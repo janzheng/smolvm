@@ -84,8 +84,8 @@ export class Machine {
 
   /**
    * Compare this machine with another.
-   * Lists files that differ between the two machinees.
-   * Both machinees must be running (will be auto-started).
+   * Lists files that differ between the two machines.
+   * Both machines must be running (will be auto-started).
    */
   async diff(other: string): Promise<DiffResult> {
     return this.http.diffMachinees(this.name, other);

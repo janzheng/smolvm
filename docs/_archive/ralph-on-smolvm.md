@@ -37,7 +37,7 @@ everything via HTTP.
 const API = "http://127.0.0.1:8080/api/v1";
 
 // Create + start machine
-await fetch(`${API}/machinees`, {
+await fetch(`${API}/machines`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
@@ -119,8 +119,8 @@ lifecycle drops from 10.1s to ~3s.
 | File persistence across exec | Works | Files written in one exec visible in next |
 | File persistence across stop/start | Works | Packages and files survive reboot |
 | OCI image pull + run | Works | `node:22-alpine`, `python:3.13-alpine` tested |
-| Multiple machinees | Works | REST API manages them independently |
-| Cross-machine parallelism | Works | Truly parallel exec across machinees |
+| Multiple machines | Works | REST API manages them independently |
+| Cross-machine parallelism | Works | Truly parallel exec across machines |
 | OpenAPI spec | Works | `/api-docs/openapi.json` |
 | Swagger UI | Works | `/swagger-ui/` |
 
@@ -133,7 +133,7 @@ lifecycle drops from 10.1s to ~3s.
 | Volume mounts | Files not visible inside VM | Use `exec cat` or `exec sh -c 'echo data > file'` |
 | Port mapping | Connection refused | Run server inside VM, curl via exec |
 | Container-in-machine | 500 error from crun | Use machine exec directly |
-| Within-machine parallelism | Exec is serial per machine | Use multiple machinees for parallelism |
+| Within-machine parallelism | Exec is serial per machine | Use multiple machines for parallelism |
 | Checkpoint/restore | Not implemented | Stop/start preserves state but can't snapshot |
 | File copy API | No endpoint | Pipe via exec: `exec sh -c 'cat /path/to/file'` |
 
@@ -159,7 +159,7 @@ lifecycle drops from 10.1s to ~3s.
 │        ▼              ▼                ▼               │
 │  ┌─────────────────────────────────────────────────┐  │
 │  │        REST API Client (fetch-based)             │  │
-│  │  POST /machinees → create/start/exec/stop/delete │  │
+│  │  POST /machines → create/start/exec/stop/delete │  │
 │  └─────────────────────────────────────────────────┘  │
 │       │         │         │         │                  │
 │       ▼         ▼         ▼         ▼                  │
@@ -198,7 +198,7 @@ async function exec(name: string, cmd: string, opts?: { env?: {name: string, val
 
 // Create fleet
 for (let i = 0; i < FLEET_SIZE; i++) {
-  await apiPost("/machinees", {
+  await apiPost("/machines", {
     name: `agent-${i}`,
     resources: { cpus: 2, memory_mb: 2048, network: true },
   });
@@ -285,7 +285,7 @@ MacBook Pro M3 Max (16 CPU, 128 GB): ~7 concurrent agents.
    (pipes, &&, $VAR). Use `["echo", "hello"]` for simple commands.
 
 4. **Within-machine exec is serial** — if you need parallel work, use
-   multiple machinees.
+   multiple machines.
 
 5. **Alpine has nothing** — no node, python, git, curl. Budget 7s for
    bootstrap or use a pre-built OCI image.

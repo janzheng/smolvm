@@ -1,13 +1,13 @@
 # Playtest 03: Break It
 
-**Mission**: Try to crash the server, leak data between machinees, exhaust
+**Mission**: Try to crash the server, leak data between machines, exhaust
 resources, or otherwise make smolvm do something it shouldn't.
 
 **Time**: ~20 min
 
 ## Entry point
 
-Server is running. Create a couple machinees. Now try to be adversarial.
+Server is running. Create a couple machines. Now try to be adversarial.
 
 ## Attack surface: API abuse
 
@@ -42,7 +42,7 @@ Server is running. Create a couple machinees. Now try to be adversarial.
 
 ## Attack surface: resource exhaustion
 
-- Create 50 machinees. Does the server slow down? Does it run out of
+- Create 50 machines. Does the server slow down? Does it run out of
   something?
 - Run a process that never exits (`sleep infinity`). What happens to the exec
   endpoint?

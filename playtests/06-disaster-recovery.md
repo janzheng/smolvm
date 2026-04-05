@@ -29,7 +29,7 @@ services), then snapshot → destroy → restore. See what survives.
   venv, compiled binaries). How big is the snapshot? How long does push take?
 - Snapshot, modify the machine, snapshot again (same name). What happens?
   Does it overwrite? Version?
-- Pull the same snapshot into 3 different machinees. Are they independent?
+- Pull the same snapshot into 3 different machines. Are they independent?
 - Snapshot a machine, modify it, then try to "revert" by pulling the old
   snapshot back. Does that work or do you need a new machine?
 - What's in the snapshot? Can you inspect it? Is it just a tar?

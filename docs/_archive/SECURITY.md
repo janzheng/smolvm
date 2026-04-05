@@ -4,7 +4,7 @@
 
 smolvm provides **strong compute isolation** (hardware VM boundary) and **secret isolation via a vsock reverse proxy**. When using `--secret`, real API keys never enter the VM — the machine gets placeholder keys and a local proxy URL. There is no outbound network filtering beyond this.
 
-**Safe pattern:** Use `--secret` for API keys (keys stay on host). Use `network: false` when possible. Don't pass real keys via `--env` to machinees running untrusted code.
+**Safe pattern:** Use `--secret` for API keys (keys stay on host). Use `network: false` when possible. Don't pass real keys via `--env` to machines running untrusted code.
 
 ---
 
@@ -73,8 +73,8 @@ TSI operates below netfilter, so iptables rules inside the VM have no effect.
 ### 4. No secret lifecycle management
 
 There is no mechanism to:
-- Rotate secrets without restarting machinees
-- Audit which machinees have which secrets
+- Rotate secrets without restarting machines
+- Audit which machines have which secrets
 - Revoke a secret after it's been passed to a machine
 - Scope secrets to specific outbound hosts
 
@@ -148,7 +148,7 @@ smolctl up agent-1 --secret anthropic --secret openai
 ### Security properties
 
 - Real keys never enter the VM (only placeholder + localhost URL)
-- Each machine gets its own proxy socket (can't talk to other machinees' proxies)
+- Each machine gets its own proxy socket (can't talk to other machines' proxies)
 - Proxy only forwards to registered service base URLs (not arbitrary destinations)
 - Secret names validated at machine creation (can't request unconfigured secrets)
 - Env vars matching protected names (e.g. `ANTHROPIC_API_KEY`) are auto-stripped from exec calls when secrets are active
@@ -263,9 +263,9 @@ Instead of env vars, mount secrets as read-only files that are only accessible t
 
 For running AI-generated code in smolvm today:
 
-- [x] Use `--no-network` for machinees that don't need internet
+- [x] Use `--no-network` for machines that don't need internet
 - [x] Enable `--api-token` or `--generate-token` to protect the host API
-- [x] Don't pass real API keys to machinees running untrusted code
+- [x] Don't pass real API keys to machines running untrusted code
 - [x] Use `--user agent` for non-root execution
 - [x] Keep the API on `127.0.0.1`, not `0.0.0.0`
 - [x] Use `smolctl cp` to move files in/out instead of mounting host dirs

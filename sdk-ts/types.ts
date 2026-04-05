@@ -73,7 +73,7 @@ export interface CreateMachineOptions {
   secrets?: string[];
 }
 
-/** Wire format for POST /machinees */
+/** Wire format for POST /machines */
 export interface CreateMachineRequest {
   name: string;
   mounts?: MountSpec[];
@@ -115,7 +115,7 @@ export interface CloneMachineRequest {
   name: string;
 }
 
-/** Result of comparing two machinees. */
+/** Result of comparing two machines. */
 export interface DiffResult {
   source: string;
   target: string;
@@ -148,7 +148,7 @@ export interface CreateMicroVMOptions {
   ports?: PortSpec[];
 }
 
-/** Wire format for POST /microvms — different schema from machinees */
+/** Wire format for POST /microvms — different schema from machines */
 export interface CreateMicroVMRequest {
   name: string;
   cpus?: number;

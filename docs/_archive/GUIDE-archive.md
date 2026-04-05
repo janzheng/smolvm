@@ -280,7 +280,7 @@ const fork = await machine.clone("dev-01-fork");
 
 ### Diff Two Machinees
 
-See what files changed between two machinees:
+See what files changed between two machines:
 
 ```bash
 curl http://localhost:8080/api/v1/machines/dev-01/diff/dev-01-fork
@@ -345,12 +345,12 @@ curl -X DELETE http://localhost:8080/api/v1/snapshots/dev-01
 
 ## Fleet Operations
 
-Spin up and manage multiple machinees in parallel.
+Spin up and manage multiple machines in parallel.
 
 **TypeScript:**
 
 ```typescript
-// Create 5 machinees named worker-0 through worker-4
+// Create 5 machines named worker-0 through worker-4
 const fleet = await client.createFleet("worker", 5, { network: true });
 
 // Run a command on all of them
@@ -362,7 +362,7 @@ await fleet.execEach((machine, i) =>
   machine.sh(`echo "I am worker ${i}"`)
 );
 
-// Access individual machinees
+// Access individual machines
 const worker2 = fleet.at(2);
 await worker2.sh("npm install");
 
@@ -419,7 +419,7 @@ curl -X POST http://localhost:8080/api/v1/machines/dev-01/run \
 
 ## Remote Access via Tunnel
 
-The smolvm API is designed to be tunneled. One tunnel on the host = remote access to all machinees.
+The smolvm API is designed to be tunneled. One tunnel on the host = remote access to all machines.
 
 ### Setup (Cloudflare Tunnel)
 
@@ -481,7 +481,7 @@ curl http://localhost:8080/health
 curl http://localhost:8080/metrics
 ```
 
-Metrics include: `smolvm_machinees_created_total`, `smolvm_exec_duration_seconds`, active machine counts, and more.
+Metrics include: `smolvm_machines_created_total`, `smolvm_exec_duration_seconds`, active machine counts, and more.
 
 ### Resource Stats
 
@@ -522,7 +522,7 @@ Full OpenAPI 3.1 spec available at:
 | `GET` | `/metrics` | Prometheus metrics |
 | **Machinees** | | |
 | `POST` | `/api/v1/machines` | Create machine |
-| `GET` | `/api/v1/machines` | List all machinees |
+| `GET` | `/api/v1/machines` | List all machines |
 | `GET` | `/api/v1/machines/{id}` | Get machine info |
 | `POST` | `/api/v1/machines/{id}/start` | Start machine |
 | `POST` | `/api/v1/machines/{id}/stop` | Stop machine |
@@ -542,8 +542,8 @@ Full OpenAPI 3.1 spec available at:
 | `GET` | `/api/v1/machines/{id}/archive` | Download tar.gz |
 | **Orchestration** | | |
 | `POST` | `/api/v1/machines/{id}/clone` | Clone machine |
-| `GET` | `/api/v1/machines/{id}/diff/{other}` | Diff two machinees |
-| `POST` | `/api/v1/machines/{id}/merge/{target}` | Merge machinees |
+| `GET` | `/api/v1/machines/{id}/diff/{other}` | Diff two machines |
+| `POST` | `/api/v1/machines/{id}/merge/{target}` | Merge machines |
 | **Snapshots** | | |
 | `POST` | `/api/v1/machines/{id}/push` | Export snapshot |
 | `GET` | `/api/v1/snapshots` | List snapshots |
@@ -583,7 +583,7 @@ Full OpenAPI 3.1 spec available at:
 | Container-in-machine (T04) | Persistent containers fail (500 error) | Use `run` endpoint for ephemeral containers |
 | macOS UID leak (T06) | Host UID 501 leaks into guest | Init commands: `chown root:root /var/empty` |
 | Egress filtering | Domain rules not enforced at network layer | Use proxy-based filtering inside VM |
-| Serial exec | One exec at a time per machine | Use fleet for parallelism across machinees |
+| Serial exec | One exec at a time per machine | Use fleet for parallelism across machines |
 
 ---
 

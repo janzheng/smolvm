@@ -1,6 +1,6 @@
 #!/usr/bin/env -S deno run --allow-net --allow-env --allow-read --allow-write --allow-run
 /**
- * smolctl — CLI for managing smolvm machinees via REST API.
+ * smolctl — CLI for managing smolvm machines via REST API.
  *
  * Like `wrangler` for Cloudflare Workers, but for smolvm microVMs.
  *
@@ -103,7 +103,7 @@ async function writeAgentSettings(machine: string, config: MachineConfig): Promi
   const encoded = btoa(settings);
   const settingsPath = "/tmp/agent-settings.json";
   const encodedPath = encodeURIComponent(settingsPath);
-  const resp = await apiCall("PUT", `/machinees/${machine}/files/${encodedPath}`, { content: encoded });
+  const resp = await apiCall("PUT", `/machines/${machine}/files/${encodedPath}`, { content: encoded });
   await okOrDie(resp, "write agent settings");
   return settingsPath;
 }
@@ -598,7 +598,7 @@ interface PoolNode {
   name: string;
   url: string;
   token?: string;
-  max_machinees?: number;
+  max_machines?: number;
 }
 
 interface PoolConfig {
@@ -655,15 +655,15 @@ async function checkNodeHealth(node: PoolNode): Promise<{ online: boolean; machi
     });
     if (!resp.ok) { await resp.text(); return { online: false, machine_count: 0 }; }
     await resp.json();
-    // Try to count machinees
+    // Try to count machines
     try {
       const sbResp = await fetch(`${baseUrl}/api/v1/machines`, {
         headers: h,
         signal: AbortSignal.timeout(POOL_HEALTH_TIMEOUT_MS),
       });
       if (sbResp.ok) {
-        const data = await sbResp.json() as { machinees: unknown[] };
-        return { online: true, machine_count: data.machinees?.length ?? 0 };
+        const data = await sbResp.json() as { machines: unknown[] };
+        return { online: true, machine_count: data.machines?.length ?? 0 };
       }
       await sbResp.text();
     } catch { /* ignore machine count failure */ }
@@ -700,8 +700,8 @@ async function pickNode(pool: PoolConfig, explicitNode?: string): Promise<PoolNo
     const checks = await Promise.all(
       pool.nodes.map(async (node) => {
         const health = await checkNodeHealth(node);
-        const remaining = node.max_machinees
-          ? node.max_machinees - health.machine_count
+        const remaining = node.max_machines
+          ? node.max_machines - health.machine_count
           : Infinity;
         return { node, online: health.online, remaining };
       }),
@@ -732,7 +732,7 @@ async function cmdPoolAdd(name: string, url: string, args: string[]) {
   if (maxStr) {
     const max = parseInt(maxStr);
     if (isNaN(max) || max < 1) die("--max must be a positive integer");
-    node.max_machinees = max;
+    node.max_machines = max;
   }
   config.nodes.push(node);
   await savePoolConfig(config);
@@ -758,20 +758,20 @@ async function cmdPoolLs() {
   const results = await Promise.all(
     config.nodes.map(async (node) => {
       const health = await checkNodeHealth(node);
-      const maxStr = node.max_machinees != null ? String(node.max_machinees) : "-";
+      const maxStr = node.max_machines != null ? String(node.max_machines) : "-";
       const machineStr = health.online
-        ? `${health.machine_count}/${node.max_machinees != null ? node.max_machinees : "\u221e"}`
+        ? `${health.machine_count}/${node.max_machines != null ? node.max_machines : "\u221e"}`
         : "-";
       return {
         name: node.name,
         url: node.url,
         status: health.online ? "online" : "offline",
-        machinees: machineStr,
+        machines: machineStr,
         max: maxStr,
       };
     }),
   );
-  table(results, ["name", "url", "status", "machinees", "max"]);
+  table(results, ["name", "url", "status", "machines", "max"]);
 }
 
 async function cmdPoolStatus() {
@@ -789,15 +789,15 @@ async function cmdPoolStatus() {
   const onlineCount = results.filter((r) => r.online).length;
   const totalMachinees = results.reduce((sum, r) => sum + r.machine_count, 0);
   const totalCapacity = config.nodes.reduce((sum, n) => {
-    if (n.max_machinees == null) return Infinity;
-    return sum === Infinity ? Infinity : sum + n.max_machinees;
+    if (n.max_machines == null) return Infinity;
+    return sum === Infinity ? Infinity : sum + n.max_machines;
   }, 0);
   console.log(`Pool strategy: ${config.strategy}`);
   console.log(`Nodes: ${onlineCount}/${config.nodes.length} online`);
   console.log(`Machinees: ${totalMachinees}${totalCapacity === Infinity ? "" : `/${totalCapacity}`}`);
   for (const r of results) {
     const icon = r.online ? "+" : "-";
-    console.log(`  [${icon}] ${r.node.name} (${r.node.url}) — ${r.machine_count} machinees`);
+    console.log(`  [${icon}] ${r.node.name} (${r.node.url}) — ${r.machine_count} machines`);
   }
 }
 
@@ -1048,7 +1048,7 @@ function emitStatus(event: StatusEvent): void {
 /** Run a command inside a machine with short timeout, swallowing errors. */
 async function safeExec(name: string, cmd: string[]): Promise<{ exit_code: number; stdout: string; stderr: string } | null> {
   try {
-    const resp = await apiCall("POST", `/machinees/${name}/exec`, { command: cmd, timeout_secs: 5 }, 10_000);
+    const resp = await apiCall("POST", `/machines/${name}/exec`, { command: cmd, timeout_secs: 5 }, 10_000);
     if (!resp.ok) return null;
     return await resp.json();
   } catch { return null; }
@@ -1374,9 +1374,9 @@ async function cmdHealth() {
 }
 
 async function cmdList() {
-  const resp = await apiCall("GET", "/machinees");
-  const data = await jsonResult<{ machinees: Record<string, unknown>[] }>(resp);
-  const rows = data.machinees.map((s) => ({
+  const resp = await apiCall("GET", "/machines");
+  const data = await jsonResult<{ machines: Record<string, unknown>[] }>(resp);
+  const rows = data.machines.map((s) => ({
     name: s.name,
     state: s.state,
     pid: s.pid ?? "-",
@@ -1472,8 +1472,8 @@ async function cmdCreate(name: string, args: string[]) {
 
   const t0 = Date.now();
   const resp = targetNode
-    ? await nodeApiCall(targetNode, "POST", "/machinees", opts, LONG_TIMEOUT_MS)
-    : await apiCall("POST", "/machinees", opts, LONG_TIMEOUT_MS);
+    ? await nodeApiCall(targetNode, "POST", "/machines", opts, LONG_TIMEOUT_MS)
+    : await apiCall("POST", "/machines", opts, LONG_TIMEOUT_MS);
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(`Created machine: ${data.name} (${data.state})`);
   if (allowedDomains.length > 0) {
@@ -1512,14 +1512,14 @@ async function machineApiCall(
 }
 
 async function cmdStart(name: string) {
-  const resp = await machineApiCall(name, "POST", `/machinees/${name}/start`);
+  const resp = await machineApiCall(name, "POST", `/machines/${name}/start`);
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(`Started: ${data.name} (pid: ${data.pid ?? "?"})`);
   await logEvent({ timestamp: new Date().toISOString(), event: "machine.start", machine: name });
 }
 
 async function cmdStop(name: string) {
-  const resp = await machineApiCall(name, "POST", `/machinees/${name}/stop`);
+  const resp = await machineApiCall(name, "POST", `/machines/${name}/stop`);
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(`Stopped: ${data.name}`);
   await logEvent({ timestamp: new Date().toISOString(), event: "machine.stop", machine: name });
@@ -1527,14 +1527,14 @@ async function cmdStop(name: string) {
 
 async function cmdDelete(name: string, force: boolean) {
   const qs = force ? "?force=true" : "";
-  const resp = await machineApiCall(name, "DELETE", `/machinees/${name}${qs}`);
+  const resp = await machineApiCall(name, "DELETE", `/machines/${name}${qs}`);
   await okOrDie(resp, "delete");
   console.log(`Deleted: ${name}`);
   await logEvent({ timestamp: new Date().toISOString(), event: "machine.delete", machine: name, details: { force } });
 }
 
 async function cmdInfo(name: string) {
-  const resp = await machineApiCall(name, "GET", `/machinees/${name}`);
+  const resp = await machineApiCall(name, "GET", `/machines/${name}`);
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(JSON.stringify(data, null, 2));
 }
@@ -1566,7 +1566,7 @@ async function cmdExec(name: string, command: string[], args: string[]) {
 
   const t0 = Date.now();
   const clientTimeout = (parseInt(flag(flags, "timeout") ?? "30") + 5) * 1000;
-  const resp = await machineApiCall(name, "POST", `/machinees/${name}/exec`, body, clientTimeout);
+  const resp = await machineApiCall(name, "POST", `/machines/${name}/exec`, body, clientTimeout);
   const data = await jsonResult<{ exitCode?: number; exit_code?: number; stdout: string; stderr: string }>(resp);
   const code = data.exit_code ?? data.exitCode ?? -1;
   if (data.stdout) Deno.stdout.writeSync(new TextEncoder().encode(data.stdout));
@@ -1596,7 +1596,7 @@ async function cmdUp(name: string, args: string[]) {
   const setupCmds = flagAll(flags, "setup");
   for (const cmd of setupCmds) {
     console.log(`[setup] ${cmd}`);
-    const resp = await apiCall("POST", `/machinees/${name}/exec`, {
+    const resp = await apiCall("POST", `/machines/${name}/exec`, {
       command: ["sh", "-c", cmd],
       timeout_secs: 120,
     }, 130_000);
@@ -1641,7 +1641,7 @@ async function cmdResume(name: string, args: string[]) {
 
   // Check if machine already exists on the server
   try {
-    const resp = await apiCall("GET", `/machinees/${name}`);
+    const resp = await apiCall("GET", `/machines/${name}`);
     if (resp.ok) {
       const data = await resp.json();
       if (data.state === "running") {
@@ -1671,7 +1671,7 @@ async function cmdResume(name: string, args: string[]) {
   if (meta.starter) createOpts.from_starter = meta.starter;
   if (meta.secrets && meta.secrets.length > 0) createOpts.secrets = meta.secrets;
 
-  const createResp = await apiCall("POST", "/machinees", createOpts, LONG_TIMEOUT_MS);
+  const createResp = await apiCall("POST", "/machines", createOpts, LONG_TIMEOUT_MS);
   await jsonResult<Record<string, unknown>>(createResp);
 
   await cmdStart(name);
@@ -1683,7 +1683,7 @@ async function cmdResume(name: string, args: string[]) {
   // Post-start setup hooks
   for (const cmd of flagAll(flags, "setup")) {
     console.log(`[setup] ${cmd}`);
-    const resp = await apiCall("POST", `/machinees/${name}/exec`, {
+    const resp = await apiCall("POST", `/machines/${name}/exec`, {
       command: ["sh", "-c", cmd], timeout_secs: 120,
     }, 130_000);
     const data = await jsonResult<{ exit_code?: number; exitCode?: number }>(resp);
@@ -1695,28 +1695,28 @@ async function cmdResume(name: string, args: string[]) {
 }
 
 async function cmdPrune() {
-  const resp = await apiCall("GET", "/machinees");
-  const data = await jsonResult<{ machinees: { name: string; state: string }[] }>(resp);
-  if (data.machinees.length === 0) {
-    console.log("No machinees to prune.");
+  const resp = await apiCall("GET", "/machines");
+  const data = await jsonResult<{ machines: { name: string; state: string }[] }>(resp);
+  if (data.machines.length === 0) {
+    console.log("No machines to prune.");
     return;
   }
-  for (const sb of data.machinees) {
+  for (const sb of data.machines) {
     try {
-      if (sb.state === "running") await apiCall("POST", `/machinees/${sb.name}/stop`);
+      if (sb.state === "running") await apiCall("POST", `/machines/${sb.name}/stop`);
     } catch { /* ignore */ }
     try {
-      await apiCall("DELETE", `/machinees/${sb.name}?force=true`);
+      await apiCall("DELETE", `/machines/${sb.name}?force=true`);
       console.log(`  pruned: ${sb.name}`);
     } catch (e) {
       console.error(`  failed: ${sb.name} — ${e}`);
     }
   }
-  console.log(`Pruned ${data.machinees.length} machine(es).`);
+  console.log(`Pruned ${data.machines.length} machine(es).`);
 }
 
 async function cmdStats(name: string) {
-  const resp = await machineApiCall(name, "GET", `/machinees/${name}/stats`);
+  const resp = await machineApiCall(name, "GET", `/machines/${name}/stats`);
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(`Machine: ${data.name} (${data.state})`);
   console.log(`  CPUs:     ${data.cpus}`);
@@ -2128,13 +2128,13 @@ async function cmdProviderInfo() {
     name: string;
     version: string;
     capabilities: string[];
-    max_machinees?: number;
+    max_machines?: number;
     region?: string;
   }>(resp);
   console.log(`Provider: ${data.name}`);
   console.log(`Version:  ${data.version}`);
   console.log(`Region:   ${data.region ?? "-"}`);
-  console.log(`Max VMs:  ${data.max_machinees ?? "unlimited"}`);
+  console.log(`Max VMs:  ${data.max_machines ?? "unlimited"}`);
   console.log(`Capabilities: ${data.capabilities.join(", ")}`);
 }
 
@@ -2207,7 +2207,7 @@ async function cmdLogs(name: string, args: string[]) {
   const tail = flag(flags, "tail") ?? "100";
   const follow = !hasFlag(flags, "no-follow");
   const qs = `?follow=${follow}&tail=${tail}`;
-  const resp = await fetch(`${API}/machinees/${name}/logs${qs}`, {
+  const resp = await fetch(`${API}/machines/${name}/logs${qs}`, {
     headers: authHeaders(),
   });
   if (!resp.ok) {
@@ -2242,13 +2242,13 @@ async function cmdClone(source: string, newName: string, args?: string[]) {
   const noBranch = args?.includes("--no-branch");
   // Flush source filesystem to ensure consistent clone (ext4 journal may have unflushed writes)
   try { await gitExec(source, "sync", 5); } catch { /* best effort */ }
-  const resp = await apiCall("POST", `/machinees/${source}/clone`, { name: newName });
+  const resp = await apiCall("POST", `/machines/${source}/clone`, { name: newName });
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(`Cloned: ${source} -> ${data.name} (${data.state})`);
 
   // Start the clone so we can exec
   try {
-    const startResp = await apiCall("POST", `/machinees/${newName}/start`);
+    const startResp = await apiCall("POST", `/machines/${newName}/start`);
     await jsonResult<Record<string, unknown>>(startResp);
   } catch { /* already running or can't start */ }
 
@@ -2267,13 +2267,13 @@ async function cmdClone(source: string, newName: string, args?: string[]) {
 }
 
 async function cmdDiff(name: string, other: string) {
-  const resp = await apiCall("GET", `/machinees/${name}/diff/${other}`);
+  const resp = await apiCall("GET", `/machines/${name}/diff/${other}`);
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(JSON.stringify(data, null, 2));
 }
 
 async function cmdMerge(source: string, target: string) {
-  const resp = await apiCall("POST", `/machinees/${source}/merge/${target}`, {});
+  const resp = await apiCall("POST", `/machines/${source}/merge/${target}`, {});
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(JSON.stringify(data, null, 2));
 }
@@ -2291,7 +2291,7 @@ async function cmdSnapshotPush(name: string, args?: string[]) {
   if (description) body.description = description;
   if (parent_snapshot) body.parent_snapshot = parent_snapshot;
   if (incremental) body.incremental = true;
-  const resp = await apiCall("POST", `/machinees/${name}/push`, Object.keys(body).length ? body : undefined);
+  const resp = await apiCall("POST", `/machines/${name}/push`, Object.keys(body).length ? body : undefined);
   const data = await jsonResult<{ name: string; path: string; manifest: Record<string, unknown> }>(resp);
   console.log(`Pushed snapshot: ${data.name}`);
   if (data.manifest.snapshot_version && (data.manifest.snapshot_version as number) >= 2) console.log(`  type: incremental (v${data.manifest.sequence ?? data.manifest.snapshot_version})`);
@@ -2528,13 +2528,13 @@ async function cmdWorkspaceExport(machine: string, destPath?: string) {
   console.log(`Exporting workspace from '${machine}'...`);
 
   // Check machine is running
-  const infoResp = await apiCall("GET", `/machinees/${machine}`);
+  const infoResp = await apiCall("GET", `/machines/${machine}`);
   if (!infoResp.ok) die(`machine '${machine}' not found`);
   const info = await infoResp.json();
   if (info.state !== "running") die(`machine '${machine}' is not running (state: ${info.state}). Start it first.`);
 
   // Resolve workspace path inside VM
-  const wsCheck = await apiCall("POST", `/machinees/${machine}/exec`, {
+  const wsCheck = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", "test -d /storage/workspace/.git && echo /storage/workspace || (test -d /workspace/.git && echo /workspace || echo none)"],
     timeout_secs: 5,
   });
@@ -2543,7 +2543,7 @@ async function cmdWorkspaceExport(machine: string, destPath?: string) {
   if (wsPath === "none") die(`no git workspace found in '${machine}'. Initialize with: smolctl git init ${machine}`);
 
   // Capture git info for the filename/metadata
-  const gitInfoResp = await apiCall("POST", `/machinees/${machine}/exec`, {
+  const gitInfoResp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", `cd ${wsPath} && echo "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)|$(git rev-parse --short HEAD 2>/dev/null || echo unknown)|$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"`],
     timeout_secs: 5,
   });
@@ -2552,7 +2552,7 @@ async function cmdWorkspaceExport(machine: string, destPath?: string) {
 
   // Tar the workspace inside the VM and base64 encode for transport
   const tarCmd = `cd ${wsPath} && tar czf - . 2>/dev/null | base64`;
-  const resp = await apiCall("POST", `/machinees/${machine}/exec`, {
+  const resp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", tarCmd],
     timeout_secs: 120,
   }, LONG_TIMEOUT_MS);
@@ -2588,13 +2588,13 @@ async function cmdWorkspaceImport(filePath: string, machine: string) {
   const sizeMb = ((fileInfo.size || 0) / (1024 * 1024)).toFixed(2);
 
   // Check machine is running
-  const infoResp = await apiCall("GET", `/machinees/${machine}`);
+  const infoResp = await apiCall("GET", `/machines/${machine}`);
   if (!infoResp.ok) die(`machine '${machine}' not found`);
   const info = await infoResp.json();
   if (info.state !== "running") die(`machine '${machine}' is not running (state: ${info.state}). Start it first.`);
 
   // Ensure workspace directory exists and has git
-  await apiCall("POST", `/machinees/${machine}/exec`, {
+  await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", "mkdir -p /storage/workspace && test -L /workspace || ln -sfn /storage/workspace /workspace 2>/dev/null || true"],
     timeout_secs: 5,
   });
@@ -2602,7 +2602,7 @@ async function cmdWorkspaceImport(filePath: string, machine: string) {
   // Upload the tar.gz via archive endpoint to /storage/workspace
   const tarData = await Deno.readFile(filePath);
   const qs = `?dir=${encodeURIComponent("/storage/workspace")}`;
-  const resp = await fetch(`${API}/machinees/${machine}/archive/upload${qs}`, {
+  const resp = await fetch(`${API}/machines/${machine}/archive/upload${qs}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/gzip",
@@ -2614,13 +2614,13 @@ async function cmdWorkspaceImport(filePath: string, machine: string) {
   await okOrDie(resp, "workspace import");
 
   // Mark safe.directory so git works
-  await apiCall("POST", `/machinees/${machine}/exec`, {
+  await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", "git config --global --add safe.directory /storage/workspace 2>/dev/null || true"],
     timeout_secs: 5,
   });
 
   // Verify git history survived
-  const verifyResp = await apiCall("POST", `/machinees/${machine}/exec`, {
+  const verifyResp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", "cd /storage/workspace && git log --oneline -3 2>/dev/null || echo '(no git history)'"],
     timeout_secs: 5,
   });
@@ -2645,13 +2645,13 @@ async function cmdToDocker(machine: string, args: string[]) {
   console.log(`Generating Docker build context from '${machine}'...`);
 
   // Check machine is running
-  const infoResp = await apiCall("GET", `/machinees/${machine}`);
+  const infoResp = await apiCall("GET", `/machines/${machine}`);
   if (!infoResp.ok) die(`machine '${machine}' not found`);
   const info = await infoResp.json();
   if (info.state !== "running") die(`machine '${machine}' is not running (state: ${info.state}). Start it first.`);
 
   // Resolve workspace path
-  const wsCheck = await apiCall("POST", `/machinees/${machine}/exec`, {
+  const wsCheck = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", "test -d /storage/workspace/.git && echo /storage/workspace || (test -d /workspace/.git && echo /workspace || echo none)"],
     timeout_secs: 5,
   });
@@ -2660,7 +2660,7 @@ async function cmdToDocker(machine: string, args: string[]) {
   if (wsPath === "none") die(`no git workspace found in '${machine}'. Initialize with: smolctl git init ${machine}`);
 
   // Get git info
-  const gitResp = await apiCall("POST", `/machinees/${machine}/exec`, {
+  const gitResp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", `cd ${wsPath} && echo "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)|$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"`],
     timeout_secs: 5,
   });
@@ -2668,7 +2668,7 @@ async function cmdToDocker(machine: string, args: string[]) {
   const [branch, commit] = gitInfo.stdout.trim().split("|");
 
   // Detect installed packages (best-effort)
-  const pkgResp = await apiCall("POST", `/machinees/${machine}/exec`, {
+  const pkgResp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", "apk info -q 2>/dev/null | sort | tr '\\n' ' '"],
     timeout_secs: 5,
   });
@@ -2680,7 +2680,7 @@ async function cmdToDocker(machine: string, args: string[]) {
   await Deno.mkdir(outputDir, { recursive: true });
 
   const tarCmd = `cd ${wsPath} && tar czf - . 2>/dev/null | base64`;
-  const resp = await apiCall("POST", `/machinees/${machine}/exec`, {
+  const resp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", tarCmd],
     timeout_secs: 120,
   }, LONG_TIMEOUT_MS);
@@ -2780,7 +2780,7 @@ async function cmdSnapshotMerge(snapName: string, targetVm: string, args: string
   try {
     // 2. Start temp machine
     console.log("Starting temp machine...");
-    const startResp = await apiCall("POST", `/machinees/${tempName}/start`);
+    const startResp = await apiCall("POST", `/machines/${tempName}/start`);
     await okOrDie(startResp, "start temp machine");
     // Wait for ready
     for (let i = 0; i < 30; i++) {
@@ -2800,8 +2800,8 @@ async function cmdSnapshotMerge(snapName: string, targetVm: string, args: string
   } finally {
     // 4. Clean up temp machine
     console.log("Cleaning up temp machine...");
-    try { await apiCall("POST", `/machinees/${tempName}/stop`); } catch { /* may already be stopped */ }
-    try { await apiCall("DELETE", `/machinees/${tempName}`); } catch { /* best effort */ }
+    try { await apiCall("POST", `/machines/${tempName}/stop`); } catch { /* may already be stopped */ }
+    try { await apiCall("DELETE", `/machines/${tempName}`); } catch { /* best effort */ }
   }
 }
 
@@ -2823,7 +2823,7 @@ async function withTempFromSnapshot(
 
   try {
     console.log("Starting temp machine...");
-    const startResp = await apiCall("POST", `/machinees/${tempName}/start`, undefined, LONG_TIMEOUT_MS);
+    const startResp = await apiCall("POST", `/machines/${tempName}/start`, undefined, LONG_TIMEOUT_MS);
     await okOrDie(startResp, "start temp machine");
     // Wait for ready
     for (let i = 0; i < 30; i++) {
@@ -2838,8 +2838,8 @@ async function withTempFromSnapshot(
     await fn(tempName);
   } finally {
     console.log("Cleaning up temp machine...");
-    try { await apiCall("POST", `/machinees/${tempName}/stop`); } catch { /* may already be stopped */ }
-    try { await apiCall("DELETE", `/machinees/${tempName}`); } catch { /* best effort */ }
+    try { await apiCall("POST", `/machines/${tempName}/stop`); } catch { /* may already be stopped */ }
+    try { await apiCall("DELETE", `/machines/${tempName}`); } catch { /* best effort */ }
   }
 }
 
@@ -2873,7 +2873,7 @@ async function cmdSnapshotLsFiles(snapName: string, path?: string, args: string[
     const cmd = recursive
       ? `find ${targetPath} -type f 2>/dev/null | sort`
       : `ls -la ${targetPath} 2>/dev/null`;
-    const resp = await apiCall("POST", `/machinees/${tempName}/exec`, {
+    const resp = await apiCall("POST", `/machines/${tempName}/exec`, {
       command: ["sh", "-c", cmd],
       timeout_secs: 15,
     }, LONG_TIMEOUT_MS);
@@ -2927,7 +2927,7 @@ async function cmdSnapshotCp(src: string, dst: string, args: string[]) {
       await gitExec(tempName, `cd /storage/workspace && git add -A && git commit -m "snapshot cp: added ${filename}" --allow-empty`, 15);
       // Push back as updated snapshot
       console.log("Pushing updated snapshot...");
-      const pushResp = await apiCall("POST", `/machinees/${tempName}/push`, { description: `snapshot cp: added ${filename}` });
+      const pushResp = await apiCall("POST", `/machines/${tempName}/push`, { description: `snapshot cp: added ${filename}` });
       await okOrDie(pushResp, "push updated snapshot");
     });
     console.log(`Done: injected into snapshot '${snapName}'`);
@@ -3034,13 +3034,13 @@ async function cmdSnapshotSquash(name: string, args: string[]) {
   await jsonResult(pullResp);
 
   // 3. Push as a fresh full snapshot (overwrites latest)
-  const pushResp = await apiCall("POST", `/machinees/${tempName}/push`, {
+  const pushResp = await apiCall("POST", `/machines/${tempName}/push`, {
     description: `squashed from ${hist.total_snapshots} versions`,
   });
   await jsonResult(pushResp);
 
   // 4. Clean up temp machine
-  await apiCall("DELETE", `/machinees/${tempName}`);
+  await apiCall("DELETE", `/machines/${tempName}`);
 
   // 5. Delete old versioned archives (unless --keep)
   if (!keepOld) {
@@ -3080,13 +3080,13 @@ function formatBytes(bytes: number): string {
 
 async function cmdImagePull(machine: string, image: string) {
   console.log(`Pulling ${image}...`);
-  const resp = await apiCall("POST", `/machinees/${machine}/images/pull`, { image }, LONG_TIMEOUT_MS);
+  const resp = await apiCall("POST", `/machines/${machine}/images/pull`, { image }, LONG_TIMEOUT_MS);
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(`Pulled: ${JSON.stringify(data)}`);
 }
 
 async function cmdImageLs(machine: string) {
-  const resp = await apiCall("GET", `/machinees/${machine}/images`);
+  const resp = await apiCall("GET", `/machines/${machine}/images`);
   const data = await jsonResult<{ images: Record<string, unknown>[] }>(resp);
   if (data.images.length === 0) {
     console.log("(none)");
@@ -3107,7 +3107,7 @@ async function cmdRun(machine: string, image: string, command: string[], args: s
   if (flag(flags, "user")) body.user = flag(flags, "user");
   if (flag(flags, "workdir")) body.workdir = flag(flags, "workdir");
 
-  const resp = await apiCall("POST", `/machinees/${machine}/run`, body, LONG_TIMEOUT_MS);
+  const resp = await apiCall("POST", `/machines/${machine}/run`, body, LONG_TIMEOUT_MS);
   const data = await jsonResult<{ exitCode?: number; exit_code?: number; stdout: string; stderr: string }>(resp);
   const code = data.exit_code ?? data.exitCode ?? -1;
   if (data.stdout) Deno.stdout.writeSync(new TextEncoder().encode(data.stdout));
@@ -3126,7 +3126,7 @@ async function cmdFilesLs(name: string, dir?: string) {
   // Use a delimiter to avoid ambiguity from spaces in filenames and type names
   const esc = targetDir.replace(/'/g, "'\\''");
   const script = `ls -1a '${esc}' 2>/dev/null | while read f; do [ "$f" = "." ] || [ "$f" = ".." ] && continue; if [ -d "${esc}/$f" ]; then t=dir; else t=file; fi; s=$(stat -c '%s' "${esc}/$f" 2>/dev/null || echo 0); p=$(stat -c '%a' "${esc}/$f" 2>/dev/null || echo 644); echo "$s|$p|$t|$f"; done`;
-  const resp = await apiCall("POST", `/machinees/${name}/exec`, {
+  const resp = await apiCall("POST", `/machines/${name}/exec`, {
     command: ["sh", "-c", script],
     timeout_secs: 15,
   });
@@ -3146,7 +3146,7 @@ async function cmdFilesLs(name: string, dir?: string) {
 
 async function cmdFilesCat(name: string, path: string) {
   const encodedPath = encodeURIComponent(path);
-  const resp = await apiCall("GET", `/machinees/${name}/files/${encodedPath}`);
+  const resp = await apiCall("GET", `/machines/${name}/files/${encodedPath}`);
   const data = await jsonResult<{ content: string }>(resp);
   const decoded = atob(data.content);
   Deno.stdout.writeSync(new TextEncoder().encode(decoded));
@@ -3173,20 +3173,20 @@ async function cmdFilesWrite(name: string, path: string, args: string[]) {
   }
   const encoded = btoa(content);
   const encodedPath = encodeURIComponent(path);
-  const resp = await apiCall("PUT", `/machinees/${name}/files/${encodedPath}`, { content: encoded });
+  const resp = await apiCall("PUT", `/machines/${name}/files/${encodedPath}`, { content: encoded });
   await okOrDie(resp, "write");
   console.log(`Wrote: ${path}`);
 }
 
 async function cmdFilesRm(name: string, path: string) {
   const encodedPath = encodeURIComponent(path);
-  const resp = await apiCall("DELETE", `/machinees/${name}/files/${encodedPath}`);
+  const resp = await apiCall("DELETE", `/machines/${name}/files/${encodedPath}`);
   await okOrDie(resp, "delete");
   console.log(`Deleted: ${path}`);
 }
 
 // ---------------------------------------------------------------------------
-// cp — copy files/dirs in and out of machinees
+// cp — copy files/dirs in and out of machines
 // ---------------------------------------------------------------------------
 
 /**
@@ -3226,7 +3226,7 @@ async function cpLocalToMachine(localPath: string, machine: string, remotePath: 
     const content = await Deno.readTextFile(localPath);
     const encoded = btoa(content);
     const encodedPath = encodeURIComponent(remotePath);
-    const resp = await apiCall("PUT", `/machinees/${machine}/files/${encodedPath}`, { content: encoded });
+    const resp = await apiCall("PUT", `/machines/${machine}/files/${encodedPath}`, { content: encoded });
     await okOrDie(resp, "upload");
     console.log(`Copied: ${localPath} -> ${machine}:${remotePath}`);
     return;
@@ -3250,7 +3250,7 @@ async function cpLocalToMachine(localPath: string, machine: string, remotePath: 
   }
 
   const qs = `?dir=${encodeURIComponent(remotePath)}`;
-  const resp = await fetch(`${API}/machinees/${machine}/archive/upload${qs}`, {
+  const resp = await fetch(`${API}/machines/${machine}/archive/upload${qs}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/gzip",
@@ -3270,7 +3270,7 @@ async function cpMachineToLocal(machine: string, remotePath: string, localPath: 
   console.log(`Downloading ${machine}:${remotePath}...`);
 
   // Check if remote path is a file or directory
-  const checkResp = await apiCall("POST", `/machinees/${machine}/exec`, {
+  const checkResp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", `test -f '${remotePath}' && echo FILE || echo DIR`],
     timeout_secs: 5,
   });
@@ -3280,7 +3280,7 @@ async function cpMachineToLocal(machine: string, remotePath: string, localPath: 
   if (isFile) {
     // Single file: read via file API and write locally
     const encodedPath = encodeURIComponent(remotePath);
-    const fileResp = await apiCall("GET", `/machinees/${machine}/files/${encodedPath}`);
+    const fileResp = await apiCall("GET", `/machines/${machine}/files/${encodedPath}`);
     const fileData = await jsonResult<{ content: string }>(fileResp);
     const decoded = atob(fileData.content);
     // Ensure parent directory exists
@@ -3297,7 +3297,7 @@ async function cpMachineToLocal(machine: string, remotePath: string, localPath: 
   const tarCmd = `tar czf - ${excludeFlags} -C '${remotePath}' . 2>/dev/null | base64`.replace(/  +/g, " ");
 
   // Create tar.gz inside VM, base64 encode for transport
-  const resp = await apiCall("POST", `/machinees/${machine}/exec`, {
+  const resp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", tarCmd],
     timeout_secs: 120,
   }, LONG_TIMEOUT_MS);
@@ -3419,7 +3419,7 @@ async function cmdSyncPull(machine: string, args: string[]) {
 
   if (hasFlag(flags, "dry-run")) {
     // Show what's in the remote directory
-    const resp = await apiCall("POST", `/machinees/${machine}/exec`, {
+    const resp = await apiCall("POST", `/machines/${machine}/exec`, {
       command: ["sh", "-c", `ls -la '${remoteDir}' 2>&1`],
       timeout_secs: 15,
     });
@@ -3782,7 +3782,7 @@ async function gitExec(
 ): Promise<{ exit_code: number; stdout: string; stderr: string }> {
   const resp = await apiCall(
     "POST",
-    `/machinees/${machine}/exec`,
+    `/machines/${machine}/exec`,
     { command: ["sh", "-c", shellCmd], timeout_secs: timeoutSecs },
     (timeoutSecs + 10) * 1000,
   );
@@ -4045,7 +4045,7 @@ async function cmdFleetFanout(source: string, count: number, args: string[]) {
   for (let i = 0; i < count; i++) {
     const cloneName = `${source}-fork-${i}`;
     names.push(cloneName);
-    const resp = await apiCall("POST", `/machinees/${source}/clone`, { name: cloneName });
+    const resp = await apiCall("POST", `/machines/${source}/clone`, { name: cloneName });
     await jsonResult<Record<string, unknown>>(resp);
     console.log(`  cloned: ${cloneName}`);
   }
@@ -4054,7 +4054,7 @@ async function cmdFleetFanout(source: string, count: number, args: string[]) {
   console.log("Starting clones...");
   await Promise.allSettled(
     names.map(async (name) => {
-      const resp = await apiCall("POST", `/machinees/${name}/start`);
+      const resp = await apiCall("POST", `/machines/${name}/start`);
       await jsonResult<Record<string, unknown>>(resp);
       await ensureStorageMounted(name);
     }),
@@ -4080,15 +4080,15 @@ async function cmdFleetGather(prefix: string, target: string) {
 
   const tgtWs = await getGitWs(target);
 
-  // Find all machinees matching prefix
-  const resp = await apiCall("GET", "/machinees");
-  const data = await jsonResult<{ machinees: { name: string; state: string }[] }>(resp);
-  const forks = data.machinees
+  // Find all machines matching prefix
+  const resp = await apiCall("GET", "/machines");
+  const data = await jsonResult<{ machines: { name: string; state: string }[] }>(resp);
+  const forks = data.machines
     .filter((s) => s.name.startsWith(prefix) && s.name !== target)
     .sort((a, b) => a.name.localeCompare(b.name));
 
   if (forks.length === 0) {
-    console.log(`No machinees found matching prefix: ${prefix}`);
+    console.log(`No machines found matching prefix: ${prefix}`);
     return;
   }
 
@@ -4099,7 +4099,7 @@ async function cmdFleetGather(prefix: string, target: string) {
     // Ensure running
     if (fork.state !== "running") {
       try {
-        await apiCall("POST", `/machinees/${fork.name}/start`);
+        await apiCall("POST", `/machines/${fork.name}/start`);
         await new Promise((r) => setTimeout(r, 2000));
         await ensureStorageMounted(fork.name);
       } catch {
@@ -4146,7 +4146,7 @@ async function cmdFleetGather(prefix: string, target: string) {
 // ---------------------------------------------------------------------------
 
 async function cmdContainerLs(machine: string) {
-  const resp = await apiCall("GET", `/machinees/${machine}/containers`);
+  const resp = await apiCall("GET", `/machines/${machine}/containers`);
   const data = await jsonResult<{ containers: Record<string, unknown>[] }>(resp);
   const rows = data.containers.map((c) => ({
     id: c.id,
@@ -4169,26 +4169,26 @@ async function cmdContainerCreate(machine: string, image: string, args: string[]
   if (envPairs.length > 0) body.env = envPairs;
   if (flag(flags, "workdir")) body.workdir = flag(flags, "workdir");
 
-  const resp = await apiCall("POST", `/machinees/${machine}/containers`, body, LONG_TIMEOUT_MS);
+  const resp = await apiCall("POST", `/machines/${machine}/containers`, body, LONG_TIMEOUT_MS);
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(`Created container: ${data.id} (${data.state})`);
 }
 
 async function cmdContainerStart(machine: string, containerId: string) {
-  const resp = await apiCall("POST", `/machinees/${machine}/containers/${containerId}/start`);
+  const resp = await apiCall("POST", `/machines/${machine}/containers/${containerId}/start`);
   await okOrDie(resp, "container start");
   console.log(`Started: ${containerId}`);
 }
 
 async function cmdContainerStop(machine: string, containerId: string) {
-  const resp = await apiCall("POST", `/machinees/${machine}/containers/${containerId}/stop`, { timeout_secs: 10 });
+  const resp = await apiCall("POST", `/machines/${machine}/containers/${containerId}/stop`, { timeout_secs: 10 });
   await okOrDie(resp, "container stop");
   console.log(`Stopped: ${containerId}`);
 }
 
 async function cmdContainerRm(machine: string, containerId: string, force: boolean) {
   const body = force ? { force: true } : undefined;
-  const resp = await apiCall("DELETE", `/machinees/${machine}/containers/${containerId}`, body);
+  const resp = await apiCall("DELETE", `/machines/${machine}/containers/${containerId}`, body);
   await okOrDie(resp, "container rm");
   console.log(`Deleted: ${containerId}`);
 }
@@ -4206,7 +4206,7 @@ async function cmdContainerExec(machine: string, containerId: string, command: s
   if (envPairs.length > 0) body.env = envPairs;
   if (flag(flags, "workdir")) body.workdir = flag(flags, "workdir");
 
-  const resp = await apiCall("POST", `/machinees/${machine}/containers/${containerId}/exec`, body);
+  const resp = await apiCall("POST", `/machines/${machine}/containers/${containerId}/exec`, body);
   const data = await jsonResult<{ exit_code: number; stdout: string; stderr: string }>(resp);
   if (data.stdout) Deno.stdout.writeSync(new TextEncoder().encode(data.stdout));
   if (data.stderr) Deno.stderr.writeSync(new TextEncoder().encode(data.stderr));
@@ -4221,7 +4221,7 @@ async function cmdContainerExec(machine: string, containerId: string, command: s
 
 async function cmdMcpTools(machine: string) {
   // Get configured MCP servers from the Rust API
-  const serversResp = await apiCall("GET", `/machinees/${machine}/mcp/servers`);
+  const serversResp = await apiCall("GET", `/machines/${machine}/mcp/servers`);
   const servers = await jsonResult<Array<{ name: string; command: string[]; workdir?: string }>>(serversResp);
 
   if (servers.length === 0) {
@@ -4240,7 +4240,7 @@ async function cmdMcpTools(machine: string) {
     const shellCmd = `printf '${initMsg}\\n${listMsg}\\n' | timeout 30 ${cmdStr} 2>/dev/null`;
 
     try {
-      const execResp = await apiCall("POST", `/machinees/${machine}/exec`, {
+      const execResp = await apiCall("POST", `/machines/${machine}/exec`, {
         command: ["sh", "-c", shellCmd],
         timeout_secs: 35,
       }, 40_000);
@@ -4291,7 +4291,7 @@ async function cmdMcpCall(machine: string, server: string, tool: string, argsJso
   }
 
   // Get server config
-  const serversResp = await apiCall("GET", `/machinees/${machine}/mcp/servers`);
+  const serversResp = await apiCall("GET", `/machines/${machine}/mcp/servers`);
   const servers = await jsonResult<Array<{ name: string; command: string[]; workdir?: string }>>(serversResp);
   const serverConfig = servers.find(s => s.name === server);
   if (!serverConfig) die(`MCP server '${server}' not configured. Available: ${servers.map(s => s.name).join(", ")}`);
@@ -4302,7 +4302,7 @@ async function cmdMcpCall(machine: string, server: string, tool: string, argsJso
   const cmdStr = serverConfig.command.map((s: string) => s.includes(" ") ? `'${s}'` : s).join(" ");
   const shellCmd = `printf '${initMsg}\\n${callMsg}\\n' | timeout 60 ${cmdStr} 2>/dev/null`;
 
-  const execResp = await apiCall("POST", `/machinees/${machine}/exec`, {
+  const execResp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", shellCmd],
     timeout_secs: 65,
   }, 70_000);
@@ -4330,7 +4330,7 @@ async function cmdMcpCall(machine: string, server: string, tool: string, argsJso
 }
 
 async function cmdMcpServers(machine: string) {
-  const resp = await apiCall("GET", `/machinees/${machine}/mcp/servers`);
+  const resp = await apiCall("GET", `/machines/${machine}/mcp/servers`);
   const data = await jsonResult<Array<{ name: string; command: string[]; workdir?: string }>>(resp);
   if (data.length === 0) {
     console.log("No MCP servers configured.");
@@ -4364,7 +4364,7 @@ async function cmdMcpInstall(machine: string) {
   }
 
   // Create target directory in the machine
-  const mkdirResp = await apiCall("POST", `/machinees/${machine}/exec`, {
+  const mkdirResp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["mkdir", "-p", "/opt/smolvm/mcp-servers"],
     timeout_secs: 10,
   });
@@ -4377,13 +4377,13 @@ async function cmdMcpInstall(machine: string) {
     for (let i = 0; i < contentBytes.length; i++) binary += String.fromCharCode(contentBytes[i]);
     const encoded = btoa(binary);
     const encodedPath = encodeURIComponent(`/opt/smolvm/mcp-servers/${file}`);
-    const resp = await apiCall("PUT", `/machinees/${machine}/files/${encodedPath}`, { content: encoded });
+    const resp = await apiCall("PUT", `/machines/${machine}/files/${encodedPath}`, { content: encoded });
     await okOrDie(resp, `write ${file}`);
     console.log(`  installed: /opt/smolvm/mcp-servers/${file}`);
   }
 
   // Make scripts executable
-  const chmodResp = await apiCall("POST", `/machinees/${machine}/exec`, {
+  const chmodResp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["chmod", "+x", ...mcpFiles.map((s) => `/opt/smolvm/mcp-servers/${s}`)],
     timeout_secs: 10,
   });
@@ -4396,7 +4396,7 @@ async function cmdMcpInstall(machine: string) {
 // ---------------------------------------------------------------------------
 
 async function cmdDebugMounts(machine: string) {
-  const resp = await apiCall("GET", `/machinees/${machine}/debug/mounts`);
+  const resp = await apiCall("GET", `/machines/${machine}/debug/mounts`);
   const data = await jsonResult<{
     configured: { tag: string; source: string; target: string; readonly: boolean }[];
     guest_mounts: string;
@@ -4426,7 +4426,7 @@ async function cmdDebugMounts(machine: string) {
 }
 
 async function cmdDebugNetwork(machine: string) {
-  const resp = await apiCall("GET", `/machinees/${machine}/debug/network`);
+  const resp = await apiCall("GET", `/machines/${machine}/debug/network`);
   const data = await jsonResult<{
     configured_ports: { host: number; guest: number }[];
     listening_ports: string;
@@ -4454,7 +4454,7 @@ async function cmdDebugNetwork(machine: string) {
 }
 
 async function cmdDnsStatus(machine: string) {
-  const resp = await apiCall("GET", `/machinees/${machine}/dns`);
+  const resp = await apiCall("GET", `/machines/${machine}/dns`);
   const data = await jsonResult<{ active: boolean; allowed_domains: string[] }>(resp);
 
   console.log(`=== DNS Filter Status: ${machine} ===\n`);
@@ -4522,7 +4522,7 @@ async function cmdAgentRun(prompt: string, args: string[]) {
   if (flag(flags, "user")) createOpts.default_user = flag(flags, "user");
 
   const t0 = Date.now();
-  const createResp = await apiCall("POST", "/machinees", createOpts, LONG_TIMEOUT_MS);
+  const createResp = await apiCall("POST", "/machines", createOpts, LONG_TIMEOUT_MS);
   await jsonResult<Record<string, unknown>>(createResp);
   await recordSession({ timestamp: ts(), machine: name, action: "create", duration_ms: Date.now() - t0, details: { starter, secrets } });
 
@@ -4541,7 +4541,7 @@ async function cmdAgentRun(prompt: string, args: string[]) {
   if (streaming) emitStatus({ status: "preparing", timestamp: ts(), machine: name });
   if (!outputJson) console.log("Starting machine...");
   const t1 = Date.now();
-  const startResp = await apiCall("POST", `/machinees/${name}/start`);
+  const startResp = await apiCall("POST", `/machines/${name}/start`);
   await jsonResult<Record<string, unknown>>(startResp);
   await recordSession({ timestamp: ts(), machine: name, action: "start", duration_ms: Date.now() - t1 });
 
@@ -4549,7 +4549,7 @@ async function cmdAgentRun(prompt: string, args: string[]) {
   const setupCmds = flagAll(flags, "setup");
   for (const cmd of setupCmds) {
     if (!outputJson) console.log(`[setup] ${cmd}`);
-    const setupResp = await apiCall("POST", `/machinees/${name}/exec`, {
+    const setupResp = await apiCall("POST", `/machines/${name}/exec`, {
       command: ["sh", "-c", cmd], timeout_secs: 120,
     }, 130_000);
     const setupResult = await jsonResult<{ exit_code?: number; exitCode?: number; stdout: string; stderr: string }>(setupResp);
@@ -4580,7 +4580,7 @@ async function cmdAgentRun(prompt: string, args: string[]) {
 
   const t2 = Date.now();
   const clientTimeout = (timeoutSecs + 10) * 1000;
-  const execResp = await apiCall("POST", `/machinees/${name}/exec`, execBody, clientTimeout);
+  const execResp = await apiCall("POST", `/machines/${name}/exec`, execBody, clientTimeout);
   const result = await jsonResult<{ exit_code?: number; exitCode?: number; stdout: string; stderr: string }>(execResp);
   const exitCode = result.exit_code ?? result.exitCode ?? -1;
   await recordSession({ timestamp: ts(), machine: name, action: "exec", duration_ms: Date.now() - t2, details: { prompt: prompt.slice(0, 200), exit_code: exitCode } });
@@ -4600,8 +4600,8 @@ async function cmdAgentRun(prompt: string, args: string[]) {
   // 4. Cleanup (unless --keep)
   if (!keep) {
     if (!outputJson) console.log(`\nCleaning up machine: ${name}`);
-    try { await apiCall("POST", `/machinees/${name}/stop`); } catch { /* ok */ }
-    try { await apiCall("DELETE", `/machinees/${name}?force=true`); } catch { /* ok */ }
+    try { await apiCall("POST", `/machines/${name}/stop`); } catch { /* ok */ }
+    try { await apiCall("DELETE", `/machines/${name}?force=true`); } catch { /* ok */ }
     await deleteMeta(name);
     await recordSession({ timestamp: ts(), machine: name, action: "cleanup" });
   } else if (!outputJson) {
@@ -4640,7 +4640,7 @@ async function cmdAgentFleet(prefix: string, promptsFile: string, args: string[]
 
   console.log(`Dispatching ${count} agent(s) with prefix "${prefix}"...`);
 
-  // 1. Create all machinees
+  // 1. Create all machines
   const names: string[] = [];
   for (let i = 0; i < count; i++) {
     const name = `${prefix}-${i}`;
@@ -4656,21 +4656,21 @@ async function cmdAgentFleet(prefix: string, promptsFile: string, args: string[]
       secrets,
     };
     if (flag(flags, "user")) createOpts.default_user = flag(flags, "user");
-    const resp = await apiCall("POST", "/machinees", createOpts, LONG_TIMEOUT_MS);
+    const resp = await apiCall("POST", "/machines", createOpts, LONG_TIMEOUT_MS);
     await jsonResult<Record<string, unknown>>(resp);
     console.log(`  created: ${name}`);
   }
 
   // 2. Start all in parallel
-  console.log("Starting all machinees...");
+  console.log("Starting all machines...");
   await Promise.allSettled(
     names.map(async (name) => {
-      const resp = await apiCall("POST", `/machinees/${name}/start`);
+      const resp = await apiCall("POST", `/machines/${name}/start`);
       await jsonResult<Record<string, unknown>>(resp);
     }),
   );
 
-  // 3. Write machine settings to all machinees + dispatch prompts
+  // 3. Write machine settings to all machines + dispatch prompts
   const machinePreset = flag(flags, "machine") ?? "permissive";
   const machineConfig = resolveMachineConfig(machinePreset);
   const settingsPaths: Record<string, string> = {};
@@ -4690,7 +4690,7 @@ async function cmdAgentFleet(prefix: string, promptsFile: string, args: string[]
       if (flag(flags, "workdir")) execBody.workdir = flag(flags, "workdir");
       if (flag(flags, "user")) execBody.user = flag(flags, "user");
 
-      const resp = await apiCall("POST", `/machinees/${name}/exec`, execBody, clientTimeout);
+      const resp = await apiCall("POST", `/machines/${name}/exec`, execBody, clientTimeout);
       const d = await jsonResult<{ exit_code?: number; exitCode?: number; stdout: string; stderr: string }>(resp);
       return { name, prompt: prompts[i], exit_code: d.exit_code ?? d.exitCode ?? -1, stdout: d.stdout, stderr: d.stderr };
     }),
@@ -4720,8 +4720,8 @@ async function cmdAgentFleet(prefix: string, promptsFile: string, args: string[]
     console.log(`\nCleaning up fleet "${prefix}"...`);
     await Promise.allSettled(
       names.map(async (name) => {
-        try { const r = await apiCall("POST", `/machinees/${name}/stop`); await r.text(); } catch { /* ok */ }
-        try { const r = await apiCall("DELETE", `/machinees/${name}?force=true`); await r.text(); } catch { /* ok */ }
+        try { const r = await apiCall("POST", `/machines/${name}/stop`); await r.text(); } catch { /* ok */ }
+        try { const r = await apiCall("DELETE", `/machines/${name}?force=true`); await r.text(); } catch { /* ok */ }
       }),
     );
   } else {
@@ -4738,7 +4738,7 @@ async function cmdAgentMerge(source: string, target: string, args: string[]) {
   if (files.length > 0) body.files = files;
 
   console.log(`Merging ${source} → ${target} (strategy: ${strategy})`);
-  const resp = await apiCall("POST", `/machinees/${source}/merge/${target}`, body);
+  const resp = await apiCall("POST", `/machines/${source}/merge/${target}`, body);
   const data = await jsonResult<{ merged_files: string[]; skipped_files: string[] }>(resp);
   console.log(`  merged: ${data.merged_files.length} file(s)`);
   for (const f of data.merged_files) console.log(`    ${f}`);
@@ -4753,15 +4753,15 @@ async function cmdAgentCollect(prefix: string, args: string[]) {
   const targetDir = flag(flags, "to") ?? ".";
   const dir = flag(flags, "dir") ?? "/workspace";
 
-  // Find all fleet machinees
-  const resp = await apiCall("GET", "/machinees");
-  const data = await jsonResult<{ machinees: { name: string; state: string }[] }>(resp);
-  const matches = data.machinees
+  // Find all fleet machines
+  const resp = await apiCall("GET", "/machines");
+  const data = await jsonResult<{ machines: { name: string; state: string }[] }>(resp);
+  const matches = data.machines
     .filter((s) => s.name.startsWith(`${prefix}-`))
     .sort((a, b) => a.name.localeCompare(b.name));
 
   if (matches.length === 0) {
-    die(`No machinees matching prefix "${prefix}".`);
+    die(`No machines matching prefix "${prefix}".`);
   }
 
   console.log(`Collecting results from ${matches.length} agent(s) to ${targetDir}/`);
@@ -4770,13 +4770,13 @@ async function cmdAgentCollect(prefix: string, args: string[]) {
     const outDir = `${targetDir}/${s.name}`;
     // Download archive from machine
     const archiveResp = await fetch(
-      `${API}/machinees/${s.name}/archive?dir=${encodeURIComponent(dir)}`,
+      `${API}/machines/${s.name}/archive?dir=${encodeURIComponent(dir)}`,
       { headers: authHeaders() },
     );
     if (!archiveResp.ok) {
       // Fallback: use exec tar if archive endpoint fails
       console.log(`  ${s.name}: using exec fallback...`);
-      const tarResp = await apiCall("POST", `/machinees/${s.name}/exec`, {
+      const tarResp = await apiCall("POST", `/machines/${s.name}/exec`, {
         command: ["sh", "-c", `tar czf - -C ${dir} . | base64`],
         timeout_secs: 60,
       }, 70_000);
@@ -4857,17 +4857,17 @@ async function cmdAgentWorker(args: string[]) {
     };
     if (flag(flags, "user")) createOpts.default_user = flag(flags, "user");
 
-    const createResp = await apiCall("POST", "/machinees", createOpts, LONG_TIMEOUT_MS);
+    const createResp = await apiCall("POST", "/machines", createOpts, LONG_TIMEOUT_MS);
     await jsonResult<Record<string, unknown>>(createResp);
 
     if (streaming) emitStatus({ status: "preparing", timestamp: ts(), machine: name });
-    const startResp = await apiCall("POST", `/machinees/${name}/start`);
+    const startResp = await apiCall("POST", `/machines/${name}/start`);
     await jsonResult<Record<string, unknown>>(startResp);
 
     // Post-start setup hooks
     for (const cmd of flagAll(flags, "setup")) {
       console.log(`[setup] ${cmd}`);
-      const setupResp = await apiCall("POST", `/machinees/${name}/exec`, {
+      const setupResp = await apiCall("POST", `/machines/${name}/exec`, {
         command: ["sh", "-c", cmd], timeout_secs: 120,
       }, 130_000);
       const setupResult = await jsonResult<{ exit_code?: number; exitCode?: number }>(setupResp);
@@ -4894,8 +4894,8 @@ async function cmdAgentWorker(args: string[]) {
     running = false;
     console.log("\nWorker shutting down...");
     if (!keep && !reuse) {
-      try { await apiCall("POST", `/machinees/${name}/stop`); } catch { /* ok */ }
-      try { await apiCall("DELETE", `/machinees/${name}?force=true`); } catch { /* ok */ }
+      try { await apiCall("POST", `/machines/${name}/stop`); } catch { /* ok */ }
+      try { await apiCall("DELETE", `/machines/${name}?force=true`); } catch { /* ok */ }
       console.log(`Machine ${name} cleaned up.`);
     }
   };
@@ -4942,7 +4942,7 @@ async function cmdAgentWorker(args: string[]) {
 
     try {
       const clientTimeout = (job.timeout_secs + 10) * 1000;
-      const execResp = await apiCall("POST", `/machinees/${name}/exec`, execBody, clientTimeout);
+      const execResp = await apiCall("POST", `/machines/${name}/exec`, execBody, clientTimeout);
       const result = await jsonResult<{ exit_code?: number; exitCode?: number; stdout: string; stderr: string }>(execResp);
       const exitCode = result.exit_code ?? result.exitCode ?? -1;
 
@@ -4979,8 +4979,8 @@ async function cmdAgentWorker(args: string[]) {
 
   if (!keep && !reuse) {
     console.log(`Cleaning up machine: ${name}`);
-    try { await apiCall("POST", `/machinees/${name}/stop`); } catch { /* ok */ }
-    try { await apiCall("DELETE", `/machinees/${name}?force=true`); } catch { /* ok */ }
+    try { await apiCall("POST", `/machines/${name}/stop`); } catch { /* ok */ }
+    try { await apiCall("DELETE", `/machines/${name}?force=true`); } catch { /* ok */ }
   } else {
     console.log(`Machine kept alive: ${name}`);
   }
@@ -5012,14 +5012,14 @@ function buildCreateOpts(name: string, flags: Record<string, string[]>): Record<
 async function cmdFleetUp(prefix: string, count: number, args: string[]) {
   const { flags } = parseFlags(args, ["cpus", "memory", "no-network", "init", "user", "starter", "secret"]);
 
-  // Create all machinees
+  // Create all machines
   console.log(`Creating fleet: ${prefix}-0..${count - 1}`);
   const names: string[] = [];
   for (let i = 0; i < count; i++) {
     const name = `${prefix}-${i}`;
     names.push(name);
     const opts = buildCreateOpts(name, flags);
-    const resp = await apiCall("POST", "/machinees", opts, LONG_TIMEOUT_MS);
+    const resp = await apiCall("POST", "/machines", opts, LONG_TIMEOUT_MS);
     await jsonResult<Record<string, unknown>>(resp);
     console.log(`  created: ${name}`);
   }
@@ -5028,7 +5028,7 @@ async function cmdFleetUp(prefix: string, count: number, args: string[]) {
   console.log("Starting all...");
   const startResults = await Promise.allSettled(
     names.map(async (name) => {
-      const resp = await apiCall("POST", `/machinees/${name}/start`);
+      const resp = await apiCall("POST", `/machines/${name}/start`);
       await jsonResult<Record<string, unknown>>(resp);
       return name;
     }),
@@ -5037,15 +5037,15 @@ async function cmdFleetUp(prefix: string, count: number, args: string[]) {
     if (r.status === "fulfilled") console.log(`  started: ${r.value}`);
     else console.error(`  failed: ${r.reason}`);
   }
-  console.log(`Fleet ${prefix} is up (${count} machinees).`);
+  console.log(`Fleet ${prefix} is up (${count} machines).`);
 }
 
 async function cmdFleetDown(prefix: string) {
-  const resp = await apiCall("GET", "/machinees");
-  const data = await jsonResult<{ machinees: { name: string; state: string }[] }>(resp);
-  const matches = data.machinees.filter((s) => s.name.startsWith(`${prefix}-`));
+  const resp = await apiCall("GET", "/machines");
+  const data = await jsonResult<{ machines: { name: string; state: string }[] }>(resp);
+  const matches = data.machines.filter((s) => s.name.startsWith(`${prefix}-`));
   if (matches.length === 0) {
-    console.log(`No machinees matching prefix "${prefix}".`);
+    console.log(`No machines matching prefix "${prefix}".`);
     return;
   }
 
@@ -5054,12 +5054,12 @@ async function cmdFleetDown(prefix: string) {
     matches.map(async (s) => {
       try {
         if (s.state === "running") {
-          const resp = await apiCall("POST", `/machinees/${s.name}/stop`);
+          const resp = await apiCall("POST", `/machines/${s.name}/stop`);
           await resp.text();
         }
       } catch { /* ignore */ }
       try {
-        const resp = await apiCall("DELETE", `/machinees/${s.name}?force=true`);
+        const resp = await apiCall("DELETE", `/machines/${s.name}?force=true`);
         await resp.text();
         console.log(`  removed: ${s.name}`);
       } catch (e) {
@@ -5071,11 +5071,11 @@ async function cmdFleetDown(prefix: string) {
 }
 
 async function cmdFleetLs(prefix?: string) {
-  const resp = await apiCall("GET", "/machinees");
-  const data = await jsonResult<{ machinees: Record<string, unknown>[] }>(resp);
+  const resp = await apiCall("GET", "/machines");
+  const data = await jsonResult<{ machines: Record<string, unknown>[] }>(resp);
   const matches = prefix
-    ? data.machinees.filter((s) => String(s.name).startsWith(`${prefix}-`))
-    : data.machinees;
+    ? data.machines.filter((s) => String(s.name).startsWith(`${prefix}-`))
+    : data.machines;
   const rows = matches.map((s) => ({
     name: s.name,
     state: s.state,
@@ -5088,15 +5088,15 @@ async function cmdFleetLs(prefix?: string) {
 async function cmdFleetExec(prefix: string, cmd: string, args: string[]) {
   const { flags } = parseFlags(args, ["env", "workdir", "user", "timeout"]);
 
-  // Find fleet machinees
-  const resp = await apiCall("GET", "/machinees");
-  const data = await jsonResult<{ machinees: { name: string; state: string }[] }>(resp);
-  const matches = data.machinees
+  // Find fleet machines
+  const resp = await apiCall("GET", "/machines");
+  const data = await jsonResult<{ machines: { name: string; state: string }[] }>(resp);
+  const matches = data.machines
     .filter((s) => s.name.startsWith(`${prefix}-`) && s.state === "running")
     .sort((a, b) => a.name.localeCompare(b.name));
 
   if (matches.length === 0) {
-    die(`No running machinees matching prefix "${prefix}".`);
+    die(`No running machines matching prefix "${prefix}".`);
   }
 
   // Build exec body
@@ -5117,7 +5117,7 @@ async function cmdFleetExec(prefix: string, cmd: string, args: string[]) {
   console.log(`Executing on ${matches.length} machine(es)...`);
   const results = await Promise.allSettled(
     matches.map(async (s) => {
-      const r = await apiCall("POST", `/machinees/${s.name}/exec`, body, clientTimeout);
+      const r = await apiCall("POST", `/machines/${s.name}/exec`, body, clientTimeout);
       const d = await jsonResult<{ exit_code?: number; exitCode?: number; stdout: string; stderr: string }>(r);
       return { name: s.name, ...d, exit_code: d.exit_code ?? d.exitCode ?? -1 };
     }),
@@ -5198,13 +5198,13 @@ async function cmdDashboard() {
   Deno.stdin.setRaw(true);
 
   const refresh = async () => {
-    let machinees: Record<string, unknown>[] = [];
+    let machines: Record<string, unknown>[] = [];
     let serverUp = false;
     let healthData: Record<string, unknown> = {};
     try {
-      const resp = await apiCall("GET", "/machinees");
+      const resp = await apiCall("GET", "/machines");
       const data = await resp.json();
-      machinees = data.machinees ?? [];
+      machines = data.machines ?? [];
       serverUp = true;
     } catch { /* server may be down */ }
 
@@ -5235,8 +5235,8 @@ async function cmdDashboard() {
     const metaMap = new Map(metas.map(m => [m.name, m]));
 
     const lines: string[] = [];
-    const running = machinees.filter(s => s.state === "Running").length;
-    const stopped = machinees.length - running;
+    const running = machines.filter(s => s.state === "Running").length;
+    const stopped = machines.length - running;
     const sessionUp = fmtUptime(new Date(startTime).toISOString());
     const provider = String(healthData.provider ?? "local");
 
@@ -5254,12 +5254,12 @@ async function cmdDashboard() {
     lines.push(midBorder);
 
     lines.push(boxLine(`${ANSI.bold}SANDBOXES${ANSI.reset}`, W));
-    if (machinees.length === 0) {
-      lines.push(boxLine(`${ANSI.dim}(no machinees)${ANSI.reset}`, W));
+    if (machines.length === 0) {
+      lines.push(boxLine(`${ANSI.dim}(no machines)${ANSI.reset}`, W));
     } else {
       const hdr = "NAME".padEnd(16) + "STATUS".padEnd(14) + "STARTER".padEnd(14) + "UPTIME".padEnd(10) + "PID";
       lines.push(boxLine(`${ANSI.dim}${hdr}${ANSI.reset}`, W));
-      for (const s of machinees.slice(0, 10)) {
+      for (const s of machines.slice(0, 10)) {
         const name = String(s.name ?? "").slice(0, 15).padEnd(16);
         const icon = statusIcon(String(s.state ?? "unknown"));
         const iconPad = " ".repeat(Math.max(0, 14 - statusVisLen(String(s.state ?? "unknown"))));
@@ -5339,7 +5339,7 @@ async function cmdDashboard() {
 // ---------------------------------------------------------------------------
 
 function usage(): never {
-  console.log(`smolctl — manage smolvm machinees
+  console.log(`smolctl — manage smolvm machines
 
 USAGE:
   smolctl <command> [args...]
@@ -5350,7 +5350,7 @@ AUTH:
   auth logout                    Clear stored tokens from .env
 
 SANDBOX LIFECYCLE:
-  ls                             List all machinees
+  ls                             List all machines
   create <name> [flags]          Create a machine
     --cpus <n>                     CPU count (default: 2)
     --memory <mb>                  Memory in MB (default: 1024)
@@ -5373,7 +5373,7 @@ SANDBOX LIFECYCLE:
     --label key=value              Set metadata label (repeatable)
     --owner <name>                 Set machine owner
   down <name> [--force]          Stop + delete (checks for uncommitted work)
-  prune                          Stop + delete ALL machinees
+  prune                          Stop + delete ALL machines
 
 EXECUTION:
   exec <name> <cmd...> [flags]   Run a command (no shell)
@@ -5412,8 +5412,8 @@ FILE SYNC:
 
 CLONING & SNAPSHOTS:
   clone <name> <new-name>        Clone machine (APFS COW)
-  diff <name> <other>            Compare two machinees
-  merge <source> <target>        Merge files between machinees
+  diff <name> <other>            Compare two machines
+  merge <source> <target>        Merge files between machines
   snapshot push <name>           Export machine as snapshot
   snapshot ls                    List snapshots
   snapshot pull <snap> <name>    Restore snapshot to new machine
@@ -5487,10 +5487,10 @@ SESSION RECORDING:
   session rm <name>              Delete session recording
 
 FLEET (batch orchestration):
-  fleet up <prefix> <N> [flags]  Create + start N machinees (prefix-0..N-1)
+  fleet up <prefix> <N> [flags]  Create + start N machines (prefix-0..N-1)
                                    Accepts same flags as 'create'
-  fleet down <prefix>            Stop + delete all machinees with prefix
-  fleet ls [prefix]              List fleet machinees (or all if no prefix)
+  fleet down <prefix>            Stop + delete all machines with prefix
+  fleet ls [prefix]              List fleet machines (or all if no prefix)
   fleet exec <prefix> <cmd>      Exec shell cmd across all running fleet members
     --env KEY=VALUE                Set env var (repeatable)
     --workdir /path                Working directory
@@ -5536,7 +5536,7 @@ CODE SIGNING:
 POOL (multi-node management):
   pool add <name> <url> [flags]  Add a node to the pool
     --token <token>                Bearer token for auth
-    --max <n>                      Max machinees on this node
+    --max <n>                      Max machines on this node
   pool rm <name>                 Remove a node from the pool
   pool ls                        List nodes with status, machine count
   pool status                    Show aggregate pool stats
@@ -5557,7 +5557,7 @@ PROVIDERS:
   provider rm <name>             Remove a provider
 
 MONITORING:
-  dashboard                      Live TUI with machinees, events, jobs
+  dashboard                      Live TUI with machines, events, jobs
   stats <name>                   Resource stats (CPU, memory, disk)
   logs <name> [--no-follow]      Stream machine logs
   metrics                        Prometheus metrics (raw)
@@ -6006,7 +6006,7 @@ try {
         const meta = await loadMeta(rest[0]);
         if (meta) {
           // Write identity to machine
-          const identResp = await apiCall("POST", `/machinees/${rest[0]}/exec`, {
+          const identResp = await apiCall("POST", `/machines/${rest[0]}/exec`, {
             command: ["sh", "-c", `cat /etc/smolvm.json 2>/dev/null || echo '${JSON.stringify(meta).replace(/'/g, "'\\''")}'`],
             timeout_secs: 5,
           }, 10_000);
@@ -6014,7 +6014,7 @@ try {
           console.log(data.stdout.trim());
         } else {
           // Fallback: just show server info
-          const infoResp = await apiCall("GET", `/machinees/${rest[0]}`);
+          const infoResp = await apiCall("GET", `/machines/${rest[0]}`);
           const data = await jsonResult<Record<string, unknown>>(infoResp);
           console.log(JSON.stringify({ name: data.name, state: data.state }, null, 2));
         }
@@ -6409,7 +6409,7 @@ try {
           const grantToken = flag(pf, "token");
           const role = flag(pf, "role");
           if (!grantToken || !role) die("usage: smolctl permission grant <machine> --token <token> --role <owner|operator|readonly>");
-          const resp = await apiCall("POST", `/machinees/${name}/permissions`, { token: grantToken, role });
+          const resp = await apiCall("POST", `/machines/${name}/permissions`, { token: grantToken, role });
           const data = await jsonResult<{ message: string }>(resp);
           console.log(data.message);
           break;
@@ -6418,7 +6418,7 @@ try {
         case "list": {
           const name = rest[1];
           if (!name) die("usage: smolctl permission ls <machine>");
-          const resp = await apiCall("GET", `/machinees/${name}/permissions`);
+          const resp = await apiCall("GET", `/machines/${name}/permissions`);
           const data = await jsonResult<{ machine: string; permissions: Array<{ token_hash: string; role: string }> }>(resp);
           if (data.permissions.length === 0) {
             console.log(`No permissions set on machine '${name}' (RBAC not active)`);
@@ -6431,7 +6431,7 @@ try {
           const name = rest[1];
           const tokenHash = rest[2];
           if (!name || !tokenHash) die("usage: smolctl permission revoke <machine> <token-hash>");
-          const resp = await apiCall("DELETE", `/machinees/${name}/permissions/${tokenHash}`);
+          const resp = await apiCall("DELETE", `/machines/${name}/permissions/${tokenHash}`);
           const data = await jsonResult<{ message: string }>(resp);
           console.log(data.message);
           break;

@@ -190,7 +190,7 @@ What smolvm itself should add to support this:
 |---|---|---|---|
 | Local agent dev/test | **YES, today** | Already works | Best-in-class boot + free |
 | Production agent fleet | **YES, with work** | 3-6 months | Needs checkpoints, starters, file API |
-| CI/CD machinees | **YES, with work** | 2-3 months | Needs port mapping fix, file I/O |
+| CI/CD machines | **YES, with work** | 2-3 months | Needs port mapping fix, file I/O |
 | Multi-tenant hosting | **YES** | Orchestration layer on top | smolvm provides VM isolation; orchestrator handles auth/billing/secrets |
 | Edge compute | **NO** | Separate product | Needs cloud hosting |
 | General-purpose local VMs | **YES, today** | Minor polish | Already the best local VM tool |
@@ -323,7 +323,7 @@ Fix what's broken. These are alpha bugs, not missing features.
 
 ### Tier 2 — Feature Parity (Months 2–4)
 
-Match cloud machinees on core capabilities.
+Match cloud machines on core capabilities.
 
 #### 2a. Checkpoint/Restore (CRITICAL)
 
@@ -672,7 +672,7 @@ workload — it's a general-purpose local VM platform.
 | **ML experiments** | Small-scale training, model evaluation | Free GPU passthrough (future) |
 | **CI/CD** | Run tests in isolated environments | Fast boot, clean teardown |
 | **Browser automation** | Playwright/Puppeteer + headless Chromium | Proven on smolvm (smolvm-manager) |
-| **Database machinees** | Spin up PostgreSQL/SQLite for testing | Checkpoint before migration, restore on failure |
+| **Database machines** | Spin up PostgreSQL/SQLite for testing | Checkpoint before migration, restore on failure |
 | **Security research** | Malware analysis in isolated VMs | Hardware-level isolation |
 | **Education** | Disposable learning environments | Free, no cloud account needed |
 | **API development** | Run mock servers, test integrations | Port mapping (once fixed) |

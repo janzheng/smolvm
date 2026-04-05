@@ -32,7 +32,7 @@ Tested 2026-02-26 on macOS Apple Silicon.
 
 ### REST API via `smolvm serve`
 
-The biggest positive surprise. Full HTTP CRUD for machinees, microVMs,
+The biggest positive surprise. Full HTTP CRUD for machines, microVMs,
 containers, and images. OpenAPI 3.1 spec + Swagger UI included. Endpoints
 are clean, responses are predictable, error handling is reasonable.
 
@@ -58,8 +58,8 @@ missing in the pre-evaluation docs — it works.
 
 ### Cross-Machine Parallelism
 
-Three machinees sleeping 1s each complete in 1011ms total — truly parallel.
-This means fleet orchestration works: create N machinees, run tasks across
+Three machines sleeping 1s each complete in 1011ms total — truly parallel.
+This means fleet orchestration works: create N machines, run tasks across
 them concurrently.
 
 ### Persistence
@@ -101,7 +101,7 @@ path error.
 ### Within-Machine Parallelism (1 test failure)
 
 Exec calls to the same machine are serialized. Three 1-second sleeps take
-3043ms. Use multiple machinees for parallelism instead.
+3043ms. Use multiple machines for parallelism instead.
 
 ---
 

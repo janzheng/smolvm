@@ -24,11 +24,11 @@ to the host filesystem. The host disk files are immutable bases.
 
 ### For existing full snapshots
 Full snapshots archive the immutable base disk files. These are identical across
-all machinees created from the same OCI image. **Live VM state (installed
+all machines created from the same OCI image. **Live VM state (installed
 packages, written files) is stored in libkrun's COW layer, NOT in the host
 disk files.**
 
-Snapshots "work" because pulled machinees boot from the same base overlay,
+Snapshots "work" because pulled machines boot from the same base overlay,
 which already contains init_commands effects (packages installed at creation
 time). But **modifications made after creation (runtime installs, file writes)
 are NOT captured in snapshot archives**.
@@ -61,7 +61,7 @@ init_commands (at creation) rather than during runtime.
    host disk file.
 
 2. **Different init_commands** — to capture different states, create different
-   machinees with different init_commands rather than snapshotting live state.
+   machines with different init_commands rather than snapshotting live state.
 
 ## Upstream Fix Needed
 

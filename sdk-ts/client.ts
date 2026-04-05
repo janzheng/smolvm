@@ -131,8 +131,8 @@ export class SmolvmHttpClient {
 
   async listMachines(): Promise<MachineInfo[]> {
     const resp = await this.request("GET", "/machines");
-    const data = await this.json<{ machinees: MachineInfo[] }>(resp);
-    return data.machinees;
+    const data = await this.json<{ machines: MachineInfo[] }>(resp);
+    return data.machines;
   }
 
   async machineStats(name: string): Promise<ResourceStats> {

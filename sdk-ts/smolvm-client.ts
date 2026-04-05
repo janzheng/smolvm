@@ -2,7 +2,7 @@
  * smolvm TypeScript SDK — SmolvmClient
  *
  * Top-level client. The main entry point for the SDK.
- * Creates machinees, microvms, and fleets.
+ * Creates machines, microvms, and fleets.
  */
 
 import { SmolvmHttpClient } from "./client.ts";
@@ -110,7 +110,7 @@ export class SmolvmClient {
 
   /**
    * Create a new MicroVM (persistent VM).
-   * MicroVMs use a different REST schema than machinees.
+   * MicroVMs use a different REST schema than machines.
    */
   async createMicroVM(name: string, opts?: CreateMicroVMOptions): Promise<MicroVM> {
     await this.http.createMicroVM({
@@ -182,7 +182,7 @@ export class SmolvmClient {
   // --------------------------------------------------------------------------
 
   /**
-   * Create a fleet of machinees. All are created and started.
+   * Create a fleet of machines. All are created and started.
    * Names: `{prefix}-0`, `{prefix}-1`, ...
    *
    * @example

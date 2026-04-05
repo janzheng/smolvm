@@ -1,5 +1,5 @@
 #!/bin/sh
-# Built-in exec MCP server for smolvm machinees.
+# Built-in exec MCP server for smolvm machines.
 # Runs inside a VM — JSON-RPC 2.0 over newline-delimited stdio.
 # Requires: sh, jq
 

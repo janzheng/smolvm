@@ -1,6 +1,6 @@
 # Remote Access via Cloudflare Tunnel
 
-Access your smolvm server from anywhere using a Cloudflare tunnel. One tunnel serves all machinees through the central REST API.
+Access your smolvm server from anywhere using a Cloudflare tunnel. One tunnel serves all machines through the central REST API.
 
 ## Prerequisites
 

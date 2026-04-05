@@ -44,7 +44,7 @@ All fields except `name` are optional. `from_starter` pulls a pre-built image
 and applies its defaults (see Starters below).
 
 ### `GET /api/v1/machines`
-List all machinees.
+List all machines.
 
 ### `GET /api/v1/machines/:id`
 Get machine details (state, pid, mounts, ports, resources).
@@ -145,7 +145,7 @@ Fork a machine's filesystem.
 ```
 
 ### `GET /api/v1/machines/:id/diff/:other`
-Compare two machinees. Returns `{ differences: [...], identical: bool }`.
+Compare two machines. Returns `{ differences: [...], identical: bool }`.
 
 ### `POST /api/v1/machines/:id/merge/:target`
 Merge files from source into target.
@@ -221,7 +221,7 @@ List pulled OCI images in a machine.
 
 ## MicroVMs
 
-Persistent VMs with more control (separate from machinees).
+Persistent VMs with more control (separate from machines).
 
 ### `POST /api/v1/microvms`
 ```json

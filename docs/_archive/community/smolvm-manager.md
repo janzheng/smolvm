@@ -168,7 +168,7 @@ We didn't discover this in CX04 because we never set up SSH.
 ### MicroVM, Not Machine
 
 They explicitly chose microVM mode over machine mode because:
-> "machinees have a known overlayfs bug that prevents filesystem writes
+> "machines have a known overlayfs bug that prevents filesystem writes
 > (like `apk add` or `npm install`)"
 
 This matches our finding that volume mounts are buggy. MicroVMs write

@@ -146,10 +146,10 @@ console.log("\nFleet Operations:");
   // State isolation
   await fleet.execAll("echo unique > /tmp/id.txt");
   await Promise.all(
-    fleet.machinees.map((s, i) => s.sh(`echo marker-${i} > /tmp/id.txt`)),
+    fleet.machines.map((s, i) => s.sh(`echo marker-${i} > /tmp/id.txt`)),
   );
   const reads = await Promise.all(
-    fleet.machinees.map((s) => s.sh("cat /tmp/id.txt")),
+    fleet.machines.map((s) => s.sh("cat /tmp/id.txt")),
   );
   const isolated = reads.every((r, i) => r.stdout.trim() === `marker-${i}`);
   test("State isolation across fleet", isolated);
@@ -186,8 +186,8 @@ console.log("\nMicroVM:");
 // --- List ---
 console.log("\nList Operations:");
 {
-  const machinees = await client.list();
-  test("list() returns array", Array.isArray(machinees));
+  const machines = await client.list();
+  test("list() returns array", Array.isArray(machines));
 
   const vms = await client.listMicroVMs();
   test("listMicroVMs() returns array", Array.isArray(vms));

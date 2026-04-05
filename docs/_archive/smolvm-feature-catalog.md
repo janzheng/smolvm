@@ -76,7 +76,7 @@ GET /health → { status: "ok", version: "0.1.16" }
 
 ```
 POST   /api/v1/machines                     — Create machine
-GET    /api/v1/machines                     — List machinees
+GET    /api/v1/machines                     — List machines
 GET    /api/v1/machines/{name}              — Get machine info
 POST   /api/v1/machines/{name}/start        — Start machine
 POST   /api/v1/machines/{name}/stop         — Stop machine
@@ -184,7 +184,7 @@ POST   /api/v1/machines/{name}/containers/{id}/exec  — Exec in container
 
 | Phase | Time | What |
 |-------|------|------|
-| CREATE | 0.8s | POST /machinees + start |
+| CREATE | 0.8s | POST /machines + start |
 | BOOTSTRAP | 7.0s | apk add git curl nodejs npm |
 | WORK | 0.07s | sed + node test |
 | EXTRACT | 0.04s | git diff + cat |
@@ -317,7 +317,7 @@ Updated priority list based on actual testing:
 
 Items 1-3 are documentation/bug fixes that would dramatically improve the
 developer experience. Items 4-5 would make smolvm competitive with cloud
-machinees for agent workloads.
+machines for agent workloads.
 
 ---
 
@@ -330,7 +330,7 @@ local-first, open-source option with true VM isolation.
 The main blockers are fixable: volume mounts need debugging, the REST API
 needs documentation, and the fake SDK references need removing. With those
 fixes plus checkpoint/restore, smolvm becomes the obvious choice for local
-agent development before deploying to cloud machinees for production.
+agent development before deploying to cloud machines for production.
 
 **Today's workflow (works):**
 

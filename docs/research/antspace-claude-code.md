@@ -17,7 +17,7 @@ Antspace is essentially what we're building with smolvm — but owned by Anthrop
 | Firecracker microVMs | libkrun microVMs | Same isolation philosophy, different hypervisor |
 | `environment-runner` (Go binary) | smolvm API server (Deno) | Container lifecycle manager |
 | `process_api` as PID 1 | Our init process | Minimal init + API gateway |
-| WebSocket tunnel to control plane | cloudflared tunnel | Remote access to machinees |
+| WebSocket tunnel to control plane | cloudflared tunnel | Remote access to machines |
 | MCP tools for Supabase | MCP tools (planned) | Tool exposure to agents |
 | BYOC (bring your own cloud) | Self-hosted by design | We're BYOC-first |
 | Baku templates (Vite+React) | Generic container images | They're app-builder focused, we're agent-focused |
@@ -26,7 +26,7 @@ Antspace is essentially what we're building with smolvm — but owned by Anthrop
 
 1. **Minimal init is correct** — Antspace runs PID 1 as an epoll event loop monitoring child processes. No systemd, no sshd, no cron. We should stay minimal too.
 2. **API gateway on PID 1** — Their init process doubles as a WebSocket API gateway (`--addr 0.0.0.0:2024`). Consider whether our API surface should live at PID 1 level.
-3. **Session lifecycle hooks** — Pre-stop hooks check for uncommitted git changes, build errors, etc. before allowing teardown. Smart for agent machinees too.
+3. **Session lifecycle hooks** — Pre-stop hooks check for uncommitted git changes, build errors, etc. before allowing teardown. Smart for agent machines too.
 4. **Work polling model** — Agents poll for work, ack jobs, stream status via NDJSON. This is the dispatch model we need for multi-agent.
 5. **BYOC as first-class** — They support enterprise self-hosting with `environment-runner` in customer infra. Our model is inherently BYOC.
 
@@ -235,10 +235,10 @@ Detailed comparison of what Antspace does that smolvm doesn't yet.
 | **NDJSON status streaming** | All long operations stream status via `application/x-ndjson` (packaging → uploading → building → deploying → deployed) | Our API is request/response only. No streaming status for machine creation, file uploads, or agent runs. WebSocket exec streams stdout but no structured status. | High |
 | **Session lifecycle hooks** | Pre-stop hooks check: uncommitted git, build errors, TypeScript errors. Prevents accidental teardown of dirty state. | `smolctl down` just kills. No pre-teardown checks. Agent work can be lost. | High |
 | **Work polling + ack dispatch** | Agents poll a job queue (`/work`), ack jobs, report status. Decoupled producer/consumer. | Our agent dispatch is imperative — `agent run` blocks until done. No job queue, no ack, no retry on failure. | High |
-| **MCP server inside machine** | First-class MCP servers run inside the VM (supabase, codesign). Agents get tools automatically. | No MCP integration. Agents in machinees can't expose or consume MCP tools. | High |
+| **MCP server inside machine** | First-class MCP servers run inside the VM (supabase, codesign). Agents get tools automatically. | No MCP integration. Agents in machines can't expose or consume MCP tools. | High |
 | **Session recording** | `session/` package records all activity for replay/audit. | No session recording. Can't replay what an agent did. | Medium |
 | **Resume-cached sessions** | BYOC default is `resume-cached` — fastest restart, state reuse across sessions. | Machinees persist but no "session resume" concept. No warm-start optimization. | Medium |
-| **Code/binary signing** | MCP codesign server verifies binaries before execution. | No trust verification for code pushed into machinees. | Medium |
+| **Code/binary signing** | MCP codesign server verifies binaries before execution. | No trust verification for code pushed into machines. | Medium |
 | **Distributed tracing** | OpenTelemetry integration for request tracing across services. | Prometheus metrics only. No distributed tracing, no request correlation. | Low |
 | **Deployment pipeline** | Full deploy flow: build locally → upload tar → stream status → live URL. | No deployment from machine. Machine is the end state, not a build step. | Low (different use case) |
 | **Template marketplace** | Baku templates for different app types. | Starters exist (claude-code, node-deno, python-ml, universal) but no template authoring or community templates. | Low |
@@ -252,6 +252,6 @@ Detailed comparison of what Antspace does that smolvm doesn't yet.
 | **Vendor-neutral** | Any LLM, any backend | Not locked to Anthropic's ecosystem |
 | **User-facing CLI** | Full smolctl with fleet, agent, sync | Developer-friendly; Antspace is purely API-driven internally |
 | **Secret proxy architecture** | vsock reverse proxy, keys never enter VM | More secure than Antspace's env-var injection |
-| **Fleet orchestration** | fleet up/down/exec/ls, agent fleet | Batch operations across many machinees |
+| **Fleet orchestration** | fleet up/down/exec/ls, agent fleet | Batch operations across many machines |
 | **File sync watch** | Bidirectional sync with debounce | Local dev with machine execution |
 | **Open architecture** | All components composable, swappable | Not a monolithic 27MB binary |

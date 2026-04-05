@@ -85,7 +85,7 @@ Promise.all([
   exec("machine-1", "sleep 1"),
 ])
 
-// Parallel (1s for 3x1s sleep) — use separate machinees
+// Parallel (1s for 3x1s sleep) — use separate machines
 Promise.all([
   exec("machine-1", "sleep 1"),
   exec("machine-2", "sleep 1"),
@@ -192,7 +192,7 @@ async function exec(
 
 ```typescript
 // 1. Create
-await apiPost("/machinees", {
+await apiPost("/machines", {
   name: "my-machine",
   resources: { cpus: 2, memory_mb: 2048, network: true },
 });
@@ -230,7 +230,7 @@ const FLEET_SIZE = 3;
 
 // Create sequentially (fast — 6ms each)
 for (let i = 0; i < FLEET_SIZE; i++) {
-  await apiPost("/machinees", {
+  await apiPost("/machines", {
     name: `agent-${i}`,
     resources: { cpus: 2, memory_mb: 2048, network: true },
   });
@@ -367,7 +367,7 @@ All three are manageable via the REST API.
 ### 10. MicroVM REST API Exists
 
 The `/api/v1/microvms` endpoints provide full CRUD + exec for persistent
-microVMs. The schema differs from machinees:
+microVMs. The schema differs from machines:
 
 ```json
 // Machine create — nested resources
@@ -378,7 +378,7 @@ microVMs. The schema differs from machinees:
 ```
 
 Note: `memory_mb` (machine) vs `memoryMb` (microVM). The microVM API also
-exposes `overlay_gb` and `storage_gb` params that machinees don't have.
+exposes `overlay_gb` and `storage_gb` params that machines don't have.
 
 ### 11. `overlay_gb` Works — But Needs `resize2fs`
 

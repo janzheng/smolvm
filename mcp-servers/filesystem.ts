@@ -1,7 +1,7 @@
 #!/usr/bin/env -S deno run --allow-read --allow-write --allow-env
 
 /**
- * Built-in filesystem MCP server for smolvm machinees.
+ * Built-in filesystem MCP server for smolvm machines.
  *
  * Runs inside a VM and exposes filesystem tools via MCP protocol
  * (JSON-RPC 2.0 over stdio, newline-delimited).

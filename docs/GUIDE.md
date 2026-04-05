@@ -11,7 +11,7 @@ Fork, snapshot, merge — like git, but for entire machines.
 - [Files & Folders](#files--folders)
 - [Snapshots](#snapshots)
 - [Clone, Diff, Merge](#clone-diff-merge)
-- [Fleet (Parallel Machinees)](#fleet-parallel-machinees)
+- [Fleet (Parallel Machinees)](#fleet-parallel-machines)
 - [Running Agents](#running-agents)
 - [Secrets](#secrets)
 - [Remote Access](#remote-access)
@@ -101,7 +101,7 @@ smolctl sh my-vm "npm run build" --timeout 120
 ### Check Status
 
 ```bash
-smolctl ls                 # List all machinees
+smolctl ls                 # List all machines
 smolctl info my-vm         # Detailed JSON info
 smolctl stats my-vm        # CPU, memory, disk usage
 smolctl logs my-vm         # Stream stdout/stderr
@@ -281,7 +281,7 @@ smolctl clone my-vm my-vm-fork
 ### Diff
 
 ```bash
-# Compare workspaces between two machinees
+# Compare workspaces between two machines
 smolctl diff my-vm my-vm-fork
 
 # Or using git diff (line-level)
@@ -313,12 +313,12 @@ smolctl git commit my-vm -m "save progress"
 
 ## Fleet (Parallel Machinees)
 
-Run the same task across many machinees at once.
+Run the same task across many machines at once.
 
 ### Create a Fleet
 
 ```bash
-# Create 5 machinees named worker-0 through worker-4
+# Create 5 machines named worker-0 through worker-4
 smolctl fleet up worker 5 --cpus 2 --memory 1024
 ```
 
@@ -354,7 +354,7 @@ smolctl fleet down worker
 
 ## Running Agents
 
-Run Claude Code (or other AI agents) inside machinees with controlled
+Run Claude Code (or other AI agents) inside machines with controlled
 permissions.
 
 ### Basic Agent Run
@@ -405,7 +405,7 @@ smolctl agent collect agents ./results
 
 ## Secrets
 
-Secrets are injected into machinees via a reverse proxy — the actual API key
+Secrets are injected into machines via a reverse proxy — the actual API key
 never enters the VM. The VM sees a local proxy endpoint instead.
 
 ### Register Secrets
@@ -440,7 +440,7 @@ smolctl secret update --secret anthropic=sk-ant-NEW-KEY
 
 ## Remote Access
 
-Access your machinees from anywhere via Cloudflare tunnel.
+Access your machines from anywhere via Cloudflare tunnel.
 
 ### Quick Setup
 
@@ -483,7 +483,7 @@ smolvm serve start --web-ui ./web-ui
 Features:
 - Live machine list with status indicators
 - Interactive terminal (ghostty-web) — open a shell in any machine
-- Create, start, stop, delete machinees from the browser
+- Create, start, stop, delete machines from the browser
 
 There's also a terminal dashboard:
 
@@ -628,9 +628,9 @@ smolctl up my-vm --setup "apk add git" --setup "git clone https://github.com/me/
 | `start <name>` | Start a stopped machine |
 | `stop <name>` | Stop a running machine |
 | `rm <name> [--force]` | Delete a machine |
-| `ls` | List all machinees |
+| `ls` | List all machines |
 | `info <name>` | Detailed machine info (JSON) |
-| `prune` | Delete ALL machinees |
+| `prune` | Delete ALL machines |
 | `resume <name>` | Reconnect to cached machine |
 
 ### Execution
@@ -684,8 +684,8 @@ smolctl up my-vm --setup "apk add git" --setup "git clone https://github.com/me/
 | Command | Description |
 |---------|-------------|
 | `clone <name> <new>` | Clone machine (CoW) |
-| `diff <name> <other>` | Compare machinees |
-| `merge <source> <target>` | Merge machinees |
+| `diff <name> <other>` | Compare machines |
+| `merge <source> <target>` | Merge machines |
 | `git status/log/commit/init` | Git inside machine |
 | `git diff <src> <tgt>` | Line-level diff |
 | `git merge <src> <tgt>` | Three-way merge |
@@ -694,7 +694,7 @@ smolctl up my-vm --setup "apk add git" --setup "git clone https://github.com/me/
 
 | Command | Description |
 |---------|-------------|
-| `fleet up <prefix> <N>` | Create N machinees |
+| `fleet up <prefix> <N>` | Create N machines |
 | `fleet down <prefix>` | Delete all with prefix |
 | `fleet ls [prefix]` | List fleet members |
 | `fleet exec <prefix> <cmd>` | Run on all |

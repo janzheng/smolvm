@@ -19,8 +19,8 @@ const { test, summary } = createReporter();
 // ============================================================================
 
 async function cleanupMachine() {
-  try { await apiPost(`/machinees/${MACHINE_NAME}/stop`); } catch { /* */ }
-  try { await apiDelete(`/machinees/${MACHINE_NAME}`); } catch { /* */ }
+  try { await apiPost(`/machines/${MACHINE_NAME}/stop`); } catch { /* */ }
+  try { await apiDelete(`/machines/${MACHINE_NAME}`); } catch { /* */ }
 }
 
 // ============================================================================
@@ -47,7 +47,7 @@ console.log("Health Check:");
 console.log("\nMachine Lifecycle:");
 const t0 = performance.now();
 {
-  const resp = await apiPost("/machinees", {
+  const resp = await apiPost("/machines", {
     name: MACHINE_NAME,
     resources: { cpus: 2, memory_mb: 1024, network: true },
   });
@@ -60,7 +60,7 @@ const t0 = performance.now();
 // --- Start machine ---
 const tStartBegin = performance.now();
 {
-  const resp = await apiPost(`/machinees/${MACHINE_NAME}/start`);
+  const resp = await apiPost(`/machines/${MACHINE_NAME}/start`);
   const data = await resp.json();
   const startMs = Math.round(performance.now() - tStartBegin);
   test("Start machine", resp.ok, `status=${resp.status}`);
@@ -133,7 +133,7 @@ console.log("\nWorkdir:");
 // --- Get machine info ---
 console.log("\nMachine Info:");
 {
-  const resp = await apiGet(`/machinees/${MACHINE_NAME}`);
+  const resp = await apiGet(`/machines/${MACHINE_NAME}`);
   const info: MachineInfo = await resp.json();
   test("Get machine info", resp.ok);
   test("State still running", info.state === "running");
@@ -141,12 +141,12 @@ console.log("\nMachine Info:");
   console.log(`     📋 Resources: ${JSON.stringify(info.resources)}`);
 }
 
-// --- List machinees ---
+// --- List machines ---
 {
-  const resp = await apiGet("/machinees");
+  const resp = await apiGet("/machines");
   const data = await resp.json();
-  test("List machinees", resp.ok && data.machinees.length > 0);
-  const found = data.machinees.find((s: MachineInfo) => s.name === MACHINE_NAME);
+  test("List machines", resp.ok && data.machines.length > 0);
+  const found = data.machines.find((s: MachineInfo) => s.name === MACHINE_NAME);
   test("Our machine in list", !!found);
 }
 
@@ -178,13 +178,13 @@ console.log("\nRuntime Detection:");
 // --- Stop + Delete ---
 console.log("\nCleanup:");
 {
-  const stopResp = await apiPost(`/machinees/${MACHINE_NAME}/stop`);
+  const stopResp = await apiPost(`/machines/${MACHINE_NAME}/stop`);
   test("Stop machine", stopResp.ok, `status=${stopResp.status}`);
 
-  const delResp = await apiDelete(`/machinees/${MACHINE_NAME}`);
+  const delResp = await apiDelete(`/machines/${MACHINE_NAME}`);
   test("Delete machine", delResp.ok, `status=${delResp.status}`);
 
-  const getResp = await apiGet(`/machinees/${MACHINE_NAME}`);
+  const getResp = await apiGet(`/machines/${MACHINE_NAME}`);
   test("Machine deleted (404)", getResp.status === 404);
 }
 

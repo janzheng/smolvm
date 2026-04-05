@@ -21,9 +21,9 @@ Antspace validates our architecture but ships 6 capabilities we lack. Without th
 **1. MCP servers in machine (highest leverage)**
 Antspace runs MCP servers (supabase, codesign) inside the VM as part of lifecycle. Agents get tools automatically — no configuration, no setup. This is what makes their machine a *platform*: the agent boots and can immediately discover what it can do.
 
-Our machinees are blind — agents exec into them but have no tool discovery. Adding MCP means any MCP-compatible agent (Claude Code, Cursor, custom) connects and works. This is the core differentiator for "we own the stack."
+Our machines are blind — agents exec into them but have no tool discovery. Adding MCP means any MCP-compatible agent (Claude Code, Cursor, custom) connects and works. This is the core differentiator for "we own the stack."
 
-Implementation: MCP server runner as part of machine lifecycle → built-in servers (fs, exec, git) → MCP proxy to expose to host/other machinees.
+Implementation: MCP server runner as part of machine lifecycle → built-in servers (fs, exec, git) → MCP proxy to expose to host/other machines.
 
 **2. NDJSON status streaming (foundation for everything else)**
 Every long operation in Antspace streams structured status: `packaging → uploading → building → deploying → deployed`. Our API is request/response — long operations are black boxes.
@@ -50,7 +50,7 @@ They record all activity for replay. We have no visibility into what an agent di
 Implementation: Log exec calls, file ops, API calls per machine → replay view.
 
 **6. Machine identity (foundation for RBAC)**
-`/whoami` — machinees know who they are: name, owner, labels. Ours are anonymous.
+`/whoami` — machines know who they are: name, owner, labels. Ours are anonymous.
 
 Implementation: Identity endpoint → metadata on create → RBAC levels (owner, read-only, exec-only).
 
@@ -81,7 +81,7 @@ Items 1-2 are infrastructure (small, focused). Item 3 is the landmark feature. I
 - Add `Accept: application/x-ndjson` header support to Rust server
 - Status enum: `Queued | Preparing | Running | Completed | Failed`
 - Each status line: `{"status": "running", "message": "...", "progress": 0.5, "ts": "..."}\n`
-- Apply to: `POST /machinees` (create), `POST /machines/:id/exec` (long-running), fleet operations
+- Apply to: `POST /machines` (create), `POST /machines/:id/exec` (long-running), fleet operations
 - CLI: `smolctl` renders streaming lines as progress updates
 - SDKs: async iterator / generator yielding status objects
 

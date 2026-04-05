@@ -12,11 +12,11 @@ Start stacking pressure.
 
 ## Dimensions to stress
 
-### Concurrency: many machinees
-- Create machinees in a loop. 5, 10, 20, 50. Where does it slow down? Where
+### Concurrency: many machines
+- Create machines in a loop. 5, 10, 20, 50. Where does it slow down? Where
   does it fail? What's the error?
-- Create 10 machinees and exec a command in all of them simultaneously
-- List machinees when there are 50 of them. Is the response still fast?
+- Create 10 machines and exec a command in all of them simultaneously
+- List machines when there are 50 of them. Is the response still fast?
 
 ### Payload: big data
 - Write increasingly large files: 1KB, 100KB, 1MB, 10MB, 100MB. Where does
@@ -32,7 +32,7 @@ Start stacking pressure.
 - Leave a machine idle for an hour. Is it still there? Does it still work?
 
 ### Speed: rapid operations
-- Create and delete machinees in a tight loop for 60 seconds. Does the server
+- Create and delete machines in a tight loop for 60 seconds. Does the server
   leak resources? Does it crash?
 - Exec 100 quick commands (`echo $RANDOM`) in rapid succession on one machine.
   Any dropped or garbled responses?
@@ -46,8 +46,8 @@ Start stacking pressure.
 - Check `stats` endpoint during load. Are the numbers realistic?
 
 ### Recovery: failure modes
-- Kill the server while machinees are running. Restart it. What state are
-  the machinees in? Can you recover them?
+- Kill the server while machines are running. Restart it. What state are
+  the machines in? Can you recover them?
 - Kill a machine's VM process directly (`kill -9`). Does the server notice?
   Does it clean up?
 - Fill the host's disk. What happens to machine creation? To snapshots?
@@ -57,7 +57,7 @@ Start stacking pressure.
 
 For each limit you find, note:
 - **What broke**: exact error or behavior
-- **At what scale**: number of machinees, file size, etc.
+- **At what scale**: number of machines, file size, etc.
 - **Is it graceful**: clean error message or crash/hang?
 - **Is it configurable**: can the limit be raised?
 

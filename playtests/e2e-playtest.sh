@@ -306,15 +306,15 @@ hr
 for i in 1 2 3; do cleanup "pt-fleet-$i"; done
 
 # 6.1 Fleet up
-check "Fleet up (3 machinees)" $SMOLCTL fleet up pt-fleet 3
+check "Fleet up (3 machines)" $SMOLCTL fleet up pt-fleet 3
 
 # 6.2 Fleet list
 FLEET_OUT=$($SMOLCTL fleet ls pt-fleet 2>&1) || true
 COUNT=$(echo "$FLEET_OUT" | grep -c "pt-fleet" || true)
 if [ "$COUNT" -ge 3 ]; then
-  pass "Fleet ls shows 3 machinees"
+  pass "Fleet ls shows 3 machines"
 else
-  fail "Fleet ls shows $COUNT machinees (expected 3)"
+  fail "Fleet ls shows $COUNT machines (expected 3)"
 fi
 
 # 6.3 Fleet exec

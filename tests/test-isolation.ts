@@ -1,7 +1,7 @@
 /**
  * CX04 smolvm — Isolation & Security Tests
  *
- * Tests that machinees are properly isolated:
+ * Tests that machines are properly isolated:
  * - Cross-machine filesystem isolation
  * - File API path traversal protection
  * - Network disabled by default
@@ -23,12 +23,12 @@ async function createAndStart(name: string, opts?: {
   resources?: Record<string, unknown>;
 }) {
   await cleanup(name);
-  const createResp = await apiPost("/machinees", {
+  const createResp = await apiPost("/machines", {
     name,
     resources: { cpus: 1, memory_mb: 512, ...opts?.resources },
   });
   if (!createResp.ok) throw new Error(`create failed: ${await createResp.text()}`);
-  const startResp = await apiPost(`/machinees/${name}/start`);
+  const startResp = await apiPost(`/machines/${name}/start`);
   if (!startResp.ok) throw new Error(`start failed: ${await startResp.text()}`);
   await sh(name, "echo ready");
 }
@@ -52,7 +52,7 @@ console.log("═══ 1. Cross-Machine Filesystem Isolation ═══\n");
   await createAndStart(nameA);
   await createAndStart(nameB);
 
-  // Note: machinees within the same VM share a rootfs overlay — only microvms get full isolation.
+  // Note: machines within the same VM share a rootfs overlay — only microvms get full isolation.
   // These tests verify /storage/workspace isolation (per-machine ext4 disk), not rootfs isolation.
   await sh(nameA, "echo 'SECRET_A_DATA' > /tmp/secret.txt");
   await sh(nameA, "echo 'SECRET_A_DATA' > /root/secret.txt");
@@ -60,14 +60,14 @@ console.log("═══ 1. Cross-Machine Filesystem Isolation ═══\n");
 
   const readTmp = await sh(nameB, "cat /tmp/secret.txt 2>&1 || echo 'NOT_FOUND'");
   if (readTmp.stdout.includes("SECRET_A_DATA")) {
-    skip("Machine B cannot see A's /tmp", "KNOWN: machinees share rootfs overlay — use microvms for full isolation");
+    skip("Machine B cannot see A's /tmp", "KNOWN: machines share rootfs overlay — use microvms for full isolation");
   } else {
     test("Machine B cannot see A's /tmp", true);
   }
 
   const readRoot = await sh(nameB, "cat /root/secret.txt 2>&1 || echo 'NOT_FOUND'");
   if (readRoot.stdout.includes("SECRET_A_DATA")) {
-    skip("Machine B cannot see A's /root", "KNOWN: machinees share rootfs overlay");
+    skip("Machine B cannot see A's /root", "KNOWN: machines share rootfs overlay");
   } else {
     test("Machine B cannot see A's /root", true);
   }
@@ -82,7 +82,7 @@ console.log("═══ 1. Cross-Machine Filesystem Isolation ═══\n");
   await sh(nameB, "echo 'SECRET_B_DATA' > /tmp/b-marker.txt");
   const readFromA = await sh(nameA, "cat /tmp/b-marker.txt 2>&1 || echo 'NOT_FOUND'");
   if (readFromA.stdout.includes("SECRET_B_DATA")) {
-    skip("Machine A cannot see B's files", "KNOWN: machinees share rootfs overlay");
+    skip("Machine A cannot see B's files", "KNOWN: machines share rootfs overlay");
   } else {
     test("Machine A cannot see B's files", true);
   }
@@ -138,16 +138,16 @@ console.log("\n═══ 3. Network Default Off ═══\n");
 {
   const name = "iso-no-net";
   await cleanup(name);
-  const createResp = await apiPost("/machinees", {
+  const createResp = await apiPost("/machines", {
     name,
     resources: { cpus: 1, memory_mb: 512 },
   });
   if (!createResp.ok) throw new Error(`create failed: ${await createResp.text()}`);
-  const startResp = await apiPost(`/machinees/${name}/start`);
+  const startResp = await apiPost(`/machines/${name}/start`);
   if (!startResp.ok) throw new Error(`start failed: ${await startResp.text()}`);
   await sh(name, "echo ready");
 
-  const infoResp = await apiGet(`/machinees/${name}`);
+  const infoResp = await apiGet(`/machines/${name}`);
   const info = await infoResp.json();
   test("Network flag is false by default", info.network === false);
 
@@ -175,7 +175,7 @@ console.log("\nNetwork with explicit enable:");
   const name = "iso-yes-net";
   await createAndStart(name, { resources: { cpus: 1, memory_mb: 512, network: true } });
 
-  const infoResp = await apiGet(`/machinees/${name}`);
+  const infoResp = await apiGet(`/machines/${name}`);
   const info = await infoResp.json();
   test("Network flag is true when requested", info.network === true);
 
@@ -193,7 +193,7 @@ console.log("\n═══ 4. File API Path Traversal ═══\n");
   const name = "iso-path-traversal";
   await createAndStart(name);
 
-  const probeResp = await apiPut(`/machinees/${name}/files/%2Ftmp%2Fprobe.txt`, {
+  const probeResp = await apiPut(`/machines/${name}/files/%2Ftmp%2Fprobe.txt`, {
     content: btoa("probe"),
   });
 
@@ -202,29 +202,29 @@ console.log("\n═══ 4. File API Path Traversal ═══\n");
   } else {
     test("Legitimate file write works", probeResp.ok, `status=${probeResp.status}`);
 
-    const readResp = await apiGet(`/machinees/${name}/files/%2Ftmp%2Fprobe.txt`);
+    const readResp = await apiGet(`/machines/${name}/files/%2Ftmp%2Fprobe.txt`);
     test("Legitimate file read works", readResp.ok, `status=${readResp.status}`);
 
-    const traversal1 = await apiGet(`/machinees/${name}/files/%2Ftmp%2F..%2Fetc%2Fpasswd`);
+    const traversal1 = await apiGet(`/machines/${name}/files/%2Ftmp%2F..%2Fetc%2Fpasswd`);
     test("Path traversal ../etc/passwd blocked", traversal1.status === 400 || traversal1.status === 403,
       `got status ${traversal1.status}`);
 
-    const traversal2 = await apiGet(`/machinees/${name}/files/%2Ftmp%2F..%2F..%2Fetc%2Fshadow`);
+    const traversal2 = await apiGet(`/machines/${name}/files/%2Ftmp%2F..%2F..%2Fetc%2Fshadow`);
     test("Path traversal ../../etc/shadow blocked", traversal2.status === 400 || traversal2.status === 403,
       `got status ${traversal2.status}`);
 
-    const traversal3 = await apiGet(`/machinees/${name}/files/%2Ftmp%2F..%252F..%252Fetc%252Fpasswd`);
+    const traversal3 = await apiGet(`/machines/${name}/files/%2Ftmp%2F..%252F..%252Fetc%252Fpasswd`);
     test("URL-encoded traversal blocked", traversal3.status === 400 || traversal3.status === 404,
       `got status ${traversal3.status}`);
 
-    const writeOutside = await apiPut(`/machinees/${name}/files/%2Ftmp%2F..%2F..%2Fetc%2Fcrontab`, {
+    const writeOutside = await apiPut(`/machines/${name}/files/%2Ftmp%2F..%2F..%2Fetc%2Fcrontab`, {
       content: btoa("* * * * * evil"),
     });
     test("Write to /etc/crontab via traversal blocked",
       writeOutside.status === 400 || writeOutside.status === 403,
       `got status ${writeOutside.status}`);
 
-    const nullByte = await apiGet(`/machinees/${name}/files/%2Ftmp%2Fprobe.txt%00.html`);
+    const nullByte = await apiGet(`/machines/${name}/files/%2Ftmp%2Fprobe.txt%00.html`);
     test("Null byte injection handled", nullByte.status !== 200 || !nullByte.ok,
       `got status ${nullByte.status}`);
   }
@@ -348,28 +348,28 @@ console.log("\n═══ 7. Exec User Context ═══\n");
 // =====================================================
 console.log("\n═══ 8. API Input Validation ═══\n");
 {
-  const emptyName = await apiPost("/machinees", { name: "" });
+  const emptyName = await apiPost("/machines", { name: "" });
   test("Rejects empty machine name", emptyName.status === 400, `got ${emptyName.status}`);
   if (!emptyName.bodyUsed) await emptyName.text();
 
-  const specialName = await apiPost("/machinees", { name: "../../../etc" });
+  const specialName = await apiPost("/machines", { name: "../../../etc" });
   test("Rejects path traversal in name", specialName.status === 400, `got ${specialName.status}`);
   if (!specialName.bodyUsed) await specialName.text();
 
-  const longName = await apiPost("/machinees", { name: "a".repeat(1000) });
+  const longName = await apiPost("/machines", { name: "a".repeat(1000) });
   test("Rejects very long name", longName.status === 400, `got ${longName.status}`);
   if (!longName.bodyUsed) await longName.text();
 
   const name = "iso-duplicate";
   await cleanup(name);
-  await apiPost("/machinees", { name });
-  const dupe = await apiPost("/machinees", { name });
+  await apiPost("/machines", { name });
+  const dupe = await apiPost("/machines", { name });
   test("Rejects duplicate machine name", dupe.status === 409 || dupe.status === 400,
     `got ${dupe.status}`);
   if (!dupe.bodyUsed) await dupe.text();
   await cleanup(name);
 
-  const noMachine = await apiPost("/machinees/nonexistent-xyz/exec", {
+  const noMachine = await apiPost("/machines/nonexistent-xyz/exec", {
     command: ["echo", "hello"],
   });
   test("Exec on nonexistent machine returns 404", noMachine.status === 404,
@@ -378,7 +378,7 @@ console.log("\n═══ 8. API Input Validation ═══\n");
 
   const API_TOKEN = Deno.env.get("SMOLVM_API_TOKEN");
   const authHeader: Record<string, string> = API_TOKEN ? { "Authorization": `Bearer ${API_TOKEN}` } : {};
-  const malformed = await fetch(`${API}/machinees`, {
+  const malformed = await fetch(`${API}/machines`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeader },
     body: "{not valid json",
@@ -387,7 +387,7 @@ console.log("\n═══ 8. API Input Validation ═══\n");
     `got ${malformed.status}`);
   if (!malformed.bodyUsed) await malformed.text();
 
-  const wrongType = await fetch(`${API}/machinees`, {
+  const wrongType = await fetch(`${API}/machines`, {
     method: "POST",
     headers: { "Content-Type": "text/plain", ...authHeader },
     body: JSON.stringify({ name: "test" }),
@@ -440,7 +440,7 @@ console.log("\n═══ 10. Process Exhaustion Protection ═══\n");
 {
   // SKIPPED: Fork bomb test consistently makes the server unresponsive.
   // This is itself a finding — no per-machine process limits are enforced.
-  // A machine can exhaust server resources, affecting all other machinees.
+  // A machine can exhaust server resources, affecting all other machines.
   skip("VM responsive after process spam",
     "SKIPPED: fork bomb crashes server — no per-machine process limits (see TODO.md)");
 }

@@ -35,7 +35,7 @@ const tCreateStart = performance.now();
 
 for (let i = 0; i < FLEET_SIZE; i++) {
   const name = `${PREFIX}-${i}`;
-  const createResp = await apiPost("/machinees", {
+  const createResp = await apiPost("/machines", {
     name,
     resources: { cpus: 1, memory_mb: 512, network: true },
   });
@@ -46,18 +46,18 @@ for (let i = 0; i < FLEET_SIZE; i++) {
   }
 }
 const createMs = Math.round(performance.now() - tCreateStart);
-test(`Created ${names.length}/${FLEET_SIZE} machinees`, names.length === FLEET_SIZE);
+test(`Created ${names.length}/${FLEET_SIZE} machines`, names.length === FLEET_SIZE);
 console.log(`  ⏱  Sequential create: ${createMs}ms (${Math.round(createMs / FLEET_SIZE)}ms/machine)`);
 
 // --- Parallel start ---
 console.log("\nFleet Start (parallel):");
 const tStartStart = performance.now();
 const startResults = await Promise.all(
-  names.map(name => apiPost(`/machinees/${name}/start`))
+  names.map(name => apiPost(`/machines/${name}/start`))
 );
 const startMs = Math.round(performance.now() - tStartStart);
 const allStarted = startResults.every(r => r.ok);
-test("All machinees started", allStarted);
+test("All machines started", allStarted);
 console.log(`  ⏱  Parallel start: ${startMs}ms (${Math.round(startMs / FLEET_SIZE)}ms/machine)`);
 
 for (const r of startResults) {
@@ -67,9 +67,9 @@ for (const r of startResults) {
 // --- Verify all running ---
 console.log("\nFleet Status:");
 {
-  const listResp = await apiGet("/machinees");
+  const listResp = await apiGet("/machines");
   const data = await listResp.json();
-  const fleetMachinees = data.machinees.filter((s: { name: string }) => s.name.startsWith(PREFIX));
+  const fleetMachinees = data.machines.filter((s: { name: string }) => s.name.startsWith(PREFIX));
   const allRunning = fleetMachinees.every((s: { state: string }) => s.state === "running");
   test(`All ${FLEET_SIZE} in list`, fleetMachinees.length === FLEET_SIZE);
   test("All state=running", allRunning);
@@ -123,9 +123,9 @@ for (const name of names) {
 const cleanMs = Math.round(performance.now() - tCleanStart);
 console.log(`  ⏱  Cleanup: ${cleanMs}ms (${Math.round(cleanMs / FLEET_SIZE)}ms/machine)`);
 
-const verifyResp = await apiGet("/machinees");
+const verifyResp = await apiGet("/machines");
 const verifyData = await verifyResp.json();
-const remaining = verifyData.machinees.filter((s: { name: string }) => s.name.startsWith(PREFIX));
-test("All machinees cleaned up", remaining.length === 0, `${remaining.length} remaining`);
+const remaining = verifyData.machines.filter((s: { name: string }) => s.name.startsWith(PREFIX));
+test("All machines cleaned up", remaining.length === 0, `${remaining.length} remaining`);
 
 summary();

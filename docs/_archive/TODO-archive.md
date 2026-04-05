@@ -31,7 +31,7 @@ These depend on upstream smolvm/libkrun fixes. Workarounds noted.
 Found via `deno task test-isolation`. See `docs/SECURITY.md` for full details.
 
 - [ ] **S01** VM can reach host API via TSI (CRITICAL) — UPSTREAM REQUIRED
-  - Machine with `network: true` can hit host port 8080, manage other machinees
+  - Machine with `network: true` can hit host port 8080, manage other machines
   - Root cause: libkrun TSI intercepts socket syscalls at kernel level, bypassing netfilter
   - iptables rules have no effect — TSI proxies before packets reach netfilter
   - Fix: requires libkrun/TSI layer to support port blocklist in proxy config

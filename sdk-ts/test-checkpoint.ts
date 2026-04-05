@@ -96,7 +96,7 @@ test("Checkpoint no longer in list", !stillExists);
 console.log("\nCleanup:");
 await machine.cleanup();
 await restored.cleanup();
-test("Both machinees cleaned up", true);
+test("Both machines cleaned up", true);
 
 // --- Summary ---
 console.log("\n==========================================");

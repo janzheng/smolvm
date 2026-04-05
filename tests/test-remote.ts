@@ -54,7 +54,7 @@ console.log("Auth Rejection:");
 
 {
   // Request with wrong token should be rejected
-  const resp = await fetch(`${API}/machinees`, {
+  const resp = await fetch(`${API}/machines`, {
     headers: { "Authorization": "Bearer wrong-token-xxx" },
     signal: AbortSignal.timeout(10_000),
   });
@@ -64,7 +64,7 @@ console.log("Auth Rejection:");
 
 {
   // Request with no token should be rejected
-  const resp = await fetch(`${API}/machinees`, {
+  const resp = await fetch(`${API}/machines`, {
     signal: AbortSignal.timeout(10_000),
   });
   test("No token → 401", resp.status === 401, `got status=${resp.status}`);
@@ -97,11 +97,11 @@ console.log("\nAuth Success:");
 
 {
   // Request with correct token should work
-  const resp = await apiGet("/machinees");
+  const resp = await apiGet("/machines");
   test("Correct token → 200", resp.ok, `got status=${resp.status}`);
   if (resp.ok) {
     const data = await resp.json();
-    test("Response has machinees array", Array.isArray(data.machinees));
+    test("Response has machines array", Array.isArray(data.machines));
   }
 }
 
@@ -114,7 +114,7 @@ console.log("\nLifecycle with Auth:");
 await cleanup(SANDBOX);
 
 {
-  const resp = await apiPost("/machinees", {
+  const resp = await apiPost("/machines", {
     name: SANDBOX,
     resources: { cpus: 2, memory_mb: 1024, network: true },
   });
@@ -122,7 +122,7 @@ await cleanup(SANDBOX);
 }
 
 {
-  const resp = await apiPost(`/machinees/${SANDBOX}/start`);
+  const resp = await apiPost(`/machines/${SANDBOX}/start`);
   test("Start machine (authed)", resp.ok, `status=${resp.status}`);
 }
 
@@ -133,7 +133,7 @@ await cleanup(SANDBOX);
 }
 
 {
-  const resp = await apiGet(`/machinees/${SANDBOX}`);
+  const resp = await apiGet(`/machines/${SANDBOX}`);
   test("Get machine info (authed)", resp.ok);
 }
 
@@ -144,7 +144,7 @@ await cleanup(SANDBOX);
 console.log("\nCleanup:");
 {
   await cleanup(SANDBOX);
-  const resp = await apiGet(`/machinees/${SANDBOX}`);
+  const resp = await apiGet(`/machines/${SANDBOX}`);
   test("Machine cleaned up", resp.status === 404);
 }
 

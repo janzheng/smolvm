@@ -1,7 +1,7 @@
 /**
  * smolvm TypeScript SDK — Fleet
  *
- * Multi-machine orchestration. Creates N machinees, executes commands
+ * Multi-machine orchestration. Creates N machines, executes commands
  * across all of them in parallel, and cleans up.
  */
 
@@ -10,31 +10,31 @@ import { Machine } from "./machine.ts";
 import type { CreateMachineOptions, ExecOptions, ExecResult } from "./types.ts";
 
 export class MachineFleet {
-  public readonly machinees: Machine[];
+  public readonly machines: Machine[];
 
   constructor(
-    machinees: Machine[],
+    machines: Machine[],
     private readonly http: SmolvmHttpClient,
   ) {
-    this.machinees = machinees;
+    this.machines = machines;
   }
 
-  /** Number of machinees in the fleet. */
+  /** Number of machines in the fleet. */
   get size(): number {
-    return this.machinees.length;
+    return this.machines.length;
   }
 
   /** All machine names. */
   get names(): string[] {
-    return this.machinees.map((s) => s.name);
+    return this.machines.map((s) => s.name);
   }
 
   /**
-   * Execute a shell command across all machinees in parallel.
-   * Returns results in the same order as machinees.
+   * Execute a shell command across all machines in parallel.
+   * Returns results in the same order as machines.
    */
   async execAll(cmd: string, opts?: ExecOptions): Promise<ExecResult[]> {
-    return Promise.all(this.machinees.map((s) => s.sh(cmd, opts)));
+    return Promise.all(this.machines.map((s) => s.sh(cmd, opts)));
   }
 
   /**
@@ -42,41 +42,41 @@ export class MachineFleet {
    * Commands array must match fleet size.
    */
   async execEach(cmds: string[], opts?: ExecOptions): Promise<ExecResult[]> {
-    if (cmds.length !== this.machinees.length) {
+    if (cmds.length !== this.machines.length) {
       throw new Error(
-        `Expected ${this.machinees.length} commands, got ${cmds.length}`,
+        `Expected ${this.machines.length} commands, got ${cmds.length}`,
       );
     }
     return Promise.all(
-      this.machinees.map((s, i) => s.sh(cmds[i], opts)),
+      this.machines.map((s, i) => s.sh(cmds[i], opts)),
     );
   }
 
   /**
-   * Execute a raw command array across all machinees in parallel.
+   * Execute a raw command array across all machines in parallel.
    */
   async execAllRaw(
     command: string[],
     opts?: ExecOptions,
   ): Promise<ExecResult[]> {
-    return Promise.all(this.machinees.map((s) => s.exec(command, opts)));
+    return Promise.all(this.machines.map((s) => s.exec(command, opts)));
   }
 
   /** Get a specific machine by index. */
   at(index: number): Machine {
-    const s = this.machinees[index];
+    const s = this.machines[index];
     if (!s) throw new Error(`Fleet index ${index} out of range (size: ${this.size})`);
     return s;
   }
 
-  /** Stop and delete all machinees. Ignores errors. */
+  /** Stop and delete all machines. Ignores errors. */
   async cleanup(): Promise<void> {
-    await Promise.all(this.machinees.map((s) => s.cleanup()));
+    await Promise.all(this.machines.map((s) => s.cleanup()));
   }
 }
 
 /**
- * Create a fleet of machinees.
+ * Create a fleet of machines.
  * Names are auto-generated as `{prefix}-0`, `{prefix}-1`, etc.
  */
 export async function createFleet(
@@ -85,7 +85,7 @@ export async function createFleet(
   count: number,
   opts?: CreateMachineOptions,
 ): Promise<MachineFleet> {
-  const machinees: Machine[] = [];
+  const machines: Machine[] = [];
 
   for (let i = 0; i < count; i++) {
     const name = `${prefix}-${i}`;
@@ -116,11 +116,11 @@ export async function createFleet(
       from_starter: opts?.fromStarter,
     });
 
-    machinees.push(new Machine(name, http));
+    machines.push(new Machine(name, http));
   }
 
   // Start all in parallel
-  await Promise.all(machinees.map((s) => s.start()));
+  await Promise.all(machines.map((s) => s.start()));
 
-  return new MachineFleet(machinees, http);
+  return new MachineFleet(machines, http);
 }

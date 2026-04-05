@@ -114,7 +114,7 @@ export async function exec(
   const timeoutSecs = opts?.timeout_secs ?? 30;
   // Client-side timeout as fallback (agent timeout_secs not always enforced)
   const clientTimeoutMs = (timeoutSecs + 5) * 1000;
-  const resp = await fetch(`${API}/machinees/${machine}/exec`, {
+  const resp = await fetch(`${API}/machines/${machine}/exec`, {
     method: "POST",
     headers: apiHeaders("application/json"),
     body: JSON.stringify({ command, timeout_secs: timeoutSecs, ...opts }),
@@ -134,7 +134,7 @@ export async function run(
   command: string[],
   opts?: ExecOpts,
 ): Promise<ExecResult> {
-  const resp = await fetch(`${API}/machinees/${machine}/run`, {
+  const resp = await fetch(`${API}/machines/${machine}/run`, {
     method: "POST",
     headers: apiHeaders("application/json"),
     body: JSON.stringify({ image, command, timeout_secs: 30, ...opts }),
@@ -149,7 +149,7 @@ export async function run(
 
 /** Pull an OCI image into a machine (longer timeout for large images). */
 export async function pullImage(machine: string, image: string): Promise<Response> {
-  return fetch(`${API}/machinees/${machine}/images/pull`, {
+  return fetch(`${API}/machines/${machine}/images/pull`, {
     method: "POST",
     headers: apiHeaders("application/json"),
     body: JSON.stringify({ image }),
@@ -172,8 +172,8 @@ export async function sh(
 
 /** Stop and delete a machine, ignoring errors. */
 export async function cleanup(name: string) {
-  try { await apiPost(`/machinees/${name}/stop`); } catch { /* */ }
-  try { await apiDelete(`/machinees/${name}`); } catch { /* */ }
+  try { await apiPost(`/machines/${name}/stop`); } catch { /* */ }
+  try { await apiDelete(`/machines/${name}`); } catch { /* */ }
 }
 
 /** Create and start a machine, wait for it to be ready. */
@@ -183,14 +183,14 @@ export async function createAndStart(name: string, opts?: {
   resources?: Record<string, unknown>;
 }) {
   await cleanup(name);
-  const createResp = await apiPost("/machinees", {
+  const createResp = await apiPost("/machines", {
     name,
     mounts: opts?.mounts ?? [],
     ports: opts?.ports ?? [],
     resources: { cpus: 2, memory_mb: 1024, network: true, ...opts?.resources },
   });
   if (!createResp.ok) throw new Error(`create failed: ${await createResp.text()}`);
-  const startResp = await apiPost(`/machinees/${name}/start`);
+  const startResp = await apiPost(`/machines/${name}/start`);
   if (!startResp.ok) throw new Error(`start failed: ${await startResp.text()}`);
   return startResp.json();
 }

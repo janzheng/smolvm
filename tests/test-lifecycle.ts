@@ -32,13 +32,13 @@ const phases: Record<string, number> = {};
 console.log("Phase 1: CREATE");
 const tCreate = performance.now();
 {
-  const resp = await apiPost("/machinees", {
+  const resp = await apiPost("/machines", {
     name: MACHINE_NAME,
     resources: { cpus: 2, memory_mb: 2048, network: true },
   });
   if (!resp.ok) throw new Error(`Create failed: ${await resp.text()}`);
 
-  const startResp = await apiPost(`/machinees/${MACHINE_NAME}/start`);
+  const startResp = await apiPost(`/machines/${MACHINE_NAME}/start`);
   if (!startResp.ok) throw new Error(`Start failed: ${await startResp.text()}`);
 
   const echo = await sh(MACHINE_NAME, "echo ready");
@@ -207,8 +207,8 @@ console.log(`  ⏱  ${phases.extract}ms\n`);
 console.log("Phase 5: DESTROY");
 const tDestroy = performance.now();
 {
-  await apiPost(`/machinees/${MACHINE_NAME}/stop`);
-  await apiDelete(`/machinees/${MACHINE_NAME}`);
+  await apiPost(`/machines/${MACHINE_NAME}/stop`);
+  await apiDelete(`/machines/${MACHINE_NAME}`);
 }
 phases.destroy = Math.round(performance.now() - tDestroy);
 console.log(`  ⏱  ${phases.destroy}ms\n`);

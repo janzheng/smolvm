@@ -82,10 +82,10 @@ const exists = await machine.exists("/app/main.ts");
 
 ## Fleet Operations
 
-Create and manage multiple machinees in parallel.
+Create and manage multiple machines in parallel.
 
 ```typescript
-// Create 3 machinees, all started
+// Create 3 machines, all started
 const fleet = await client.createFleet("worker", 3, { network: true });
 
 // Same command on all
@@ -98,7 +98,7 @@ const each = await fleet.execEach([
   "echo task-c",
 ]);
 
-// Access individual machinees
+// Access individual machines
 const first = fleet.at(0);
 await first.writeFile("/tmp/data.json", "{}");
 
@@ -108,7 +108,7 @@ await fleet.cleanup();
 
 ## MicroVMs
 
-Persistent VMs (different REST schema from machinees).
+Persistent VMs (different REST schema from machines).
 
 ```typescript
 const vm = await client.createMicroVM("my-microvm", {

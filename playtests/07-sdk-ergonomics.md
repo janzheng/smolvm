@@ -34,7 +34,7 @@ Don't copy examples. Just use the types and see if you can figure it out.
 
 ## Bonus challenges
 
-- Write a "machine pool" — create 5 machinees, run different commands in
+- Write a "machine pool" — create 5 machines, run different commands in
   parallel, collect all results
 - Write a "workspace sync" — mirror a local directory into a machine using
   the file API

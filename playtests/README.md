@@ -45,7 +45,7 @@ Results get appended to `PLAYTEST-LOG.md` in this directory.
 | 07 | `07-sdk-ergonomics.md` | Use the TS SDK to build something real. What's clunky? | 20 min |
 | 08 | `08-web-ui-walkthrough.md` | Use the web UI like a real user. What's confusing? | 15 min |
 | 09 | `09-tunnel-to-the-world.md` | Expose a machine service publicly via cloudflared | 20 min |
-| 10 | `10-stress-and-limits.md` | Many machinees, big files, long processes — find the limits | 30 min |
+| 10 | `10-stress-and-limits.md` | Many machines, big files, long processes — find the limits | 30 min |
 
 ## How to run a playtest
 

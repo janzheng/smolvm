@@ -39,7 +39,7 @@ console.log("Pre-flight:");
 // Try creating a machine with secrets to see if server has them configured
 await cleanup(SANDBOX);
 {
-  const resp = await apiPost("/machinees", {
+  const resp = await apiPost("/machines", {
     name: SANDBOX,
     resources: { cpus: 2, memory_mb: 1024, network: true },
     secrets: ["anthropic"],
@@ -63,7 +63,7 @@ await cleanup(SANDBOX);
 
 // Start the machine
 {
-  const resp = await apiPost(`/machinees/${SANDBOX}/start`);
+  const resp = await apiPost(`/machines/${SANDBOX}/start`);
   test("Start machine", resp.ok, `status=${resp.status}`);
 }
 
@@ -136,7 +136,7 @@ console.log("\nProxy Reachability:");
 console.log("\nNetwork Auto-enable:");
 
 {
-  const resp = await apiGet(`/machinees/${SANDBOX}`);
+  const resp = await apiGet(`/machines/${SANDBOX}`);
   if (resp.ok) {
     const info = await resp.json();
     test("Network enabled when secrets configured", info.network === true);
@@ -152,7 +152,7 @@ console.log("\nNetwork Auto-enable:");
 console.log("\nValidation:");
 
 {
-  const resp = await apiPost("/machinees", {
+  const resp = await apiPost("/machines", {
     name: "cx04-proxy-bad-secret",
     resources: { cpus: 2, memory_mb: 1024 },
     secrets: ["nonexistent-provider"],
@@ -176,13 +176,13 @@ console.log("\nNo-Secret Machine:");
 
 await cleanup(SANDBOX_NOSECRET);
 {
-  const createResp = await apiPost("/machinees", {
+  const createResp = await apiPost("/machines", {
     name: SANDBOX_NOSECRET,
     resources: { cpus: 2, memory_mb: 1024, network: true },
     // no secrets field
   });
   if (createResp.ok) {
-    const startResp = await apiPost(`/machinees/${SANDBOX_NOSECRET}/start`);
+    const startResp = await apiPost(`/machines/${SANDBOX_NOSECRET}/start`);
     if (startResp.ok) {
       const result = await sh(SANDBOX_NOSECRET, "env | grep ANTHROPIC || echo 'NONE'");
       const noProxyVars = !result.stdout.includes("ANTHROPIC_BASE_URL") && !result.stdout.includes("smolvm-placeholder");
@@ -203,8 +203,8 @@ console.log("\nCleanup:");
 {
   await cleanup(SANDBOX);
   await cleanup(SANDBOX_NOSECRET);
-  const resp1 = await apiGet(`/machinees/${SANDBOX}`);
-  const resp2 = await apiGet(`/machinees/${SANDBOX_NOSECRET}`);
+  const resp1 = await apiGet(`/machines/${SANDBOX}`);
+  const resp2 = await apiGet(`/machines/${SANDBOX_NOSECRET}`);
   test("Machinees cleaned up", resp1.status === 404 && resp2.status === 404);
 }
 
