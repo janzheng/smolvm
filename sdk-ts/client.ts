@@ -2,17 +2,17 @@
  * smolvm TypeScript SDK — HTTP Client
  *
  * Low-level transport layer. Handles all REST API communication.
- * Users should prefer the high-level Sandbox/MicroVM classes.
+ * Users should prefer the high-level Machine/MicroVM classes.
  */
 
 import type {
   CheckpointMetadata,
-  CloneSandboxRequest,
+  CloneMachineRequest,
   ContainerInfo,
   CreateCheckpointResponse,
   CreateContainerOptions,
   CreateMicroVMRequest,
-  CreateSandboxRequest,
+  CreateMachineRequest,
   DebugMountsResponse,
   DebugNetworkResponse,
   DiffResult,
@@ -24,11 +24,11 @@ import type {
   HealthResponse,
   ImageInfo,
   MergeResponse,
-  MergeSandboxRequest,
+  MergeMachineRequest,
   MicroVMInfo,
   ResourceStats,
   RestoreCheckpointResponse,
-  SandboxInfo,
+  MachineInfo,
   SnapshotInfo,
   SnapshotListResponse,
   StarterInfo,
@@ -116,43 +116,43 @@ export class SmolvmHttpClient {
   }
 
   // --------------------------------------------------------------------------
-  // Sandboxes
+  // Machinees
   // --------------------------------------------------------------------------
 
-  async createSandbox(req: CreateSandboxRequest): Promise<SandboxInfo> {
-    const resp = await this.request("POST", "/sandboxes", req);
+  async createMachine(req: CreateMachineRequest): Promise<MachineInfo> {
+    const resp = await this.request("POST", "/machines", req);
     return this.json(resp);
   }
 
-  async getSandbox(name: string): Promise<SandboxInfo> {
-    const resp = await this.request("GET", `/sandboxes/${name}`);
+  async getMachine(name: string): Promise<MachineInfo> {
+    const resp = await this.request("GET", `/machines/${name}`);
     return this.json(resp);
   }
 
-  async listSandboxes(): Promise<SandboxInfo[]> {
-    const resp = await this.request("GET", "/sandboxes");
-    const data = await this.json<{ sandboxes: SandboxInfo[] }>(resp);
-    return data.sandboxes;
+  async listMachines(): Promise<MachineInfo[]> {
+    const resp = await this.request("GET", "/machines");
+    const data = await this.json<{ machinees: MachineInfo[] }>(resp);
+    return data.machinees;
   }
 
-  async sandboxStats(name: string): Promise<ResourceStats> {
-    const resp = await this.request("GET", `/sandboxes/${name}/stats`);
+  async machineStats(name: string): Promise<ResourceStats> {
+    const resp = await this.request("GET", `/machines/${name}/stats`);
     return this.json(resp);
   }
 
-  async startSandbox(name: string): Promise<SandboxInfo> {
-    const resp = await this.request("POST", `/sandboxes/${name}/start`);
+  async startMachine(name: string): Promise<MachineInfo> {
+    const resp = await this.request("POST", `/machines/${name}/start`);
     return this.json(resp);
   }
 
-  async stopSandbox(name: string): Promise<SandboxInfo> {
-    const resp = await this.request("POST", `/sandboxes/${name}/stop`);
+  async stopMachine(name: string): Promise<MachineInfo> {
+    const resp = await this.request("POST", `/machines/${name}/stop`);
     return this.json(resp);
   }
 
-  async deleteSandbox(name: string, force = false): Promise<void> {
+  async deleteMachine(name: string, force = false): Promise<void> {
     const qs = force ? "?force=true" : "";
-    const resp = await this.request("DELETE", `/sandboxes/${name}${qs}`);
+    const resp = await this.request("DELETE", `/machines/${name}${qs}`);
     if (!resp.ok) {
       const text = await resp.text();
       throw new SmolvmError(resp.status, text);
@@ -161,7 +161,7 @@ export class SmolvmHttpClient {
     await resp.text();
   }
 
-  async execSandbox(
+  async execMachine(
     name: string,
     command: string[],
     opts?: ExecOptions,
@@ -173,30 +173,30 @@ export class SmolvmHttpClient {
       timeout_secs: opts?.timeout_secs ?? 30,
     };
     if (opts?.user) body.user = opts.user;
-    const resp = await this.request("POST", `/sandboxes/${name}/exec`, body);
+    const resp = await this.request("POST", `/machines/${name}/exec`, body);
     return this.json(resp);
   }
 
-  async cloneSandbox(sourceName: string, cloneName: string): Promise<SandboxInfo> {
-    const resp = await this.request("POST", `/sandboxes/${sourceName}/clone`, {
+  async cloneMachine(sourceName: string, cloneName: string): Promise<MachineInfo> {
+    const resp = await this.request("POST", `/machines/${sourceName}/clone`, {
       name: cloneName,
     });
     return this.json(resp);
   }
 
-  async diffSandboxes(name: string, other: string): Promise<DiffResult> {
-    const resp = await this.request("GET", `/sandboxes/${name}/diff/${other}`);
+  async diffMachinees(name: string, other: string): Promise<DiffResult> {
+    const resp = await this.request("GET", `/machines/${name}/diff/${other}`);
     return this.json(resp);
   }
 
-  async mergeSandboxes(
+  async mergeMachinees(
     sourceName: string,
     targetName: string,
-    req?: MergeSandboxRequest,
+    req?: MergeMachineRequest,
   ): Promise<MergeResponse> {
     const resp = await this.request(
       "POST",
-      `/sandboxes/${sourceName}/merge/${targetName}`,
+      `/machines/${sourceName}/merge/${targetName}`,
       req ?? {},
     );
     return this.json(resp);
@@ -206,14 +206,14 @@ export class SmolvmHttpClient {
   // File API
   // --------------------------------------------------------------------------
 
-  async readFile(sandboxName: string, path: string): Promise<FileReadResponse> {
+  async readFile(machineName: string, path: string): Promise<FileReadResponse> {
     const encodedPath = encodeURIComponent(path);
-    const resp = await this.request("GET", `/sandboxes/${sandboxName}/files/${encodedPath}`);
+    const resp = await this.request("GET", `/machines/${machineName}/files/${encodedPath}`);
     return this.json(resp);
   }
 
   async writeFile(
-    sandboxName: string,
+    machineName: string,
     path: string,
     content: string,
     permissions?: string,
@@ -221,7 +221,7 @@ export class SmolvmHttpClient {
     const encodedPath = encodeURIComponent(path);
     const body: Record<string, unknown> = { content };
     if (permissions) body.permissions = permissions;
-    const resp = await this.request("PUT", `/sandboxes/${sandboxName}/files/${encodedPath}`, body);
+    const resp = await this.request("PUT", `/machines/${machineName}/files/${encodedPath}`, body);
     if (!resp.ok) {
       const text = await resp.text();
       throw new SmolvmError(resp.status, text);
@@ -229,9 +229,9 @@ export class SmolvmHttpClient {
     await resp.text();
   }
 
-  async deleteFile(sandboxName: string, path: string): Promise<void> {
+  async deleteFile(machineName: string, path: string): Promise<void> {
     const encodedPath = encodeURIComponent(path);
-    const resp = await this.request("DELETE", `/sandboxes/${sandboxName}/files/${encodedPath}`);
+    const resp = await this.request("DELETE", `/machines/${machineName}/files/${encodedPath}`);
     if (!resp.ok) {
       const text = await resp.text();
       throw new SmolvmError(resp.status, text);
@@ -239,9 +239,9 @@ export class SmolvmHttpClient {
     await resp.text();
   }
 
-  async listFiles(sandboxName: string, dir?: string): Promise<FileListResponse> {
+  async listFiles(machineName: string, dir?: string): Promise<FileListResponse> {
     const qs = dir ? `?dir=${encodeURIComponent(dir)}` : "";
-    const resp = await this.request("GET", `/sandboxes/${sandboxName}/files${qs}`);
+    const resp = await this.request("GET", `/machines/${machineName}/files${qs}`);
     return this.json(resp);
   }
 
@@ -254,7 +254,7 @@ export class SmolvmHttpClient {
    * Suitable for large binary files.
    */
   async uploadFile(
-    sandboxName: string,
+    machineName: string,
     path: string,
     data: Uint8Array | Blob,
     permissions?: string,
@@ -266,24 +266,24 @@ export class SmolvmHttpClient {
     if (permissions) form.append("permissions", permissions);
 
     const resp = await fetch(
-      `${this.api}/sandboxes/${sandboxName}/upload/${encodedPath}`,
+      `${this.api}/machines/${machineName}/upload/${encodedPath}`,
       { method: "POST", body: form },
     );
     return this.json(resp);
   }
 
   /**
-   * Upload a tar.gz archive and extract it into a sandbox directory.
+   * Upload a tar.gz archive and extract it into a machine directory.
    */
   async uploadArchive(
-    sandboxName: string,
+    machineName: string,
     archive: Uint8Array | Blob,
     dir?: string,
   ): Promise<{ extracted_to: string; archive_size: number }> {
     const qs = dir ? `?dir=${encodeURIComponent(dir)}` : "";
     const body = archive instanceof Blob ? archive : new Blob([archive.buffer as ArrayBuffer]);
     const resp = await fetch(
-      `${this.api}/sandboxes/${sandboxName}/archive/upload${qs}`,
+      `${this.api}/machines/${machineName}/archive/upload${qs}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/gzip" },
@@ -294,15 +294,15 @@ export class SmolvmHttpClient {
   }
 
   /**
-   * Download a sandbox directory as a tar.gz archive.
+   * Download a machine directory as a tar.gz archive.
    */
   async downloadArchive(
-    sandboxName: string,
+    machineName: string,
     dir?: string,
   ): Promise<Uint8Array> {
     const qs = dir ? `?dir=${encodeURIComponent(dir)}` : "";
     const resp = await fetch(
-      `${this.api}/sandboxes/${sandboxName}/archive${qs}`,
+      `${this.api}/machines/${machineName}/archive${qs}`,
     );
     if (!resp.ok) {
       const text = await resp.text();
@@ -326,8 +326,8 @@ export class SmolvmHttpClient {
   // Snapshots (push/pull)
   // --------------------------------------------------------------------------
 
-  async pushSandbox(sandboxName: string): Promise<void> {
-    const resp = await this.request("POST", `/sandboxes/${sandboxName}/push`);
+  async pushMachine(machineName: string): Promise<void> {
+    const resp = await this.request("POST", `/machines/${machineName}/push`);
     if (!resp.ok) {
       const text = await resp.text();
       throw new SmolvmError(resp.status, text);
@@ -341,9 +341,9 @@ export class SmolvmHttpClient {
     return data.snapshots;
   }
 
-  async pullSnapshot(snapshotName: string, sandboxName: string): Promise<SandboxInfo> {
+  async pullSnapshot(snapshotName: string, machineName: string): Promise<MachineInfo> {
     const resp = await this.request("POST", `/snapshots/${snapshotName}/pull`, {
-      name: sandboxName,
+      name: machineName,
     });
     return this.json(resp);
   }
@@ -362,7 +362,7 @@ export class SmolvmHttpClient {
   // --------------------------------------------------------------------------
 
   async runInImage(
-    sandboxName: string,
+    machineName: string,
     image: string,
     command: string[],
     opts?: ExecOptions,
@@ -375,60 +375,60 @@ export class SmolvmHttpClient {
       timeout_secs: opts?.timeout_secs ?? 30,
     };
     if (opts?.user) body.user = opts.user;
-    const resp = await this.request("POST", `/sandboxes/${sandboxName}/run`, body);
+    const resp = await this.request("POST", `/machines/${machineName}/run`, body);
     return this.json(resp);
   }
 
   // --------------------------------------------------------------------------
-  // Images (scoped to a sandbox)
+  // Images (scoped to a machine)
   // --------------------------------------------------------------------------
 
-  async pullImage(sandboxName: string, image: string): Promise<{ image: ImageInfo }> {
+  async pullImage(machineName: string, image: string): Promise<{ image: ImageInfo }> {
     const resp = await this.request(
       "POST",
-      `/sandboxes/${sandboxName}/images/pull`,
+      `/machines/${machineName}/images/pull`,
       { image },
     );
     return this.json(resp);
   }
 
-  async listImages(sandboxName: string): Promise<ImageInfo[]> {
-    const resp = await this.request("GET", `/sandboxes/${sandboxName}/images`);
+  async listImages(machineName: string): Promise<ImageInfo[]> {
+    const resp = await this.request("GET", `/machines/${machineName}/images`);
     const data = await this.json<{ images: ImageInfo[] }>(resp);
     return data.images;
   }
 
   // --------------------------------------------------------------------------
-  // Containers (inside a sandbox)
+  // Containers (inside a machine)
   // --------------------------------------------------------------------------
 
   async listContainers(
-    sandboxName: string,
+    machineName: string,
   ): Promise<ContainerInfo[]> {
     const resp = await this.request(
       "GET",
-      `/sandboxes/${sandboxName}/containers`,
+      `/machines/${machineName}/containers`,
     );
     const data = await this.json<{ containers: ContainerInfo[] }>(resp);
     return data.containers;
   }
 
   async createContainer(
-    sandboxName: string,
+    machineName: string,
     opts: CreateContainerOptions,
   ): Promise<ContainerInfo> {
     const resp = await this.request(
       "POST",
-      `/sandboxes/${sandboxName}/containers`,
+      `/machines/${machineName}/containers`,
       opts,
     );
     return this.json(resp);
   }
 
-  async startContainer(sandboxName: string, containerId: string): Promise<void> {
+  async startContainer(machineName: string, containerId: string): Promise<void> {
     const resp = await this.request(
       "POST",
-      `/sandboxes/${sandboxName}/containers/${containerId}/start`,
+      `/machines/${machineName}/containers/${containerId}/start`,
     );
     if (!resp.ok) {
       const text = await resp.text();
@@ -438,14 +438,14 @@ export class SmolvmHttpClient {
   }
 
   async execContainer(
-    sandboxName: string,
+    machineName: string,
     containerId: string,
     command: string[],
     opts?: ExecOptions,
   ): Promise<ExecResult> {
     const resp = await this.request(
       "POST",
-      `/sandboxes/${sandboxName}/containers/${containerId}/exec`,
+      `/machines/${machineName}/containers/${containerId}/exec`,
       {
         command,
         env: opts?.env,
@@ -456,10 +456,10 @@ export class SmolvmHttpClient {
     return this.json(resp);
   }
 
-  async stopContainer(sandboxName: string, containerId: string): Promise<void> {
+  async stopContainer(machineName: string, containerId: string): Promise<void> {
     const resp = await this.request(
       "POST",
-      `/sandboxes/${sandboxName}/containers/${containerId}/stop`,
+      `/machines/${machineName}/containers/${containerId}/stop`,
       { timeout_secs: 10 },
     );
     if (!resp.ok) {
@@ -470,13 +470,13 @@ export class SmolvmHttpClient {
   }
 
   async deleteContainer(
-    sandboxName: string,
+    machineName: string,
     containerId: string,
     force = false,
   ): Promise<void> {
     const resp = await this.request(
       "DELETE",
-      `/sandboxes/${sandboxName}/containers/${containerId}`,
+      `/machines/${machineName}/containers/${containerId}`,
       force ? { force: true } : undefined,
     );
     if (!resp.ok) {
@@ -490,18 +490,18 @@ export class SmolvmHttpClient {
   // Debug Diagnostics
   // --------------------------------------------------------------------------
 
-  async debugMounts(sandboxName: string): Promise<DebugMountsResponse> {
+  async debugMounts(machineName: string): Promise<DebugMountsResponse> {
     const resp = await this.request(
       "GET",
-      `/sandboxes/${sandboxName}/debug/mounts`,
+      `/machines/${machineName}/debug/mounts`,
     );
     return this.json(resp);
   }
 
-  async debugNetwork(sandboxName: string): Promise<DebugNetworkResponse> {
+  async debugNetwork(machineName: string): Promise<DebugNetworkResponse> {
     const resp = await this.request(
       "GET",
-      `/sandboxes/${sandboxName}/debug/network`,
+      `/machines/${machineName}/debug/network`,
     );
     return this.json(resp);
   }
@@ -510,8 +510,8 @@ export class SmolvmHttpClient {
   // Checkpoints
   // --------------------------------------------------------------------------
 
-  async createCheckpoint(sandboxName: string): Promise<CreateCheckpointResponse> {
-    const resp = await this.request("POST", `/sandboxes/${sandboxName}/checkpoint`);
+  async createCheckpoint(machineName: string): Promise<CreateCheckpointResponse> {
+    const resp = await this.request("POST", `/machines/${machineName}/checkpoint`);
     return this.json(resp);
   }
 
@@ -599,10 +599,10 @@ export class SmolvmHttpClient {
     return this.json(resp);
   }
 
-  async listJobs(opts?: { status?: string; sandbox?: string; limit?: number }): Promise<ListJobsResponse> {
+  async listJobs(opts?: { status?: string; machine?: string; limit?: number }): Promise<ListJobsResponse> {
     const params = new URLSearchParams();
     if (opts?.status) params.set("status", opts.status);
-    if (opts?.sandbox) params.set("sandbox", opts.sandbox);
+    if (opts?.machine) params.set("machine", opts.machine);
     if (opts?.limit) params.set("limit", String(opts.limit));
     const qs = params.toString() ? `?${params}` : "";
     const resp = await this.request("GET", `/jobs${qs}`);

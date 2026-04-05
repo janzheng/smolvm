@@ -1,6 +1,6 @@
 # Remote Access via Cloudflare Tunnel
 
-Access your smolvm server from anywhere using a Cloudflare tunnel. One tunnel serves all sandboxes through the central REST API.
+Access your smolvm server from anywhere using a Cloudflare tunnel. One tunnel serves all machinees through the central REST API.
 
 ## Prerequisites
 
@@ -61,7 +61,7 @@ deno task ctl health
 Once configured, all smolctl commands work transparently through the tunnel:
 
 ```bash
-# Create and use a sandbox remotely
+# Create and use a machine remotely
 deno task ctl up my-vm
 deno task ctl sh my-vm "uname -a"
 deno task ctl sync push my-vm ./src --to /workspace/src
@@ -112,7 +112,7 @@ For production, use a [named Cloudflare tunnel](https://developers.cloudflare.co
 ### What's NOT protected by the tunnel
 
 - The tunnel encrypts transit (HTTPS) but doesn't add auth — that's the bearer token's job
-- Sandbox-to-sandbox isolation is handled by VM boundaries, not the tunnel
+- Machine-to-machine isolation is handled by VM boundaries, not the tunnel
 - Secret proxy keys are separate from the API token
 
 ## Troubleshooting

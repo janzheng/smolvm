@@ -5,12 +5,12 @@
 - https://github.com/smol-machines/smolvm
 - https://github.com/smol-machines/smolvm/releases (v0.1.16)
 - https://smolmachines.com
-- https://smolmachines.com/docs/sandbox/
+- https://smolmachines.com/docs/machine/
 - https://smolmachines.com/docs/microvm/
 
 ## SDK Pages (Empty / Non-functional)
 
-- https://smolmachines.com/sdk/api-sandbox — claims TS SDK, npm 404
+- https://smolmachines.com/sdk/api-machine — claims TS SDK, npm 404
 - https://smolmachines.com/sdk/api-microvm — claims TS SDK, npm 404
 - https://smolmachines.com/sdk/api-container — claims TS SDK, npm 404
 

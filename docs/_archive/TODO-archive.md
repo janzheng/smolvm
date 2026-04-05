@@ -10,7 +10,7 @@ These depend on upstream smolvm/libkrun fixes. Workarounds noted.
 
 - [ ] **T01** Volume mounts (virtiofs visibility)
   - Files via volume mounts not visible inside guest VM
-  - Workaround: use file API (`PUT /sandboxes/:id/files/...`) or `exec sh -c 'echo "..." > file'`
+  - Workaround: use file API (`PUT /machines/:id/files/...`) or `exec sh -c 'echo "..." > file'`
 
 - [ ] **T02** Port mapping (connection refused)
   - Port mapping creates but connections refused from host
@@ -18,11 +18,11 @@ These depend on upstream smolvm/libkrun fixes. Workarounds noted.
 
 - [ ] **T04** Container delete returns error
   - Container stop works but delete fails
-  - Workaround: sandbox delete cleans up containers
+  - Workaround: machine delete cleans up containers
 
 - [ ] **T06** macOS UID leak into guest rootfs
   - Host UID 501 leaks into guest filesystem ownership
-  - Workaround: use `default_user` in sandbox creation
+  - Workaround: use `default_user` in machine creation
 
 ---
 
@@ -31,7 +31,7 @@ These depend on upstream smolvm/libkrun fixes. Workarounds noted.
 Found via `deno task test-isolation`. See `docs/SECURITY.md` for full details.
 
 - [ ] **S01** VM can reach host API via TSI (CRITICAL) — UPSTREAM REQUIRED
-  - Sandbox with `network: true` can hit host port 8080, manage other sandboxes
+  - Machine with `network: true` can hit host port 8080, manage other machinees
   - Root cause: libkrun TSI intercepts socket syscalls at kernel level, bypassing netfilter
   - iptables rules have no effect — TSI proxies before packets reach netfilter
   - Fix: requires libkrun/TSI layer to support port blocklist in proxy config
@@ -76,7 +76,7 @@ Found via `deno task test-isolation`. See `docs/SECURITY.md` for full details.
 
 All tests run against latest binary with S02/S05/S06/auth fixes.
 
-### test-sandbox: 28 pass, 1 fail (CLI --allow-run permission) ✅
+### test-machine: 28 pass, 1 fail (CLI --allow-run permission) ✅
 ### test-fleet: 8 pass, 0 fail ✅
 ### test-isolation: 41 pass, 0 fail, 2 skipped ✅
   - Skips: S01 TSI host access (upstream), fork bomb (RLIMIT_NPROC added as defense)
@@ -95,7 +95,7 @@ All tests run against latest binary with S02/S05/S06/auth fixes.
 
 ## TODO
 
-- [x] Build Deno CLI tool (`smolctl`) for sandbox management
+- [x] Build Deno CLI tool (`smolctl`) for machine management
 - [x] ~~Build and push starter Docker images to registry~~ — wontfix, smolvm uses microVMs not Docker
 - [x] Document REST API (→ `docs/API.md`)
 - [x] Add cloudflared to claude-code starter (already in Dockerfile + docs)

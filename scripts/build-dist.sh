@@ -424,7 +424,7 @@ USAGE
 
 Run the 'smolvm' script (not smolvm-bin directly):
 
-  ./smolvm sandbox run alpine:latest echo "Hello World"
+  ./smolvm machine run alpine:latest echo "Hello World"
   ./smolvm microvm create --name myvm alpine:latest /bin/sh
   ./smolvm microvm start myvm
   ./smolvm microvm ls

@@ -3,7 +3,7 @@
 /**
  * smolvm exec MCP server
  *
- * Exposes command-execution tools inside a sandbox via MCP protocol
+ * Exposes command-execution tools inside a machine via MCP protocol
  * (JSON-RPC 2.0 over newline-delimited stdio).
  *
  * Tools: run_command, run_script, list_processes, kill_process, which

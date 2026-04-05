@@ -1,12 +1,12 @@
-# Competitive Landscape — Agent Sandboxes & Compute
+# Competitive Landscape — Agent Machinees & Compute
 
-Rolling list of products in the agent sandbox / agent computer space.
+Rolling list of products in the agent machine / agent computer space.
 
 ---
 
 ## NVIDIA OpenShell
 - **URL:** https://github.com/NVIDIA/OpenShell
-- **What:** Open-source sandboxed runtime for AI coding agents. Docker containers + Landlock/seccomp + policy engine.
+- **What:** Open-source machineed runtime for AI coding agents. Docker containers + Landlock/seccomp + policy engine.
 - **Notes:** See [nvidia-openshell.md](nvidia-openshell.md) for full research note.
 
 ## Agent Computer (by Advait Paliwal)

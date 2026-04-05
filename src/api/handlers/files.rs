@@ -1,7 +1,7 @@
 //! File CRUD handlers.
 //!
 //! Provides REST endpoints for reading, writing, listing, and deleting
-//! files inside a sandbox. Operations go through the exec channel using
+//! files inside a machine. Operations go through the exec channel using
 //! base64 encoding, matching the pattern used by the SDK's file methods
 //! but at the server level for better performance and API cleanliness.
 
@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use crate::api::auth::{check_permission, extract_bearer_token};
 use crate::api::error::{classify_ensure_running_error, ApiError};
-use crate::api::state::{ensure_running_and_persist, with_sandbox_client, ApiState};
+use crate::api::state::{ensure_running_and_persist, with_machine_client, ApiState};
 use crate::api::types::{
     ApiErrorResponse, FileInfo, ListFilesQuery, ListFilesResponse, ReadFileResponse,
     MachineRole, WriteFileRequest,
@@ -35,7 +35,7 @@ fn validate_path(path: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// Read a file from a sandbox.
+/// Read a file from a machine.
 ///
 /// Returns the file content as base64-encoded data.
 #[utoipa::path(
@@ -48,7 +48,7 @@ fn validate_path(path: &str) -> Result<(), ApiError> {
     ),
     responses(
         (status = 200, description = "File content", body = ReadFileResponse),
-        (status = 404, description = "File or sandbox not found", body = ApiErrorResponse),
+        (status = 404, description = "File or machine not found", body = ApiErrorResponse),
         (status = 500, description = "Read failed", body = ApiErrorResponse)
     )
 )]
@@ -80,7 +80,7 @@ pub async fn read_file(
         format!("stat -c %s '{}' 2>/dev/null || stat -f %z '{}'", escaped_path, escaped_path),
     ];
     let (exit_code, size_stdout, stderr) =
-        with_sandbox_client(&entry, move |c| {
+        with_machine_client(&entry, move |c| {
             c.vm_exec(size_cmd, vec![], None, Some(Duration::from_secs(5)))
         })
         .await?;
@@ -108,7 +108,7 @@ pub async fn read_file(
             format!("base64 -w 0 '{}'", escaped_path),
         ];
         let (exit_code, stdout, stderr) =
-            with_sandbox_client(&entry, move |c| {
+            with_machine_client(&entry, move |c| {
                 c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(30)))
             })
             .await?;
@@ -142,7 +142,7 @@ pub async fn read_file(
                 ),
             ];
             let (exit_code, stdout, stderr) =
-                with_sandbox_client(&entry, move |c| {
+                with_machine_client(&entry, move |c| {
                     c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(30)))
                 })
                 .await?;
@@ -172,7 +172,7 @@ pub async fn read_file(
     }
 }
 
-/// Write a file to a sandbox.
+/// Write a file to a machine.
 ///
 /// The content must be base64-encoded.
 #[utoipa::path(
@@ -223,7 +223,7 @@ pub async fn write_file(
                 "-c".into(),
                 format!("mkdir -p '{}'", parent.replace('\'', "'\\''")),
             ];
-            let _ = with_sandbox_client(&entry, move |c| {
+            let _ = with_machine_client(&entry, move |c| {
                 c.vm_exec(mkdir_cmd, vec![], None, Some(Duration::from_secs(10)))
             })
             .await;
@@ -245,7 +245,7 @@ pub async fn write_file(
         }
         let cmd = vec!["sh".into(), "-c".into(), script];
         let (exit_code, _stdout, stderr) =
-            with_sandbox_client(&entry, move |c| {
+            with_machine_client(&entry, move |c| {
                 c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(30)))
             })
             .await?;
@@ -269,13 +269,13 @@ pub async fn write_file(
             let script = format!("echo -n '{}' {} /tmp/_smolvm_write.b64", chunk, redirect);
             let cmd = vec!["sh".into(), "-c".into(), script];
             let (exit_code, _, stderr) =
-                with_sandbox_client(&entry, move |c| {
+                with_machine_client(&entry, move |c| {
                     c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(30)))
                 })
                 .await?;
             if exit_code != 0 {
                 let cleanup = vec!["sh".into(), "-c".into(), "rm -f /tmp/_smolvm_write.b64".into()];
-                let _ = with_sandbox_client(&entry, move |c| {
+                let _ = with_machine_client(&entry, move |c| {
                     c.vm_exec(cleanup, vec![], None, Some(Duration::from_secs(5)))
                 })
                 .await;
@@ -300,13 +300,13 @@ pub async fn write_file(
         }
         let cmd = vec!["sh".into(), "-c".into(), decode_script];
         let (exit_code, _, stderr) =
-            with_sandbox_client(&entry, move |c| {
+            with_machine_client(&entry, move |c| {
                 c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(30)))
             })
             .await?;
         if exit_code != 0 {
             let cleanup = vec!["sh".into(), "-c".into(), "rm -f /tmp/_smolvm_write.b64".into()];
-            let _ = with_sandbox_client(&entry, move |c| {
+            let _ = with_machine_client(&entry, move |c| {
                 c.vm_exec(cleanup, vec![], None, Some(Duration::from_secs(5)))
             })
             .await;
@@ -320,7 +320,7 @@ pub async fn write_file(
     Ok(Json(serde_json::json!({ "written": file_path })))
 }
 
-/// Delete a file from a sandbox.
+/// Delete a file from a machine.
 #[utoipa::path(
     delete,
     path = "/api/v1/machines/{id}/files/{path}",
@@ -331,7 +331,7 @@ pub async fn write_file(
     ),
     responses(
         (status = 200, description = "File deleted"),
-        (status = 404, description = "File or sandbox not found", body = ApiErrorResponse),
+        (status = 404, description = "File or machine not found", body = ApiErrorResponse),
         (status = 500, description = "Delete failed", body = ApiErrorResponse)
     )
 )]
@@ -359,7 +359,7 @@ pub async fn delete_file(
     let timeout = Some(Duration::from_secs(10));
 
     let (exit_code, _stdout, stderr) =
-        with_sandbox_client(&entry, move |c| c.vm_exec(cmd, vec![], None, timeout)).await?;
+        with_machine_client(&entry, move |c| c.vm_exec(cmd, vec![], None, timeout)).await?;
 
     if exit_code != 0 {
         return Err(ApiError::Internal(format!(
@@ -419,7 +419,7 @@ pub async fn list_files(
     let timeout = Some(Duration::from_secs(15));
 
     let (exit_code, stdout, _stderr) =
-        with_sandbox_client(&entry, move |c| c.vm_exec(cmd, vec![], None, timeout)).await?;
+        with_machine_client(&entry, move |c| c.vm_exec(cmd, vec![], None, timeout)).await?;
 
     if exit_code != 0 {
         // Directory might not exist or be empty — return empty list
@@ -542,7 +542,7 @@ pub async fn upload_file(
                 "-c".into(),
                 format!("mkdir -p '{}'", parent.replace('\'', "'\\''")),
             ];
-            let _ = with_sandbox_client(&entry, move |c| {
+            let _ = with_machine_client(&entry, move |c| {
                 c.vm_exec(mkdir_cmd, vec![], None, Some(Duration::from_secs(10)))
             })
             .await;
@@ -564,7 +564,7 @@ pub async fn upload_file(
         }
         let cmd = vec!["sh".into(), "-c".into(), script];
         let (exit_code, _, stderr) =
-            with_sandbox_client(&entry, move |c| {
+            with_machine_client(&entry, move |c| {
                 c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(60)))
             })
             .await?;
@@ -587,7 +587,7 @@ pub async fn upload_file(
             );
             let cmd = vec!["sh".into(), "-c".into(), script];
             let (exit_code, _, stderr) =
-                with_sandbox_client(&entry, move |c| {
+                with_machine_client(&entry, move |c| {
                     c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(60)))
                 })
                 .await?;
@@ -608,7 +608,7 @@ pub async fn upload_file(
                 "-c".into(),
                 format!("chmod {} '{}'", perms, escaped_path),
             ];
-            let _ = with_sandbox_client(&entry, move |c| {
+            let _ = with_machine_client(&entry, move |c| {
                 c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(10)))
             })
             .await;
@@ -621,7 +621,7 @@ pub async fn upload_file(
     })))
 }
 
-/// Upload a tar.gz archive and extract it in a sandbox directory.
+/// Upload a tar.gz archive and extract it in a machine directory.
 ///
 /// The request body should be the raw tar.gz bytes (Content-Type: application/gzip).
 #[utoipa::path(
@@ -669,7 +669,7 @@ pub async fn upload_archive(
         "-c".into(),
         format!("mkdir -p '{}'", escaped_dir),
     ];
-    let _ = with_sandbox_client(&entry, move |c| {
+    let _ = with_machine_client(&entry, move |c| {
         c.vm_exec(mkdir_cmd, vec![], None, Some(Duration::from_secs(10)))
     })
     .await;
@@ -688,7 +688,7 @@ pub async fn upload_archive(
         );
         let cmd = vec!["sh".into(), "-c".into(), script];
         let (exit_code, _, stderr) =
-            with_sandbox_client(&entry, move |c| {
+            with_machine_client(&entry, move |c| {
                 c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(120)))
             })
             .await?;
@@ -712,7 +712,7 @@ pub async fn upload_archive(
             let script = format!("echo -n '{}' {} /tmp/_smolvm_upload.b64", chunk, redirect);
             let cmd = vec!["sh".into(), "-c".into(), script];
             let (exit_code, _, stderr) =
-                with_sandbox_client(&entry, move |c| {
+                with_machine_client(&entry, move |c| {
                     c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(30)))
                 })
                 .await?;
@@ -720,7 +720,7 @@ pub async fn upload_archive(
             if exit_code != 0 {
                 // Clean up temp file on failure
                 let cleanup = vec!["sh".into(), "-c".into(), "rm -f /tmp/_smolvm_upload.b64".into()];
-                let _ = with_sandbox_client(&entry, move |c| {
+                let _ = with_machine_client(&entry, move |c| {
                     c.vm_exec(cleanup, vec![], None, Some(Duration::from_secs(5)))
                 })
                 .await;
@@ -740,7 +740,7 @@ pub async fn upload_archive(
         );
         let cmd = vec!["sh".into(), "-c".into(), extract_script];
         let (exit_code, _, stderr) =
-            with_sandbox_client(&entry, move |c| {
+            with_machine_client(&entry, move |c| {
                 c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(120)))
             })
             .await?;
@@ -748,7 +748,7 @@ pub async fn upload_archive(
         if exit_code != 0 {
             // Clean up temp file on failure
             let cleanup = vec!["sh".into(), "-c".into(), "rm -f /tmp/_smolvm_upload.b64".into()];
-            let _ = with_sandbox_client(&entry, move |c| {
+            let _ = with_machine_client(&entry, move |c| {
                 c.vm_exec(cleanup, vec![], None, Some(Duration::from_secs(5)))
             })
             .await;
@@ -813,7 +813,7 @@ pub async fn download_archive(
         ),
     ];
     let (exit_code, size_stdout, stderr) =
-        with_sandbox_client(&entry, move |c| {
+        with_machine_client(&entry, move |c| {
             c.vm_exec(tar_cmd, vec![], None, Some(Duration::from_secs(120)))
         })
         .await?;
@@ -829,7 +829,7 @@ pub async fn download_archive(
     if archive_size == 0 {
         // Clean up and return error
         let cleanup = vec!["sh".into(), "-c".into(), "rm -f /tmp/_smolvm_dl.tar.gz".into()];
-        let _ = with_sandbox_client(&entry, move |c| {
+        let _ = with_machine_client(&entry, move |c| {
             c.vm_exec(cleanup, vec![], None, Some(Duration::from_secs(5)))
         })
         .await;
@@ -852,14 +852,14 @@ pub async fn download_archive(
             ),
         ];
         let (exit_code, stdout, stderr) =
-            with_sandbox_client(&entry, move |c| {
+            with_machine_client(&entry, move |c| {
                 c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(30)))
             })
             .await?;
 
         if exit_code != 0 {
             let cleanup = vec!["sh".into(), "-c".into(), "rm -f /tmp/_smolvm_dl.tar.gz".into()];
-            let _ = with_sandbox_client(&entry, move |c| {
+            let _ = with_machine_client(&entry, move |c| {
                 c.vm_exec(cleanup, vec![], None, Some(Duration::from_secs(5)))
             })
             .await;
@@ -878,7 +878,7 @@ pub async fn download_archive(
 
     // Clean up temp file
     let cleanup = vec!["sh".into(), "-c".into(), "rm -f /tmp/_smolvm_dl.tar.gz".into()];
-    let _ = with_sandbox_client(&entry, move |c| {
+    let _ = with_machine_client(&entry, move |c| {
         c.vm_exec(cleanup, vec![], None, Some(Duration::from_secs(5)))
     })
     .await;

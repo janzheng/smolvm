@@ -1,6 +1,6 @@
 //! HTTP API server for smolvm.
 //!
-//! This module provides an HTTP API for managing sandboxes, containers, and images
+//! This module provides an HTTP API for managing machinees, containers, and images
 //! without CLI overhead.
 //!
 //! # Example
@@ -9,7 +9,7 @@
 //! # Start the server
 //! smolvm serve --listen 127.0.0.1:9090
 //!
-//! # Create a sandbox
+//! # Create a machine
 //! curl -X POST http://localhost:9090/api/v1/machines \
 //!   -H "Content-Type: application/json" \
 //!   -d '{"name": "test"}'
@@ -49,16 +49,16 @@ use state::ApiState;
     info(
         title = "smolvm API",
         version = "0.1.6",
-        description = "OCI-native microVM runtime API for managing sandboxes, containers, images, and microvms.",
+        description = "OCI-native microVM runtime API for managing machinees, containers, images, and microvms.",
         license(name = "Apache-2.0", url = "https://www.apache.org/licenses/LICENSE-2.0")
     ),
     tags(
         (name = "Health", description = "Health check endpoints"),
         (name = "Machines", description = "Machine lifecycle management"),
-        (name = "Execution", description = "Command execution in sandboxes"),
+        (name = "Execution", description = "Command execution in machinees"),
         (name = "Logs", description = "Log streaming"),
-        (name = "Files", description = "File CRUD operations in sandboxes"),
-        (name = "Containers", description = "Container management within sandboxes"),
+        (name = "Files", description = "File CRUD operations in machinees"),
+        (name = "Containers", description = "Container management within machinees"),
         (name = "Images", description = "OCI image management"),
         (name = "MicroVMs", description = "Persistent microVM management"),
         (name = "Jobs", description = "Work queue and job dispatch"),
@@ -71,7 +71,7 @@ use state::ApiState;
     paths(
         // Health
         handlers::health::health,
-        // Sandboxes
+        // Machinees
         handlers::machines::create_machine,
         handlers::machines::list_machines,
         handlers::machines::get_machine,
@@ -93,7 +93,7 @@ use state::ApiState;
         handlers::files::upload_archive,
         handlers::files::download_archive,
         // Snapshots
-        handlers::snapshots::push_sandbox,
+        handlers::snapshots::push_machine,
         handlers::snapshots::list_snapshots,
         handlers::snapshots::pull_snapshot,
         handlers::snapshots::delete_snapshot,
@@ -125,7 +125,7 @@ use state::ApiState;
         handlers::microvms::exec_microvm,
         handlers::microvms::resize_microvm,
         // Stats
-        handlers::stats::sandbox_stats,
+        handlers::stats::machine_stats,
         // Jobs
         handlers::jobs::submit_job,
         handlers::jobs::list_jobs,
@@ -278,8 +278,8 @@ pub fn create_router(state: Arc<ApiState>, cors_origins: Vec<String>, api_token:
         .route("/:id/exec/stream", get(handlers::exec::exec_stream))
         .route("/:id/exec/interactive", get(handlers::exec::exec_interactive));
 
-    // Sandbox routes with timeout
-    let sandbox_routes_with_timeout = Router::new()
+    // Machine routes with timeout
+    let machine_routes_with_timeout = Router::new()
         .route("/", post(handlers::machines::create_machine))
         .route("/", get(handlers::machines::list_machines))
         .route("/:id", get(handlers::machines::get_machine))
@@ -340,12 +340,12 @@ pub fn create_router(state: Arc<ApiState>, cors_origins: Vec<String>, api_token:
         // DNS filter status
         .route("/:id/dns", get(handlers::machines::dns_filter_status))
         // Snapshot push
-        .route("/:id/push", post(handlers::snapshots::push_sandbox))
+        .route("/:id/push", post(handlers::snapshots::push_machine))
         // Image routes
         .route("/:id/images", get(handlers::images::list_images))
         .route("/:id/images/pull", post(handlers::images::pull_image))
         // Stats
-        .route("/:id/stats", get(handlers::stats::sandbox_stats))
+        .route("/:id/stats", get(handlers::stats::machine_stats))
         // Permission routes
         .route(
             "/:id/permissions",
@@ -369,10 +369,10 @@ pub fn create_router(state: Arc<ApiState>, cors_origins: Vec<String>, api_token:
             API_REQUEST_TIMEOUT_SECS,
         )));
 
-    // Combine sandbox routes (with and without timeout)
-    let sandbox_routes = Router::new()
+    // Combine machine routes (with and without timeout)
+    let machine_routes = Router::new()
         .merge(logs_route)
-        .merge(sandbox_routes_with_timeout);
+        .merge(machine_routes_with_timeout);
 
     // MicroVM routes
     let microvm_routes = Router::new()
@@ -456,7 +456,7 @@ pub fn create_router(state: Arc<ApiState>, cors_origins: Vec<String>, api_token:
 
     // API v1 routes
     let api_v1 = Router::new()
-        .nest("/machines", sandbox_routes)
+        .nest("/machines", machine_routes)
         .nest("/microvms", microvm_routes)
         .nest("/snapshots", snapshot_routes)
         .nest("/starters", starters_route)

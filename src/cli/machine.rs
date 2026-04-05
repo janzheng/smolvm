@@ -1,14 +1,14 @@
-//! Sandbox commands for quick container execution.
+//! Machine commands for quick container execution.
 //!
-//! The sandbox provides a simple, well-defined entry point for running
+//! The machine provides a simple, well-defined entry point for running
 //! containers in an ephemeral microVM. It handles all the setup:
 //! - Starts an agent VM with sensible defaults
 //! - Pulls the OCI image
 //! - Runs the container
 //! - Cleans up after execution
 //!
-//! Sandboxes can also be created as persistent, named configurations using
-//! `sandbox create`, managed with `sandbox start/stop/ls/delete`.
+//! Machinees can also be created as persistent, named configurations using
+//! `machine create`, managed with `machine start/stop/ls/delete`.
 
 use crate::cli::parsers::{mounts_to_virtiofs_bindings, parse_duration, parse_env_list};
 use crate::cli::vm_common::{self, DeleteVmOptions, VmKind};
@@ -24,32 +24,32 @@ use std::time::Duration;
 
 const KIND: VmKind = VmKind::Machine;
 
-/// Quick sandbox commands for running containers
+/// Quick machine commands for running containers
 #[derive(Subcommand, Debug)]
 pub enum MachineCmd {
     /// Run a container image (ephemeral by default, use -d to keep running)
     Run(RunCmd),
 
-    /// Create a named sandbox configuration
+    /// Create a named machine configuration
     Create(CreateCmd),
 
-    /// Start a sandbox
+    /// Start a machine
     Start(StartCmd),
 
-    /// Execute a command in an existing sandbox container
+    /// Execute a command in an existing machine container
     Exec(ExecCmd),
 
-    /// Stop a running sandbox
+    /// Stop a running machine
     Stop(StopCmd),
 
-    /// Delete a sandbox configuration
+    /// Delete a machine configuration
     #[command(visible_alias = "rm")]
     Delete(DeleteCmd),
 
-    /// Show sandbox status and running containers
+    /// Show machine status and running containers
     Status(StatusCmd),
 
-    /// List all sandboxes
+    /// List all machinees
     #[command(visible_alias = "list")]
     Ls(LsCmd),
 
@@ -81,22 +81,22 @@ impl MachineCmd {
 // Exec Command
 // ============================================================================
 
-/// Execute a command in the running sandbox container.
+/// Execute a command in the running machine container.
 ///
-/// Requires a sandbox started with `sandbox run -d` or `sandbox start`.
-/// Use `sandbox status` to check if a sandbox is running.
+/// Requires a machine started with `machine run -d` or `machine start`.
+/// Use `machine status` to check if a machine is running.
 ///
 /// Examples:
-///   smolvm sandbox exec -- ls -la
-///   smolvm sandbox exec --name mysandbox -- ls -la
-///   smolvm sandbox exec -e FOO=bar -- env
+///   smolvm machine exec -- ls -la
+///   smolvm machine exec --name mymachine -- ls -la
+///   smolvm machine exec -e FOO=bar -- env
 #[derive(Args, Debug)]
 pub struct ExecCmd {
     /// Command and arguments to execute
     #[arg(trailing_var_arg = true, required = true, value_name = "COMMAND")]
     pub command: Vec<String>,
 
-    /// Target sandbox (default: "default")
+    /// Target machine (default: "default")
     #[arg(long, value_name = "NAME")]
     pub name: Option<String>,
 
@@ -120,13 +120,13 @@ impl ExecCmd {
         let (manager, mut client) =
             vm_common::ensure_running_and_connect(&self.name, vm_common::VmKind::Machine)?;
 
-        // Find the running container in the sandbox
+        // Find the running container in the machine
         let containers = client.list_containers()?;
         let container_id = containers
             .iter()
             .find(|c| c.state == "running")
             .map(|c| c.id.clone())
-            .ok_or_else(|| Error::agent("find container", "no running container in sandbox"))?;
+            .ok_or_else(|| Error::agent("find container", "no running container in machine"))?;
 
         let env = parse_env_list(&self.env);
 
@@ -147,16 +147,16 @@ impl ExecCmd {
 // Stop Command
 // ============================================================================
 
-/// Stop a running sandbox.
+/// Stop a running machine.
 ///
-/// Stops the default sandbox, or a named sandbox if specified.
+/// Stops the default machine, or a named machine if specified.
 ///
 /// Examples:
-///   smolvm sandbox stop
-///   smolvm sandbox stop mysandbox
+///   smolvm machine stop
+///   smolvm machine stop mymachine
 #[derive(Args, Debug)]
 pub struct StopCmd {
-    /// Sandbox to stop (default: "default")
+    /// Machine to stop (default: "default")
     #[arg(value_name = "NAME")]
     pub name: Option<String>,
 }
@@ -175,14 +175,14 @@ impl StopCmd {
 // Status Command
 // ============================================================================
 
-/// Show sandbox status.
+/// Show machine status.
 ///
 /// Examples:
-///   smolvm sandbox status
-///   smolvm sandbox status mysandbox
+///   smolvm machine status
+///   smolvm machine status mymachine
 #[derive(Args, Debug)]
 pub struct StatusCmd {
-    /// Sandbox to check (default: "default")
+    /// Machine to check (default: "default")
     #[arg(value_name = "NAME")]
     pub name: Option<String>,
 }
@@ -208,17 +208,17 @@ impl StatusCmd {
 // Run Command
 // ============================================================================
 
-/// Run a container in a sandbox.
+/// Run a container in a machine.
 ///
 /// By default, runs in ephemeral mode (container + VM cleaned up after exit).
-/// Use -d/--detach to keep the sandbox running for later interaction.
+/// Use -d/--detach to keep the machine running for later interaction.
 ///
 /// Examples:
-///   smolvm sandbox run alpine -- echo "Hello"     # Ephemeral, exits after
-///   smolvm sandbox run -it alpine                  # Interactive shell
-///   smolvm sandbox run -d ubuntu                   # Detached, keeps running
-///   smolvm sandbox run -d -p 8080:80 nginx        # Web server with port
-///   smolvm sandbox run -v ./src:/app node -- npm start
+///   smolvm machine run alpine -- echo "Hello"     # Ephemeral, exits after
+///   smolvm machine run -it alpine                  # Interactive shell
+///   smolvm machine run -d ubuntu                   # Detached, keeps running
+///   smolvm machine run -d -p 8080:80 nginx        # Web server with port
+///   smolvm machine run -v ./src:/app node -- npm start
 #[derive(Args, Debug)]
 pub struct RunCmd {
     /// Container image (e.g., alpine, ubuntu:22.04, ghcr.io/org/image)
@@ -229,7 +229,7 @@ pub struct RunCmd {
     #[arg(trailing_var_arg = true, value_name = "COMMAND")]
     pub command: Vec<String>,
 
-    /// Run in background and keep sandbox alive after command exits
+    /// Run in background and keep machine alive after command exits
     #[arg(short = 'd', long, help_heading = "Execution")]
     pub detach: bool,
 
@@ -394,11 +394,11 @@ impl RunCmd {
         } else {
             String::new()
         };
-        println!("Starting {} sandbox{}{}...", mode, mount_info, port_info);
+        println!("Starting {} machine{}{}...", mode, mount_info, port_info);
 
         let freshly_started = manager
             .ensure_running_with_full_config(mounts.clone(), ports, resources)
-            .map_err(|e| Error::agent("start sandbox", e.to_string()))?;
+            .map_err(|e| Error::agent("start machine", e.to_string()))?;
 
         // Connect to agent
         let mut client = AgentClient::connect_with_retry(manager.vsock_socket())?;
@@ -446,7 +446,7 @@ impl RunCmd {
                 mount_bindings,
             )?;
 
-            // Persist "default" record so `sandbox ls` shows this VM
+            // Persist "default" record so `machine ls` shows this VM
             {
                 use smolvm::config::SmolvmConfig;
                 use vm_common::DefaultVmOverrides;
@@ -483,7 +483,7 @@ impl RunCmd {
             }
 
             println!("Machine running (container: {})", &info.id[..12]);
-            println!("\nTo interact with the sandbox:");
+            println!("\nTo interact with the machine:");
             println!(
                 "  smolvm container exec default {} -- <command>",
                 &info.id[..12]
@@ -492,10 +492,10 @@ impl RunCmd {
                 "  smolvm container exec default {} -it -- /bin/sh",
                 &info.id[..12]
             );
-            println!("\nTo stop the sandbox:");
-            println!("  smolvm sandbox stop");
+            println!("\nTo stop the machine:");
+            println!("  smolvm machine stop");
 
-            // Keep sandbox running
+            // Keep machine running
             manager.detach();
             Ok(())
         } else {
@@ -528,9 +528,9 @@ impl RunCmd {
                 exit_code
             };
 
-            // Stop the sandbox (ephemeral mode)
+            // Stop the machine (ephemeral mode)
             if let Err(e) = manager.stop() {
-                tracing::warn!(error = %e, "failed to stop sandbox");
+                tracing::warn!(error = %e, "failed to stop machine");
             }
 
             std::process::exit(exit_code);
@@ -542,18 +542,18 @@ impl RunCmd {
 // Create Command
 // ============================================================================
 
-/// Create a named sandbox configuration.
+/// Create a named machine configuration.
 ///
-/// Creates a persistent sandbox that can be started later with `sandbox start`.
+/// Creates a persistent machine that can be started later with `machine start`.
 /// Use `smolvm container` commands to run containers inside.
 ///
 /// Examples:
-///   smolvm sandbox create mysandbox
-///   smolvm sandbox create webserver --cpus 2 --mem 1024 -p 80:80
-///   smolvm sandbox create dev -v ./src:/app --net
+///   smolvm machine create mymachine
+///   smolvm machine create webserver --cpus 2 --mem 1024 -p 80:80
+///   smolvm machine create dev -v ./src:/app --net
 #[derive(Args, Debug)]
 pub struct CreateCmd {
-    /// Name for the sandbox
+    /// Name for the machine
     #[arg(value_name = "NAME")]
     pub name: String,
 
@@ -577,7 +577,7 @@ pub struct CreateCmd {
     #[arg(short = 'v', long = "volume", value_name = "HOST:GUEST[:ro]")]
     pub volume: Vec<String>,
 
-    /// Expose port from sandbox to host (can be used multiple times)
+    /// Expose port from machine to host (can be used multiple times)
     #[arg(short = 'p', long = "port", value_parser = PortMapping::parse, value_name = "HOST:GUEST")]
     pub port: Vec<PortMapping>,
 
@@ -626,16 +626,16 @@ impl CreateCmd {
 // Start Command
 // ============================================================================
 
-/// Start a sandbox.
+/// Start a machine.
 ///
-/// Starts a named sandbox, or the default sandbox if no name given.
+/// Starts a named machine, or the default machine if no name given.
 ///
 /// Examples:
-///   smolvm sandbox start mysandbox
-///   smolvm sandbox start
+///   smolvm machine start mymachine
+///   smolvm machine start
 #[derive(Args, Debug)]
 pub struct StartCmd {
-    /// Sandbox to start (default: "default")
+    /// Machine to start (default: "default")
     #[arg(value_name = "NAME")]
     pub name: Option<String>,
 }
@@ -655,16 +655,16 @@ impl StartCmd {
 // Delete Command
 // ============================================================================
 
-/// Delete a sandbox configuration.
+/// Delete a machine configuration.
 ///
-/// Stops the sandbox if running, then removes its configuration.
+/// Stops the machine if running, then removes its configuration.
 ///
 /// Examples:
-///   smolvm sandbox delete mysandbox
-///   smolvm sandbox delete mysandbox --force
+///   smolvm machine delete mymachine
+///   smolvm machine delete mymachine --force
 #[derive(Args, Debug)]
 pub struct DeleteCmd {
-    /// Sandbox to delete
+    /// Machine to delete
     #[arg(value_name = "NAME")]
     pub name: String,
 
@@ -690,14 +690,14 @@ impl DeleteCmd {
 // Ls Command
 // ============================================================================
 
-/// List all sandboxes.
+/// List all machinees.
 ///
-/// Shows all configured sandboxes with their state, resources, and configuration.
+/// Shows all configured machinees with their state, resources, and configuration.
 ///
 /// Examples:
-///   smolvm sandbox ls
-///   smolvm sandbox ls --verbose
-///   smolvm sandbox ls --json
+///   smolvm machine ls
+///   smolvm machine ls --verbose
+///   smolvm machine ls --json
 #[derive(Args, Debug)]
 pub struct LsCmd {
     /// Show detailed configuration (mounts, ports, PID)
@@ -721,12 +721,12 @@ impl LsCmd {
 
 /// List cached images and storage usage.
 ///
-/// Shows all OCI images cached in the sandbox storage, along with their
+/// Shows all OCI images cached in the machine storage, along with their
 /// sizes and layer counts. Also displays total storage usage.
 ///
 /// Examples:
-///   smolvm sandbox images
-///   smolvm sandbox images --json
+///   smolvm machine images
+///   smolvm machine images --json
 #[derive(Args, Debug)]
 pub struct ImagesCmd {
     /// Output in JSON format
@@ -742,7 +742,7 @@ impl ImagesCmd {
         let mut client = if manager.try_connect_existing().is_some() {
             AgentClient::connect_with_retry(manager.vsock_socket())?
         } else {
-            println!("Starting sandbox VM to query storage...");
+            println!("Starting machine VM to query storage...");
             manager.start()?;
             AgentClient::connect_with_retry(manager.vsock_socket())?
         };
@@ -814,9 +814,9 @@ impl ImagesCmd {
 /// Use --dry-run to see what would be removed without actually deleting.
 ///
 /// Examples:
-///   smolvm sandbox prune --dry-run
-///   smolvm sandbox prune
-///   smolvm sandbox prune --all
+///   smolvm machine prune --dry-run
+///   smolvm machine prune
+///   smolvm machine prune --all
 #[derive(Args, Debug)]
 pub struct PruneCmd {
     /// Show what would be removed without actually removing
@@ -836,7 +836,7 @@ impl PruneCmd {
         let mut client = if manager.try_connect_existing().is_some() {
             AgentClient::connect_with_retry(manager.vsock_socket())?
         } else {
-            println!("Starting sandbox VM...");
+            println!("Starting machine VM...");
             manager.start()?;
             AgentClient::connect_with_retry(manager.vsock_socket())?
         };
@@ -877,9 +877,9 @@ impl PruneCmd {
                 println!("Freed {} of unreferenced layers", format_bytes(freed));
                 println!();
                 println!(
-                    "Note: To remove all images, stop the sandbox and delete the storage disk:"
+                    "Note: To remove all images, stop the machine and delete the storage disk:"
                 );
-                println!("  smolvm sandbox stop");
+                println!("  smolvm machine stop");
                 println!("  rm ~/.smolvm/vms/default/storage.raw");
             }
         } else {

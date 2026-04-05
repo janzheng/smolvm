@@ -12,7 +12,7 @@ Open `sdk-ts/`. Read `mod.ts`. Write a script that does something real.
 ## Build this
 
 Write a Deno script that:
-1. Creates a sandbox
+1. Creates a machine
 2. Writes a small project into it (multiple files)
 3. Runs the project
 4. Captures and displays the output
@@ -26,19 +26,19 @@ Don't copy examples. Just use the types and see if you can figure it out.
 - Does TypeScript autocomplete guide you, or do you need to read source?
 - Method names: are they what you'd guess? `exec` vs `execute` vs `run`?
 - Error handling: what happens when you forget to await? When the server is
-  down? When a sandbox doesn't exist?
-- Is the sandbox object stateful or do you pass names around?
+  down? When a machine doesn't exist?
+- Is the machine object stateful or do you pass names around?
 - File write/read: is the base64 encoding obvious or surprising?
 - Can you chain operations fluently or is it verbose?
 - Compare: how would this look with raw `fetch()` calls? Is the SDK worth it?
 
 ## Bonus challenges
 
-- Write a "sandbox pool" — create 5 sandboxes, run different commands in
+- Write a "machine pool" — create 5 machinees, run different commands in
   parallel, collect all results
-- Write a "workspace sync" — mirror a local directory into a sandbox using
+- Write a "workspace sync" — mirror a local directory into a machine using
   the file API
-- Write an "experiment runner" — clone a base sandbox, run a task in the
+- Write an "experiment runner" — clone a base machine, run a task in the
   clone, diff against base, print the diff
 
 ## What we're really testing

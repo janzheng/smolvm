@@ -1,7 +1,7 @@
 /**
  * MicroVM — persistent named VM that survives across process invocations.
  *
- * Unlike Sandbox (which auto-starts on create and deletes storage on cleanup),
+ * Unlike Machine (which auto-starts on create and deletes storage on cleanup),
  * MicroVM provides explicit lifecycle control and supports reconnection to
  * already-running VMs. No container support (no run/pullImage/listImages).
  */
@@ -11,7 +11,7 @@ import { parseNativeError } from "./errors.js";
 import { loadNativeBinding } from "./native-binding.js";
 import type { MicroVMConfig, ExecOptions, MountSpec, PortSpec } from "./types.js";
 
-const { NapiSandbox } = loadNativeBinding();
+const { NapiMachine } = loadNativeBinding();
 
 /**
  * Convert SDK ExecOptions to the NAPI format.
@@ -70,7 +70,7 @@ async function wrapNative<T>(fn: () => Promise<T>): Promise<T> {
 /**
  * A persistent named MicroVM.
  *
- * MicroVMs differ from Sandboxes:
+ * MicroVMs differ from Machinees:
  * - `create()` does NOT auto-start — call `start()` explicitly
  * - `connect()` reconnects to an already-running VM by name
  * - No container support (`run()`, `pullImage()`, `listImages()`)
@@ -79,9 +79,9 @@ async function wrapNative<T>(fn: () => Promise<T>): Promise<T> {
  */
 export class MicroVM {
   readonly name: string;
-  private native: InstanceType<typeof NapiSandbox>;
+  private native: InstanceType<typeof NapiMachine>;
 
-  private constructor(name: string, native: InstanceType<typeof NapiSandbox>) {
+  private constructor(name: string, native: InstanceType<typeof NapiMachine>) {
     this.name = name;
     this.native = native;
   }
@@ -90,7 +90,7 @@ export class MicroVM {
    * Create a new MicroVM (does NOT start it — call `start()` explicitly).
    */
   static async create(config: MicroVMConfig): Promise<MicroVM> {
-    const native = new NapiSandbox(toNapiConfig(config));
+    const native = new NapiMachine(toNapiConfig(config));
     return new MicroVM(config.name, native);
   }
 
@@ -101,7 +101,7 @@ export class MicroVM {
    */
   static async connect(name: string): Promise<MicroVM> {
     try {
-      const native = NapiSandbox.connect(name);
+      const native = NapiMachine.connect(name);
       return new MicroVM(name, native);
     } catch (err) {
       throw parseNativeError(err as Error);
@@ -169,7 +169,7 @@ export class MicroVM {
 /**
  * Create a MicroVM, start it, run a function, then stop it.
  *
- * Unlike `withSandbox`, this stops (not deletes) the VM — storage is preserved.
+ * Unlike `withMachine`, this stops (not deletes) the VM — storage is preserved.
  *
  * @example
  * ```ts

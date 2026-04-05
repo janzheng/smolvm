@@ -1,5 +1,5 @@
 #!/bin/sh
-# Built-in git MCP server for smolvm sandboxes.
+# Built-in git MCP server for smolvm machinees.
 # Runs inside a VM — JSON-RPC 2.0 over newline-delimited stdio.
 # Requires: sh, jq, git
 

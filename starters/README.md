@@ -14,15 +14,15 @@ smolvm microvm exec --name dev -- python3 --version
 
 ### Running OCI images
 
-Smolfiles can also configure VM resources for OCI container images via `sandbox run`:
+Smolfiles can also configure VM resources for OCI container images via `machine run`:
 
 ```bash
 # Run the OpenClaw gateway (long-running, port-forwarded)
-smolvm sandbox run --net -d -s examples/openclaw-app/openclaw.smolfile alpine/openclaw:main -- openclaw gateway --port 18789 --allow-unconfigured
+smolvm machine run --net -d -s examples/openclaw-app/openclaw.smolfile alpine/openclaw:main -- openclaw gateway --port 18789 --allow-unconfigured
 curl http://localhost:18789/health
 
 # One-off command
-smolvm sandbox run --net -s examples/openclaw-app/openclaw.smolfile alpine/openclaw:main -- openclaw --version
+smolvm machine run --net -s examples/openclaw-app/openclaw.smolfile alpine/openclaw:main -- openclaw --version
 ```
 
 ## Smolfile Reference

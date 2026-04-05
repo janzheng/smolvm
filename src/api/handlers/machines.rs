@@ -1,4 +1,4 @@
-//! Sandbox lifecycle handlers.
+//! Machine lifecycle handlers.
 
 use axum::{
     extract::{Path, Query, State},
@@ -11,7 +11,7 @@ use std::time::Duration;
 use crate::agent::{vm_data_dir, AgentManager, HostMount};
 use crate::api::error::{classify_ensure_running_error, ApiError};
 use crate::api::state::{
-    ensure_running_and_persist, ensure_sandbox_running, restart_spec_to_config, with_sandbox_client,
+    ensure_running_and_persist, ensure_machine_running, restart_spec_to_config, with_machine_client,
     ApiState, ReservationGuard, MachineRegistration,
 };
 use crate::api::types::{
@@ -26,7 +26,7 @@ use crate::api::types::MachineRole;
 use crate::config::RecordState;
 use crate::storage::{clone_or_copy_file, OverlayDisk, StorageDisk, OVERLAY_DISK_FILENAME, STORAGE_DISK_FILENAME};
 
-/// Maximum sandbox name length.
+/// Maximum machine name length.
 /// Socket path is ~/Library/Caches/smolvm/vms/{name}/agent.sock — a name
 /// of 40 chars results in a socket path of ~90 chars, leaving some margin.
 const MAX_NAME_LENGTH: usize = 40;
@@ -67,7 +67,7 @@ pub(crate) fn machine_entry_to_info(
     }
 }
 
-/// Create a new sandbox.
+/// Create a new machine.
 #[utoipa::path(
     post,
     path = "/api/v1/machines",
@@ -190,7 +190,7 @@ pub async fn create_machine(
                 effective_default_user = starter.default_user.map(|s| s.to_string());
             }
             tracing::info!(
-                sandbox = %req.name,
+                machine = %req.name,
                 starter = %starter_name,
                 "applying starter configuration"
             );
@@ -213,7 +213,7 @@ pub async fn create_machine(
         let adduser_cmd = format!("id {0} >/dev/null 2>&1 || adduser -D {0}", user);
         let cmd = adduser_cmd;
         let (exit_code, _stdout, stderr) =
-            with_sandbox_client(&entry, move |c| {
+            with_machine_client(&entry, move |c| {
                 c.vm_exec(
                     vec!["sh".into(), "-c".into(), cmd],
                     vec![],
@@ -225,7 +225,7 @@ pub async fn create_machine(
 
         if exit_code != 0 {
             tracing::warn!(
-                sandbox = %req.name,
+                machine = %req.name,
                 user = %user,
                 exit_code,
                 stderr = %stderr,
@@ -258,7 +258,7 @@ pub async fn create_machine(
         with_dns.append(&mut extra_init_commands);
         extra_init_commands = with_dns;
         tracing::info!(
-            sandbox = %req.name,
+            machine = %req.name,
             domains = ?resources.allowed_domains,
             "DNS egress filtering will be configured"
         );
@@ -285,7 +285,7 @@ pub async fn create_machine(
             let cmd_for_exec = cmd.clone();
             let env_for_cmd = init_env.clone();
             let (exit_code, _stdout, stderr) =
-                with_sandbox_client(&entry, move |c| {
+                with_machine_client(&entry, move |c| {
                     c.vm_exec(
                         vec!["sh".into(), "-c".into(), cmd_for_exec],
                         env_for_cmd,
@@ -297,7 +297,7 @@ pub async fn create_machine(
 
             if exit_code != 0 {
                 tracing::warn!(
-                    sandbox = %req.name,
+                    machine = %req.name,
                     cmd = %cmd,
                     exit_code,
                     stderr = %stderr,
@@ -309,8 +309,8 @@ pub async fn create_machine(
         // Re-read state after init commands (VM is now running)
         let entry = state.get_machine(&req.name)?;
         let entry_lock = entry.lock();
-        crate::api::metrics::record_sandbox_created();
-        crate::api::metrics::record_sandbox_boot_time(_create_start.elapsed().as_secs_f64());
+        crate::api::metrics::record_machine_created();
+        crate::api::metrics::record_machine_boot_time(_create_start.elapsed().as_secs_f64());
         return Ok(Json(machine_entry_to_info(req.name.clone(), &entry_lock)));
     }
 
@@ -318,13 +318,13 @@ pub async fn create_machine(
     if has_default_user {
         let entry = state.get_machine(&req.name)?;
         let entry_lock = entry.lock();
-        crate::api::metrics::record_sandbox_created();
-        crate::api::metrics::record_sandbox_boot_time(_create_start.elapsed().as_secs_f64());
+        crate::api::metrics::record_machine_created();
+        crate::api::metrics::record_machine_boot_time(_create_start.elapsed().as_secs_f64());
         return Ok(Json(machine_entry_to_info(req.name.clone(), &entry_lock)));
     }
 
-    crate::api::metrics::record_sandbox_created();
-    crate::api::metrics::record_sandbox_boot_time(_create_start.elapsed().as_secs_f64());
+    crate::api::metrics::record_machine_created();
+    crate::api::metrics::record_machine_boot_time(_create_start.elapsed().as_secs_f64());
     Ok(Json(MachineInfo {
         name: req.name.clone(),
         state: agent_state,
@@ -337,21 +337,21 @@ pub async fn create_machine(
     }))
 }
 
-/// List all sandboxes.
+/// List all machinees.
 #[utoipa::path(
     get,
     path = "/api/v1/machines",
     tag = "Machinees",
     responses(
-        (status = 200, description = "List of sandboxes", body = ListMachinesResponse)
+        (status = 200, description = "List of machinees", body = ListMachinesResponse)
     )
 )]
 pub async fn list_machines(State(state): State<Arc<ApiState>>) -> Json<ListMachinesResponse> {
-    let sandboxes = state.list_machines();
-    Json(ListMachinesResponse { sandboxes })
+    let machinees = state.list_machines();
+    Json(ListMachinesResponse { machinees })
 }
 
-/// Get sandbox status.
+/// Get machine status.
 #[utoipa::path(
     get,
     path = "/api/v1/machines/{id}",
@@ -377,7 +377,7 @@ pub async fn get_machine(
     Ok(Json(machine_entry_to_info(id, &entry)))
 }
 
-/// Start a sandbox.
+/// Start a machine.
 #[utoipa::path(
     post,
     path = "/api/v1/machines/{id}/start",
@@ -415,8 +415,8 @@ pub async fn start_machine(
     // Clear user_stopped flag since user is explicitly starting
     state.mark_user_stopped(&id, false);
 
-    // Start sandbox (child process closes inherited fds, so DB stays open).
-    ensure_sandbox_running(&entry)
+    // Start machine (child process closes inherited fds, so DB stays open).
+    ensure_machine_running(&entry)
         .await
         .map_err(classify_ensure_running_error)?;
 
@@ -433,7 +433,7 @@ pub async fn start_machine(
 
     // Persist state to config
     state
-        .update_sandbox_state(&id, RecordState::Running, pid)
+        .update_machine_state(&id, RecordState::Running, pid)
         .map_err(ApiError::database)?;
 
     Ok(Json(MachineInfo {
@@ -448,7 +448,7 @@ pub async fn start_machine(
     }))
 }
 
-/// Stop a sandbox.
+/// Stop a machine.
 #[utoipa::path(
     post,
     path = "/api/v1/machines/{id}/stop",
@@ -491,7 +491,7 @@ pub async fn stop_machine(
     // Mark as user-stopped before stopping (prevents auto-restart)
     state.mark_user_stopped(&id, true);
 
-    // Stop the sandbox in a blocking task (clone Arc<AgentManager> to avoid holding entry lock)
+    // Stop the machine in a blocking task (clone Arc<AgentManager> to avoid holding entry lock)
     let manager = {
         let entry = entry.lock();
         std::sync::Arc::clone(&entry.manager)
@@ -517,7 +517,7 @@ pub async fn stop_machine(
 
     // Persist state to config
     state
-        .update_sandbox_state(&id, RecordState::Stopped, None)
+        .update_machine_state(&id, RecordState::Stopped, None)
         .map_err(ApiError::database)?;
 
     Ok(Json(MachineInfo {
@@ -532,7 +532,7 @@ pub async fn stop_machine(
     }))
 }
 
-/// Delete a sandbox.
+/// Delete a machine.
 #[utoipa::path(
     delete,
     path = "/api/v1/machines/{id}",
@@ -557,10 +557,10 @@ pub async fn delete_machine(
     if let Some(token) = extract_bearer_token(&headers) {
         check_permission(&state, &id, &token, MachineRole::Owner)?;
     }
-    // First, get the entry and stop the sandbox (before removing from registry).
+    // First, get the entry and stop the machine (before removing from registry).
     let entry = state.get_machine(&id)?;
 
-    // Stop the sandbox if running (clone Arc<AgentManager> to avoid holding entry lock)
+    // Stop the machine if running (clone Arc<AgentManager> to avoid holding entry lock)
     let manager = {
         let entry = entry.lock();
         std::sync::Arc::clone(&entry.manager)
@@ -582,7 +582,7 @@ pub async fn delete_machine(
         if still_running && !query.force {
             // VM is still running and force not specified - refuse to orphan it
             return Err(ApiError::Conflict(format!(
-                "failed to stop sandbox '{}': {}. VM is still running. \
+                "failed to stop machine '{}': {}. VM is still running. \
                  Use ?force=true to delete anyway (will orphan the VM process)",
                 id, e
             )));
@@ -590,7 +590,7 @@ pub async fn delete_machine(
 
         // Either VM is not running, or force=true - proceed with warning
         tracing::warn!(
-            sandbox = %id,
+            machine = %id,
             error = %e,
             still_running = still_running,
             force = query.force,
@@ -599,45 +599,45 @@ pub async fn delete_machine(
     }
 
     // Now remove from registry and database
-    state.remove_sandbox(&id)?;
+    state.remove_machine(&id)?;
 
     // Clean up VM disk files (overlay, storage, sockets) from cache directory.
-    // Without this, each deleted sandbox leaks ~30GB of disk files.
+    // Without this, each deleted machine leaks ~30GB of disk files.
     let data_dir = vm_data_dir(&id);
     if data_dir.exists() {
         if let Err(e) = std::fs::remove_dir_all(&data_dir) {
             tracing::warn!(
-                sandbox = %id,
+                machine = %id,
                 path = %data_dir.display(),
                 error = %e,
                 "failed to clean up VM data directory"
             );
         } else {
-            tracing::info!(sandbox = %id, "cleaned up VM data directory");
+            tracing::info!(machine = %id, "cleaned up VM data directory");
         }
     }
 
-    crate::api::metrics::record_sandbox_deleted();
+    crate::api::metrics::record_machine_deleted();
     Ok(Json(DeleteResponse { deleted: id }))
 }
 
-/// Clone an existing sandbox.
+/// Clone an existing machine.
 ///
-/// Creates a new sandbox by copying the overlay and storage disks from an
-/// existing sandbox. On macOS with APFS, this is instant (copy-on-write).
-/// The source sandbox does not need to be stopped.
+/// Creates a new machine by copying the overlay and storage disks from an
+/// existing machine. On macOS with APFS, this is instant (copy-on-write).
+/// The source machine does not need to be stopped.
 #[utoipa::path(
     post,
     path = "/api/v1/machines/{id}/clone",
     tag = "Machinees",
     params(
-        ("id" = String, Path, description = "Source sandbox name")
+        ("id" = String, Path, description = "Source machine name")
     ),
     request_body = CloneMachineRequest,
     responses(
         (status = 200, description = "Machine cloned", body = MachineInfo),
         (status = 400, description = "Invalid request", body = ApiErrorResponse),
-        (status = 404, description = "Source sandbox not found", body = ApiErrorResponse),
+        (status = 404, description = "Source machine not found", body = ApiErrorResponse),
         (status = 409, description = "Clone name already exists", body = ApiErrorResponse)
     )
 )]
@@ -753,17 +753,17 @@ pub async fn clone_machine(
     }))
 }
 
-/// Compare two sandboxes.
+/// Compare two machinees.
 ///
-/// Lists files that differ between two sandboxes by executing commands
+/// Lists files that differ between two machinees by executing commands
 /// inside each VM and comparing the results.
 #[utoipa::path(
     get,
     path = "/api/v1/machines/{id}/diff/{other}",
     tag = "Machinees",
     params(
-        ("id" = String, Path, description = "First sandbox name"),
-        ("other" = String, Path, description = "Second sandbox name")
+        ("id" = String, Path, description = "First machine name"),
+        ("other" = String, Path, description = "Second machine name")
     ),
     responses(
         (status = 200, description = "Diff result", body = DiffResponse),
@@ -775,7 +775,7 @@ pub async fn diff_machines(
     State(state): State<Arc<ApiState>>,
     Path((id, other)): Path<(String, String)>,
 ) -> Result<Json<DiffResponse>, ApiError> {
-    // Get both sandbox entries
+    // Get both machine entries
     let entry_a = state.get_machine(&id)?;
     let entry_b = state.get_machine(&other)?;
 
@@ -787,7 +787,7 @@ pub async fn diff_machines(
         .await
         .map_err(classify_ensure_running_error)?;
 
-    // Get file listing with checksums from both sandboxes
+    // Get file listing with checksums from both machinees
     // Exclude /proc, /sys, /dev, /tmp to focus on meaningful differences
     let hash_cmd = vec![
         "sh".to_string(),
@@ -796,13 +796,13 @@ pub async fn diff_machines(
     ];
 
     let cmd_a = hash_cmd.clone();
-    let (_, stdout_a, _) = with_sandbox_client(&entry_a, move |c| {
+    let (_, stdout_a, _) = with_machine_client(&entry_a, move |c| {
         c.vm_exec(cmd_a, vec![], None, Some(Duration::from_secs(60)))
     })
     .await?;
 
     let cmd_b = hash_cmd;
-    let (_, stdout_b, _) = with_sandbox_client(&entry_b, move |c| {
+    let (_, stdout_b, _) = with_machine_client(&entry_b, move |c| {
         c.vm_exec(cmd_b, vec![], None, Some(Duration::from_secs(60)))
     })
     .await?;
@@ -848,9 +848,9 @@ pub async fn diff_machines(
     }))
 }
 
-/// Merge files from one sandbox into another.
+/// Merge files from one machine into another.
 ///
-/// Transfers changed files from the source sandbox to the target sandbox.
+/// Transfers changed files from the source machine to the target machine.
 /// Uses the diff output to identify changed files, then copies them via
 /// base64-encoded exec channel.
 #[utoipa::path(
@@ -858,8 +858,8 @@ pub async fn diff_machines(
     path = "/api/v1/machines/{id}/merge/{target}",
     tag = "Machinees",
     params(
-        ("id" = String, Path, description = "Source sandbox name"),
-        ("target" = String, Path, description = "Target sandbox name")
+        ("id" = String, Path, description = "Source machine name"),
+        ("target" = String, Path, description = "Target machine name")
     ),
     request_body = MergeMachineRequest,
     responses(
@@ -873,7 +873,7 @@ pub async fn merge_machines(
     Path((source_id, target_id)): Path<(String, String)>,
     Json(req): Json<MergeMachineRequest>,
 ) -> Result<Json<MergeResponse>, ApiError> {
-    // Get both sandbox entries
+    // Get both machine entries
     let entry_source = state.get_machine(&source_id)?;
     let entry_target = state.get_machine(&target_id)?;
 
@@ -885,7 +885,7 @@ pub async fn merge_machines(
         .await
         .map_err(classify_ensure_running_error)?;
 
-    // Get file listing with checksums from both sandboxes (reuse diff logic)
+    // Get file listing with checksums from both machinees (reuse diff logic)
     let hash_cmd = vec![
         "sh".to_string(),
         "-c".to_string(),
@@ -893,13 +893,13 @@ pub async fn merge_machines(
     ];
 
     let cmd_s = hash_cmd.clone();
-    let (_, stdout_source, _) = with_sandbox_client(&entry_source, move |c| {
+    let (_, stdout_source, _) = with_machine_client(&entry_source, move |c| {
         c.vm_exec(cmd_s, vec![], None, Some(Duration::from_secs(60)))
     })
     .await?;
 
     let cmd_t = hash_cmd;
-    let (_, stdout_target, _) = with_sandbox_client(&entry_target, move |c| {
+    let (_, stdout_target, _) = with_machine_client(&entry_target, move |c| {
         c.vm_exec(cmd_t, vec![], None, Some(Duration::from_secs(60)))
     })
     .await?;
@@ -951,7 +951,7 @@ pub async fn merge_machines(
         let read_cmd = format!("base64 '{}'", file_path);
         let cmd = vec!["sh".into(), "-c".into(), read_cmd];
         let (exit_code, b64_content, _) =
-            with_sandbox_client(&entry_source, move |c| {
+            with_machine_client(&entry_source, move |c| {
                 c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(30)))
             })
             .await?;
@@ -972,7 +972,7 @@ pub async fn merge_machines(
         );
         let cmd = vec!["sh".into(), "-c".into(), write_cmd];
         let (exit_code, _, stderr) =
-            with_sandbox_client(&entry_target, move |c| {
+            with_machine_client(&entry_target, move |c| {
                 c.vm_exec(cmd, vec![], None, Some(Duration::from_secs(30)))
             })
             .await?;
@@ -997,7 +997,7 @@ pub async fn merge_machines(
     }))
 }
 
-/// Debug mount information for a sandbox.
+/// Debug mount information for a machine.
 ///
 /// Returns configured mounts and guest-side mount state for diagnosing
 /// virtiofs issues.
@@ -1029,7 +1029,7 @@ pub async fn debug_mounts(
     };
 
     // Guest-side mount output
-    let (_, guest_mounts, _) = with_sandbox_client(&entry, |c| {
+    let (_, guest_mounts, _) = with_machine_client(&entry, |c| {
         c.vm_exec(
             vec!["mount".into()],
             vec![],
@@ -1040,7 +1040,7 @@ pub async fn debug_mounts(
     .await?;
 
     // Guest-side /mnt/ listing
-    let (_, mnt_listing, _) = with_sandbox_client(&entry, |c| {
+    let (_, mnt_listing, _) = with_machine_client(&entry, |c| {
         c.vm_exec(
             vec!["sh".into(), "-c".into(), "ls -la /mnt/ 2>/dev/null || echo '(empty)'".into()],
             vec![],
@@ -1051,7 +1051,7 @@ pub async fn debug_mounts(
     .await?;
 
     // Check virtiofs support
-    let (_, fs_output, _) = with_sandbox_client(&entry, |c| {
+    let (_, fs_output, _) = with_machine_client(&entry, |c| {
         c.vm_exec(
             vec!["sh".into(), "-c".into(), "cat /proc/filesystems 2>/dev/null | grep virtiofs || echo 'not found'".into()],
             vec![],
@@ -1069,7 +1069,7 @@ pub async fn debug_mounts(
     }))
 }
 
-/// Debug network information for a sandbox.
+/// Debug network information for a machine.
 ///
 /// Returns configured ports and guest-side network state for diagnosing
 /// port mapping issues.
@@ -1101,7 +1101,7 @@ pub async fn debug_network(
     };
 
     // Guest-side listening ports
-    let (_, listening_ports, _) = with_sandbox_client(&entry, |c| {
+    let (_, listening_ports, _) = with_machine_client(&entry, |c| {
         c.vm_exec(
             vec!["sh".into(), "-c".into(), "ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null || echo '(ss/netstat not available)'".into()],
             vec![],
@@ -1112,7 +1112,7 @@ pub async fn debug_network(
     .await?;
 
     // Guest-side network interfaces
-    let (_, interfaces, _) = with_sandbox_client(&entry, |c| {
+    let (_, interfaces, _) = with_machine_client(&entry, |c| {
         c.vm_exec(
             vec!["sh".into(), "-c".into(), "ip addr 2>/dev/null || ifconfig 2>/dev/null || echo '(ip/ifconfig not available)'".into()],
             vec![],
@@ -1130,7 +1130,7 @@ pub async fn debug_network(
     }))
 }
 
-/// Get DNS filter status for a sandbox.
+/// Get DNS filter status for a machine.
 #[utoipa::path(
     get,
     path = "/api/v1/machines/{id}/dns",

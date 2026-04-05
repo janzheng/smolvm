@@ -1,26 +1,26 @@
 /**
- * CX04 smolvm — Basic Sandbox Test
+ * CX04 smolvm — Basic Machine Test
  *
- * Tests: REST API health, sandbox create/start/exec/stop/delete,
+ * Tests: REST API health, machine create/start/exec/stop/delete,
  * boot timing, and basic CLI fallback.
  */
 
 import {
-  BASE, API, type SandboxInfo,
+  BASE, API, type MachineInfo,
   apiPost, apiGet, apiDelete, exec,
   createReporter,
 } from "./_helpers.ts";
 
-const SANDBOX_NAME = "cx04-basic-test";
+const MACHINE_NAME = "cx04-basic-test";
 const { test, summary } = createReporter();
 
 // ============================================================================
-// Cleanup any leftover sandbox
+// Cleanup any leftover machine
 // ============================================================================
 
-async function cleanupSandbox() {
-  try { await apiPost(`/sandboxes/${SANDBOX_NAME}/stop`); } catch { /* */ }
-  try { await apiDelete(`/sandboxes/${SANDBOX_NAME}`); } catch { /* */ }
+async function cleanupMachine() {
+  try { await apiPost(`/machinees/${MACHINE_NAME}/stop`); } catch { /* */ }
+  try { await apiDelete(`/machinees/${MACHINE_NAME}`); } catch { /* */ }
 }
 
 // ============================================================================
@@ -28,10 +28,10 @@ async function cleanupSandbox() {
 // ============================================================================
 
 console.log("\n==========================================");
-console.log("  CX04 smolvm — Basic Sandbox Test");
+console.log("  CX04 smolvm — Basic Machine Test");
 console.log("==========================================\n");
 
-await cleanupSandbox();
+await cleanupMachine();
 
 // --- Health check ---
 console.log("Health Check:");
@@ -43,27 +43,27 @@ console.log("Health Check:");
   test(`Version is ${data.version}`, !!data.version, `got ${data.version}`);
 }
 
-// --- Create sandbox ---
-console.log("\nSandbox Lifecycle:");
+// --- Create machine ---
+console.log("\nMachine Lifecycle:");
 const t0 = performance.now();
 {
-  const resp = await apiPost("/sandboxes", {
-    name: SANDBOX_NAME,
+  const resp = await apiPost("/machinees", {
+    name: MACHINE_NAME,
     resources: { cpus: 2, memory_mb: 1024, network: true },
   });
   const data = await resp.json();
-  test("Create sandbox (200)", resp.ok, `status=${resp.status}`);
-  test("Sandbox name matches", data.name === SANDBOX_NAME);
+  test("Create machine (200)", resp.ok, `status=${resp.status}`);
+  test("Machine name matches", data.name === MACHINE_NAME);
   test("State is created", data.state === "created" || data.state === "stopped");
 }
 
-// --- Start sandbox ---
+// --- Start machine ---
 const tStartBegin = performance.now();
 {
-  const resp = await apiPost(`/sandboxes/${SANDBOX_NAME}/start`);
+  const resp = await apiPost(`/machinees/${MACHINE_NAME}/start`);
   const data = await resp.json();
   const startMs = Math.round(performance.now() - tStartBegin);
-  test("Start sandbox", resp.ok, `status=${resp.status}`);
+  test("Start machine", resp.ok, `status=${resp.status}`);
   test("State is running", data.state === "running");
   console.log(`     ⏱  Start time: ${startMs}ms`);
 }
@@ -71,7 +71,7 @@ const tStartBegin = performance.now();
 // --- First exec ---
 const tExecBegin = performance.now();
 {
-  const result = await exec(SANDBOX_NAME, ["echo", "hello-smolvm"]);
+  const result = await exec(MACHINE_NAME, ["echo", "hello-smolvm"]);
   const execMs = Math.round(performance.now() - tExecBegin);
   test("First exec succeeds", result.exit_code === 0);
   test("Output correct", result.stdout.trim() === "hello-smolvm", `got: "${result.stdout.trim()}"`);
@@ -82,29 +82,29 @@ const tExecBegin = performance.now();
 // --- Basic commands ---
 console.log("\nBasic Commands:");
 {
-  const uname = await exec(SANDBOX_NAME, ["uname", "-a"]);
+  const uname = await exec(MACHINE_NAME, ["uname", "-a"]);
   test("uname -a", uname.exit_code === 0 && uname.stdout.includes("Linux"));
 
-  const osRelease = await exec(SANDBOX_NAME, ["cat", "/etc/os-release"]);
+  const osRelease = await exec(MACHINE_NAME, ["cat", "/etc/os-release"]);
   test("Read /etc/os-release", osRelease.exit_code === 0);
   const distro = osRelease.stdout.includes("Alpine") ? "Alpine" :
                  osRelease.stdout.includes("Ubuntu") ? "Ubuntu" : "Unknown";
   console.log(`     📦 Base distro: ${distro}`);
 
-  const ls = await exec(SANDBOX_NAME, ["ls", "/"]);
+  const ls = await exec(MACHINE_NAME, ["ls", "/"]);
   test("ls /", ls.exit_code === 0 && ls.stdout.length > 0);
 }
 
 // --- Shell commands ---
 console.log("\nShell Commands:");
 {
-  const shell = await exec(SANDBOX_NAME, ["sh", "-c", "echo hello && echo world"]);
+  const shell = await exec(MACHINE_NAME, ["sh", "-c", "echo hello && echo world"]);
   test("Shell && chaining", shell.exit_code === 0 && shell.stdout.includes("hello") && shell.stdout.includes("world"));
 
-  const pipe = await exec(SANDBOX_NAME, ["sh", "-c", "echo hello world | wc -w"]);
+  const pipe = await exec(MACHINE_NAME, ["sh", "-c", "echo hello world | wc -w"]);
   test("Shell piping", pipe.exit_code === 0 && pipe.stdout.trim() === "2");
 
-  const envTest = await exec(SANDBOX_NAME, ["sh", "-c", "echo $MY_VAR"], {
+  const envTest = await exec(MACHINE_NAME, ["sh", "-c", "echo $MY_VAR"], {
     env: [{ name: "MY_VAR", value: "smolvm-test-value" }],
   });
   test("Env var passthrough", envTest.stdout.trim() === "smolvm-test-value", `got: "${envTest.stdout.trim()}"`);
@@ -113,41 +113,41 @@ console.log("\nShell Commands:");
 // --- Exit codes ---
 console.log("\nExit Codes:");
 {
-  const zero = await exec(SANDBOX_NAME, ["sh", "-c", "exit 0"]);
+  const zero = await exec(MACHINE_NAME, ["sh", "-c", "exit 0"]);
   test("Exit code 0", zero.exit_code === 0);
 
-  const fortyTwo = await exec(SANDBOX_NAME, ["sh", "-c", "exit 42"]);
+  const fortyTwo = await exec(MACHINE_NAME, ["sh", "-c", "exit 42"]);
   test("Exit code 42", fortyTwo.exit_code === 42, `got: ${fortyTwo.exit_code}`);
 
-  const one = await exec(SANDBOX_NAME, ["sh", "-c", "exit 1"]);
+  const one = await exec(MACHINE_NAME, ["sh", "-c", "exit 1"]);
   test("Exit code 1", one.exit_code === 1, `got: ${one.exit_code}`);
 }
 
 // --- Workdir ---
 console.log("\nWorkdir:");
 {
-  const pwd = await exec(SANDBOX_NAME, ["pwd"], { workdir: "/tmp" });
+  const pwd = await exec(MACHINE_NAME, ["pwd"], { workdir: "/tmp" });
   test("Workdir /tmp", pwd.stdout.trim() === "/tmp", `got: "${pwd.stdout.trim()}"`);
 }
 
-// --- Get sandbox info ---
-console.log("\nSandbox Info:");
+// --- Get machine info ---
+console.log("\nMachine Info:");
 {
-  const resp = await apiGet(`/sandboxes/${SANDBOX_NAME}`);
-  const info: SandboxInfo = await resp.json();
-  test("Get sandbox info", resp.ok);
+  const resp = await apiGet(`/machinees/${MACHINE_NAME}`);
+  const info: MachineInfo = await resp.json();
+  test("Get machine info", resp.ok);
   test("State still running", info.state === "running");
   test("Network enabled", info.network === true);
   console.log(`     📋 Resources: ${JSON.stringify(info.resources)}`);
 }
 
-// --- List sandboxes ---
+// --- List machinees ---
 {
-  const resp = await apiGet("/sandboxes");
+  const resp = await apiGet("/machinees");
   const data = await resp.json();
-  test("List sandboxes", resp.ok && data.sandboxes.length > 0);
-  const found = data.sandboxes.find((s: SandboxInfo) => s.name === SANDBOX_NAME);
-  test("Our sandbox in list", !!found);
+  test("List machinees", resp.ok && data.machinees.length > 0);
+  const found = data.machinees.find((s: MachineInfo) => s.name === MACHINE_NAME);
+  test("Our machine in list", !!found);
 }
 
 // --- Runtime detection ---
@@ -164,7 +164,7 @@ console.log("\nRuntime Detection:");
     deno: "deno --version | head -1",
   })) {
     try {
-      const r = await exec(SANDBOX_NAME, ["sh", "-c", cmd], { timeout_secs: 5 });
+      const r = await exec(MACHINE_NAME, ["sh", "-c", cmd], { timeout_secs: 5 });
       tools[name] = r.exit_code === 0 && r.stdout.trim() ? r.stdout.trim().split("\n")[0] : null;
     } catch {
       tools[name] = null;
@@ -178,14 +178,14 @@ console.log("\nRuntime Detection:");
 // --- Stop + Delete ---
 console.log("\nCleanup:");
 {
-  const stopResp = await apiPost(`/sandboxes/${SANDBOX_NAME}/stop`);
-  test("Stop sandbox", stopResp.ok, `status=${stopResp.status}`);
+  const stopResp = await apiPost(`/machinees/${MACHINE_NAME}/stop`);
+  test("Stop machine", stopResp.ok, `status=${stopResp.status}`);
 
-  const delResp = await apiDelete(`/sandboxes/${SANDBOX_NAME}`);
-  test("Delete sandbox", delResp.ok, `status=${delResp.status}`);
+  const delResp = await apiDelete(`/machinees/${MACHINE_NAME}`);
+  test("Delete machine", delResp.ok, `status=${delResp.status}`);
 
-  const getResp = await apiGet(`/sandboxes/${SANDBOX_NAME}`);
-  test("Sandbox deleted (404)", getResp.status === 404);
+  const getResp = await apiGet(`/machinees/${MACHINE_NAME}`);
+  test("Machine deleted (404)", getResp.status === 404);
 }
 
 // --- CLI fallback ---
@@ -193,7 +193,7 @@ console.log("\nCLI Fallback:");
 {
   try {
     const proc = new Deno.Command("smolvm", {
-      args: ["sandbox", "run", "--net", "alpine:latest", "--", "echo", "cli-works"],
+      args: ["machine", "run", "--net", "alpine:latest", "--", "echo", "cli-works"],
       stdout: "piped",
       stderr: "piped",
     });
@@ -201,10 +201,10 @@ console.log("\nCLI Fallback:");
     const output = await proc.output();
     const cliMs = Math.round(performance.now() - tCliStart);
     const stdout = new TextDecoder().decode(output.stdout);
-    test("CLI sandbox run", output.code === 0 && stdout.includes("cli-works"), `exit=${output.code}`);
+    test("CLI machine run", output.code === 0 && stdout.includes("cli-works"), `exit=${output.code}`);
     console.log(`     ⏱  CLI one-shot: ${cliMs}ms`);
   } catch (e) {
-    test("CLI sandbox run", false, `error: ${e}`);
+    test("CLI machine run", false, `error: ${e}`);
   }
 }
 

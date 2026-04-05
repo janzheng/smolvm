@@ -1,7 +1,7 @@
 #!/usr/bin/env -S deno run --allow-run --allow-read --allow-env
 
 // Git MCP Server — exposes git tools via MCP protocol (JSON-RPC over stdio)
-// Runs inside sandboxes as a built-in MCP server for smolvm.
+// Runs inside machinees as a built-in MCP server for smolvm.
 
 const WORKSPACE = Deno.env.get("WORKSPACE") || "/workspace";
 

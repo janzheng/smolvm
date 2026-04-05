@@ -2,7 +2,7 @@
  * smolvm TypeScript SDK — Type Definitions
  *
  * Derived from smolvm's OpenAPI spec (v0.1.6).
- * Covers both Sandbox and MicroVM APIs.
+ * Covers both Machine and MicroVM APIs.
  */
 
 // ============================================================================
@@ -45,10 +45,10 @@ export interface HealthResponse {
 }
 
 // ============================================================================
-// Sandbox
+// Machine
 // ============================================================================
 
-export interface CreateSandboxOptions {
+export interface CreateMachineOptions {
   cpus?: number;
   memoryMb?: number;
   network?: boolean;
@@ -56,25 +56,25 @@ export interface CreateSandboxOptions {
   storage_gb?: number;
   mounts?: MountSpec[];
   ports?: PortSpec[];
-  /** Commands to run automatically after sandbox creation. */
+  /** Commands to run automatically after machine creation. */
   init_commands?: string[];
   /** Allowed domains for egress filtering. Implies network: true. */
   allowed_domains?: string[];
   /** Create a non-root user and use it for subsequent exec calls. */
   default_user?: string;
-  /** Create sandbox from a starter template. */
+  /** Create machine from a starter template. */
   fromStarter?: string;
   /**
    * Secret names to inject via the secret proxy (e.g., ["anthropic", "openai"]).
    * Requires secrets to be configured on the server with `--secret name=value`.
-   * The sandbox gets `*_BASE_URL` env vars pointing to a local proxy and
+   * The machine gets `*_BASE_URL` env vars pointing to a local proxy and
    * placeholder API keys. Real keys never enter the VM.
    */
   secrets?: string[];
 }
 
-/** Wire format for POST /sandboxes */
-export interface CreateSandboxRequest {
+/** Wire format for POST /machinees */
+export interface CreateMachineRequest {
   name: string;
   mounts?: MountSpec[];
   ports?: PortSpec[];
@@ -93,16 +93,16 @@ export interface CreateSandboxRequest {
   secrets?: string[];
 }
 
-/** Merge strategy for combining sandbox filesystems. */
+/** Merge strategy for combining machine filesystems. */
 export type MergeStrategy = "theirs" | "ours";
 
-/** Request to merge files from one sandbox into another. */
-export interface MergeSandboxRequest {
+/** Request to merge files from one machine into another. */
+export interface MergeMachineRequest {
   strategy?: MergeStrategy;
   files?: string[];
 }
 
-/** Result of merging sandbox filesystems. */
+/** Result of merging machine filesystems. */
 export interface MergeResponse {
   source: string;
   target: string;
@@ -110,12 +110,12 @@ export interface MergeResponse {
   skipped_files: string[];
 }
 
-/** Request to clone a sandbox. */
-export interface CloneSandboxRequest {
+/** Request to clone a machine. */
+export interface CloneMachineRequest {
   name: string;
 }
 
-/** Result of comparing two sandboxes. */
+/** Result of comparing two machinees. */
 export interface DiffResult {
   source: string;
   target: string;
@@ -123,7 +123,7 @@ export interface DiffResult {
   identical: boolean;
 }
 
-export interface SandboxInfo {
+export interface MachineInfo {
   name: string;
   state: "created" | "stopped" | "running";
   pid?: number;
@@ -148,7 +148,7 @@ export interface CreateMicroVMOptions {
   ports?: PortSpec[];
 }
 
-/** Wire format for POST /microvms — different schema from sandboxes */
+/** Wire format for POST /microvms — different schema from machinees */
 export interface CreateMicroVMRequest {
   name: string;
   cpus?: number;
@@ -199,7 +199,7 @@ export interface DiskStats {
 
 export interface CheckpointMetadata {
   id: string;
-  source_sandbox: string;
+  source_machine: string;
   created_at: string;
   resources: Record<string, unknown>;
   network: boolean;
@@ -209,7 +209,7 @@ export interface CheckpointMetadata {
 
 export interface CreateCheckpointResponse {
   id: string;
-  source_sandbox: string;
+  source_machine: string;
   created_at: string;
   overlay_size_bytes: number;
   storage_size_bytes: number;
@@ -234,7 +234,7 @@ export interface ImageInfo {
 }
 
 // ============================================================================
-// Containers (inside sandbox)
+// Containers (inside machine)
 // ============================================================================
 
 export interface CreateContainerOptions {
@@ -320,7 +320,7 @@ export interface StarterListResponse {
 
 export interface SnapshotInfo {
   name: string;
-  source_sandbox?: string;
+  source_machine?: string;
   created_at?: string;
   size_bytes?: number;
 }
@@ -336,7 +336,7 @@ export interface SnapshotListResponse {
 export type JobStatus = "queued" | "running" | "completed" | "failed" | "dead";
 
 export interface SubmitJobRequest {
-  sandbox: string;
+  machine: string;
   command: string[];
   env?: EnvVar[];
   workdir?: string;
@@ -353,7 +353,7 @@ export interface SubmitJobResponse {
 
 export interface JobInfo {
   id: string;
-  sandbox: string;
+  machine: string;
   command: string[];
   env: EnvVar[];
   workdir?: string;

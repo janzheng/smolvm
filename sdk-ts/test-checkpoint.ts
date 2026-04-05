@@ -1,8 +1,8 @@
 /**
  * smolvm SDK — Checkpoint Integration Test
  *
- * Tests cold checkpoint: create sandbox → write data → stop → checkpoint
- * → restore into new sandbox → verify data persists.
+ * Tests cold checkpoint: create machine → write data → stop → checkpoint
+ * → restore into new machine → verify data persists.
  *
  * Requires `smolvm serve` running on localhost:8080 with checkpoint support.
  * Run: deno run --allow-net --allow-env test-checkpoint.ts
@@ -31,28 +31,28 @@ console.log("==========================================\n");
 
 const client = new SmolvmClient();
 
-// --- Create sandbox with test data ---
+// --- Create machine with test data ---
 console.log("Setup:");
-const sandbox = await client.createAndStart("ckpt-test", {
+const machine = await client.createAndStart("ckpt-test", {
   cpus: 1,
   memoryMb: 512,
   network: false,
 });
-test("Sandbox created + started", true);
+test("Machine created + started", true);
 
 // Write test data
-await sandbox.writeFile("/workspace/checkpoint-test.txt", "checkpoint-data-42");
-const readBack = await sandbox.readFile("/workspace/checkpoint-test.txt");
+await machine.writeFile("/workspace/checkpoint-test.txt", "checkpoint-data-42");
+const readBack = await machine.readFile("/workspace/checkpoint-test.txt");
 test("Test data written", readBack === "checkpoint-data-42");
 
 // --- Create checkpoint ---
 console.log("\nCheckpoint Create:");
-await sandbox.stop();
-test("Sandbox stopped", true);
+await machine.stop();
+test("Machine stopped", true);
 
-const ckpt = await sandbox.checkpoint();
+const ckpt = await machine.checkpoint();
 test("Checkpoint created", !!ckpt.id);
-test("Has source_sandbox", ckpt.source_sandbox === "ckpt-test");
+test("Has source_machine", ckpt.source_machine === "ckpt-test");
 test("Has created_at", !!ckpt.created_at);
 test("Has overlay_size_bytes", ckpt.overlay_size_bytes > 0);
 console.log(`     Checkpoint ID: ${ckpt.id}`);
@@ -68,20 +68,20 @@ test("Our checkpoint is in the list", !!found);
 // --- Restore checkpoint ---
 console.log("\nCheckpoint Restore:");
 const restored = await client.restoreCheckpoint(ckpt.id, "ckpt-restored");
-test("Restore returns sandbox", !!restored);
-test("Restored sandbox has correct name", restored.name === "ckpt-restored");
+test("Restore returns machine", !!restored);
+test("Restored machine has correct name", restored.name === "ckpt-restored");
 
-// Start the restored sandbox and verify data
+// Start the restored machine and verify data
 await restored.start();
-test("Restored sandbox started", true);
+test("Restored machine started", true);
 
 const restoredData = await restored.readFile("/workspace/checkpoint-test.txt");
 test("Data persists across checkpoint", restoredData === "checkpoint-data-42", `got: "${restoredData}"`);
 
-// Write new data to restored sandbox (verify it's a real running VM)
+// Write new data to restored machine (verify it's a real running VM)
 await restored.writeFile("/workspace/new-file.txt", "new-data");
 const newData = await restored.readFile("/workspace/new-file.txt");
-test("Restored sandbox is writable", newData === "new-data");
+test("Restored machine is writable", newData === "new-data");
 
 // --- Delete checkpoint ---
 console.log("\nCheckpoint Delete:");
@@ -94,9 +94,9 @@ test("Checkpoint no longer in list", !stillExists);
 
 // --- Cleanup ---
 console.log("\nCleanup:");
-await sandbox.cleanup();
+await machine.cleanup();
 await restored.cleanup();
-test("Both sandboxes cleaned up", true);
+test("Both machinees cleaned up", true);
 
 // --- Summary ---
 console.log("\n==========================================");

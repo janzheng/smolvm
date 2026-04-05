@@ -6,7 +6,7 @@
  * - Env var stripping (can't override protected vars)
  * - Proxy reachability from inside VM
  * - Validation (unknown secret names rejected)
- * - No-secret sandbox (no proxy env vars)
+ * - No-secret machine (no proxy env vars)
  * - Network auto-enable when secrets configured
  *
  * PREREQUISITE: Server must be started with secret proxy enabled:
@@ -36,10 +36,10 @@ console.log("==========================================\n");
 
 console.log("Pre-flight:");
 
-// Try creating a sandbox with secrets to see if server has them configured
+// Try creating a machine with secrets to see if server has them configured
 await cleanup(SANDBOX);
 {
-  const resp = await apiPost("/sandboxes", {
+  const resp = await apiPost("/machinees", {
     name: SANDBOX,
     resources: { cpus: 2, memory_mb: 1024, network: true },
     secrets: ["anthropic"],
@@ -54,17 +54,17 @@ await cleanup(SANDBOX);
       summary();
       Deno.exit(0);
     }
-    test("Create sandbox with secrets", false, `unexpected error: ${text}`);
+    test("Create machine with secrets", false, `unexpected error: ${text}`);
     summary();
     Deno.exit(1);
   }
-  test("Create sandbox with secrets", true);
+  test("Create machine with secrets", true);
 }
 
-// Start the sandbox
+// Start the machine
 {
-  const resp = await apiPost(`/sandboxes/${SANDBOX}/start`);
-  test("Start sandbox", resp.ok, `status=${resp.status}`);
+  const resp = await apiPost(`/machinees/${SANDBOX}/start`);
+  test("Start machine", resp.ok, `status=${resp.status}`);
 }
 
 // ============================================================================
@@ -136,7 +136,7 @@ console.log("\nProxy Reachability:");
 console.log("\nNetwork Auto-enable:");
 
 {
-  const resp = await apiGet(`/sandboxes/${SANDBOX}`);
+  const resp = await apiGet(`/machinees/${SANDBOX}`);
   if (resp.ok) {
     const info = await resp.json();
     test("Network enabled when secrets configured", info.network === true);
@@ -152,7 +152,7 @@ console.log("\nNetwork Auto-enable:");
 console.log("\nValidation:");
 
 {
-  const resp = await apiPost("/sandboxes", {
+  const resp = await apiPost("/machinees", {
     name: "cx04-proxy-bad-secret",
     resources: { cpus: 2, memory_mb: 1024 },
     secrets: ["nonexistent-provider"],
@@ -169,29 +169,29 @@ console.log("\nValidation:");
 }
 
 // ============================================================================
-// No-secret sandbox — should have no proxy env vars
+// No-secret machine — should have no proxy env vars
 // ============================================================================
 
-console.log("\nNo-Secret Sandbox:");
+console.log("\nNo-Secret Machine:");
 
 await cleanup(SANDBOX_NOSECRET);
 {
-  const createResp = await apiPost("/sandboxes", {
+  const createResp = await apiPost("/machinees", {
     name: SANDBOX_NOSECRET,
     resources: { cpus: 2, memory_mb: 1024, network: true },
     // no secrets field
   });
   if (createResp.ok) {
-    const startResp = await apiPost(`/sandboxes/${SANDBOX_NOSECRET}/start`);
+    const startResp = await apiPost(`/machinees/${SANDBOX_NOSECRET}/start`);
     if (startResp.ok) {
       const result = await sh(SANDBOX_NOSECRET, "env | grep ANTHROPIC || echo 'NONE'");
       const noProxyVars = !result.stdout.includes("ANTHROPIC_BASE_URL") && !result.stdout.includes("smolvm-placeholder");
       test("No proxy env vars without secrets", noProxyVars, `got: ${result.stdout.trim()}`);
     } else {
-      test("No proxy env vars without secrets", false, "failed to start sandbox");
+      test("No proxy env vars without secrets", false, "failed to start machine");
     }
   } else {
-    test("No proxy env vars without secrets", false, "failed to create sandbox");
+    test("No proxy env vars without secrets", false, "failed to create machine");
   }
 }
 
@@ -203,9 +203,9 @@ console.log("\nCleanup:");
 {
   await cleanup(SANDBOX);
   await cleanup(SANDBOX_NOSECRET);
-  const resp1 = await apiGet(`/sandboxes/${SANDBOX}`);
-  const resp2 = await apiGet(`/sandboxes/${SANDBOX_NOSECRET}`);
-  test("Sandboxes cleaned up", resp1.status === 404 && resp2.status === 404);
+  const resp1 = await apiGet(`/machinees/${SANDBOX}`);
+  const resp2 = await apiGet(`/machinees/${SANDBOX_NOSECRET}`);
+  test("Machinees cleaned up", resp1.status === 404 && resp2.status === 404);
 }
 
 summary();

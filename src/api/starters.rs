@@ -2,7 +2,7 @@
 //!
 //! Maps starter names to OCI images + default configuration.
 //! Starters provide pre-configured environments (Python, Node, etc.)
-//! that can be used with `from_starter` in sandbox creation.
+//! that can be used with `from_starter` in machine creation.
 
 use crate::api::types::StarterInfo;
 

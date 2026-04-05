@@ -7,7 +7,7 @@ use utoipa::{IntoParams, ToSchema};
 // RBAC / Permission Types
 // ============================================================================
 
-/// Role-based permission level for sandbox access.
+/// Role-based permission level for machine access.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
 pub enum MachineRole {
@@ -29,7 +29,7 @@ impl std::fmt::Display for MachineRole {
     }
 }
 
-/// A permission grant associating a hashed token with a role on a sandbox.
+/// A permission grant associating a hashed token with a role on a machine.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MachinePermission {
     /// SHA-256 hash of the bearer token (truncated to 16 hex chars).
@@ -39,7 +39,7 @@ pub struct MachinePermission {
     pub role: MachineRole,
 }
 
-/// Request to grant a permission on a sandbox.
+/// Request to grant a permission on a machine.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct GrantPermissionRequest {
     /// The bearer token to grant access to (will be hashed before storage).
@@ -48,11 +48,11 @@ pub struct GrantPermissionRequest {
     pub role: MachineRole,
 }
 
-/// Response listing permissions on a sandbox.
+/// Response listing permissions on a machine.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ListPermissionsResponse {
-    /// Sandbox name.
-    pub sandbox: String,
+    /// Machine name.
+    pub machine: String,
     /// Current permissions (token hashes + roles).
     pub permissions: Vec<MachinePermission>,
 }
@@ -65,10 +65,10 @@ pub struct PermissionResponse {
 }
 
 // ============================================================================
-// Sandbox Types
+// Machine Types
 // ============================================================================
 
-/// Restart policy specification for sandbox creation.
+/// Restart policy specification for machine creation.
 #[derive(Debug, Clone, Deserialize, Serialize, Default, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RestartSpec {
@@ -80,11 +80,11 @@ pub struct RestartSpec {
     pub max_retries: Option<u32>,
 }
 
-/// Request to create a new sandbox.
+/// Request to create a new machine.
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct CreateMachineRequest {
-    /// Unique name for the sandbox.
-    #[schema(example = "my-sandbox")]
+    /// Unique name for the machine.
+    #[schema(example = "my-machine")]
     pub name: String,
     /// Host mounts to attach.
     #[serde(default)]
@@ -98,52 +98,52 @@ pub struct CreateMachineRequest {
     /// Restart policy configuration.
     #[serde(default)]
     pub restart: Option<RestartSpec>,
-    /// Commands to run automatically after sandbox creation.
+    /// Commands to run automatically after machine creation.
     /// Each command is executed via `sh -c` in sequence.
     #[serde(default)]
     pub init_commands: Vec<String>,
     /// Create a non-root user and use it as the default for exec calls.
-    /// The user is created via `adduser` during sandbox initialization.
+    /// The user is created via `adduser` during machine initialization.
     #[serde(default)]
     pub default_user: Option<String>,
-    /// Create sandbox from a named starter (e.g., "python-ml", "claude-code").
+    /// Create machine from a named starter (e.g., "python-ml", "claude-code").
     /// The starter's OCI image will be pulled and its init commands applied.
     #[serde(default)]
     pub from_starter: Option<String>,
     /// Secret names to inject via the secret proxy (e.g., ["anthropic", "openai"]).
     /// Requires secrets to be configured on the server with `--secret name=value`.
-    /// When set, the sandbox gets `*_BASE_URL` env vars pointing to a local proxy
+    /// When set, the machine gets `*_BASE_URL` env vars pointing to a local proxy
     /// and placeholder API keys. Real keys never enter the VM.
     #[serde(default)]
     pub secrets: Vec<String>,
-    /// MCP servers to make available inside the sandbox.
+    /// MCP servers to make available inside the machine.
     /// These are queried on-demand via exec when tools are listed or called.
     #[serde(default)]
     pub mcp_servers: Vec<McpServerConfig>,
 }
 
-/// Request to clone an existing sandbox.
+/// Request to clone an existing machine.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CloneMachineRequest {
-    /// Name for the cloned sandbox.
-    #[schema(example = "my-sandbox-fork")]
+    /// Name for the cloned machine.
+    #[schema(example = "my-machine-fork")]
     pub name: String,
 }
 
-/// Response from comparing two sandboxes.
+/// Response from comparing two machinees.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DiffResponse {
-    /// Source sandbox name.
+    /// Source machine name.
     pub source: String,
-    /// Target sandbox name.
+    /// Target machine name.
     pub target: String,
-    /// Files that differ between the two sandboxes.
+    /// Files that differ between the two machinees.
     pub differences: Vec<String>,
-    /// Whether the sandboxes are identical.
+    /// Whether the machinees are identical.
     pub identical: bool,
 }
 
-/// Request to merge files from one sandbox into another.
+/// Request to merge files from one machine into another.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct MergeMachineRequest {
     /// Conflict resolution strategy.
@@ -165,12 +165,12 @@ pub enum MergeStrategy {
     Ours,
 }
 
-/// Response from merging two sandboxes.
+/// Response from merging two machinees.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct MergeResponse {
-    /// Source sandbox name.
+    /// Source machine name.
     pub source: String,
-    /// Target sandbox name.
+    /// Target machine name.
     pub target: String,
     /// Files that were merged (copied from source to target).
     pub merged_files: Vec<String>,
@@ -184,7 +184,7 @@ pub struct MountSpec {
     /// Host path to mount.
     #[schema(example = "/Users/me/code")]
     pub source: String,
-    /// Path inside the sandbox.
+    /// Path inside the machine.
     #[schema(example = "/workspace")]
     pub target: String,
     /// Read-only mount.
@@ -201,7 +201,7 @@ pub struct MountInfo {
     /// Host path.
     #[schema(example = "/Users/me/code")]
     pub source: String,
-    /// Path inside the sandbox.
+    /// Path inside the machine.
     #[schema(example = "/workspace")]
     pub target: String,
     /// Read-only mount.
@@ -214,7 +214,7 @@ pub struct PortSpec {
     /// Port on the host.
     #[schema(example = 8080)]
     pub host: u16,
-    /// Port inside the sandbox.
+    /// Port inside the machine.
     #[schema(example = 80)]
     pub guest: u16,
 }
@@ -250,12 +250,12 @@ pub struct ResourceSpec {
     pub allowed_domains: Option<Vec<String>>,
 }
 
-/// Sandbox status information.
+/// Machine status information.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MachineInfo {
-    /// Sandbox name.
-    #[schema(example = "my-sandbox")]
+    /// Machine name.
+    #[schema(example = "my-machine")]
     pub name: String,
     /// Current state.
     #[schema(example = "running")]
@@ -272,23 +272,23 @@ pub struct MachineInfo {
     pub resources: ResourceSpec,
     /// Whether outbound network access is enabled.
     pub network: bool,
-    /// Number of times this sandbox has been automatically restarted.
+    /// Number of times this machine has been automatically restarted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub restart_count: Option<u32>,
 }
 
-/// List sandboxes response.
+/// List machinees response.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ListMachinesResponse {
-    /// List of sandboxes.
-    pub sandboxes: Vec<MachineInfo>,
+    /// List of machinees.
+    pub machinees: Vec<MachineInfo>,
 }
 
 // ============================================================================
 // Exec Types
 // ============================================================================
 
-/// Request to execute a command in a sandbox.
+/// Request to execute a command in a machine.
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecRequest {
@@ -398,13 +398,13 @@ pub struct CreateContainerRequest {
 /// Container mount specification.
 ///
 /// Note: The `source` field is the virtiofs tag, which corresponds to
-/// host mounts configured on the sandbox. Tags are assigned in order:
-/// `smolvm0`, `smolvm1`, etc. based on the sandbox's mount configuration.
+/// host mounts configured on the machine. Tags are assigned in order:
+/// `smolvm0`, `smolvm1`, etc. based on the machine's mount configuration.
 /// Use `GET /api/v1/machines/:id` to see the tag-to-path mapping.
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct ContainerMountSpec {
     /// Virtiofs tag (e.g., "smolvm0", "smolvm1").
-    /// These correspond to sandbox mounts in order.
+    /// These correspond to machine mounts in order.
     #[schema(example = "smolvm0")]
     pub source: String,
     /// Target path in container.
@@ -552,7 +552,7 @@ pub struct LogsQuery {
 // Delete Types
 // ============================================================================
 
-/// Query parameters for delete sandbox endpoint.
+/// Query parameters for delete machine endpoint.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub struct DeleteQuery {
     /// If true, force delete even if stop fails and VM is still running.
@@ -584,7 +584,7 @@ pub struct HealthResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ApiErrorResponse {
     /// Error message.
-    #[schema(example = "sandbox 'test' not found")]
+    #[schema(example = "machine 'test' not found")]
     pub error: String,
     /// Error code.
     #[schema(example = "NOT_FOUND")]
@@ -704,7 +704,7 @@ pub struct ListMicrovmsResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DeleteResponse {
     /// Name of deleted resource.
-    #[schema(example = "my-sandbox")]
+    #[schema(example = "my-machine")]
     pub deleted: String,
 }
 
@@ -728,7 +728,7 @@ pub struct StopResponse {
 // File Types
 // ============================================================================
 
-/// Information about a file or directory in a sandbox.
+/// Information about a file or directory in a machine.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct FileInfo {
     /// File path.
@@ -743,7 +743,7 @@ pub struct FileInfo {
     pub permissions: String,
 }
 
-/// Request to write a file in a sandbox.
+/// Request to write a file in a machine.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct WriteFileRequest {
     /// File content (base64-encoded).
@@ -785,7 +785,7 @@ fn default_root_dir() -> String {
 // Debug Types
 // ============================================================================
 
-/// Debug information about sandbox mounts.
+/// Debug information about machine mounts.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DebugMountsResponse {
     /// Configured mounts.
@@ -798,7 +798,7 @@ pub struct DebugMountsResponse {
     pub virtiofs_supported: bool,
 }
 
-/// Debug information about sandbox networking.
+/// Debug information about machine networking.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DebugNetworkResponse {
     /// Configured port mappings.
@@ -815,7 +815,7 @@ pub struct DebugNetworkResponse {
 // DNS Filter Types
 // ============================================================================
 
-/// DNS filtering status for a sandbox.
+/// DNS filtering status for a machine.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DnsFilterStatus {
     /// Whether DNS-based egress filtering is active.
@@ -863,7 +863,7 @@ fn default_snapshot_version() -> u32 {
 /// Snapshot manifest metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SnapshotManifest {
-    /// Snapshot name (usually matches source sandbox name).
+    /// Snapshot name (usually matches source machine name).
     pub name: String,
     /// Platform (e.g., "aarch64-macos").
     pub platform: String,
@@ -911,7 +911,7 @@ pub struct SnapshotManifest {
     /// Number of changed storage blocks in this delta.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage_changed_blocks: Option<u64>,
-    /// Sequence number within a sandbox's snapshot history.
+    /// Sequence number within a machine's snapshot history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sequence: Option<u32>,
 }
@@ -923,11 +923,11 @@ pub struct ListSnapshotsResponse {
     pub snapshots: Vec<SnapshotManifest>,
 }
 
-/// Request to pull a snapshot into a new sandbox.
+/// Request to pull a snapshot into a new machine.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct PullSnapshotRequest {
-    /// Name for the new sandbox.
-    #[schema(example = "my-restored-sandbox")]
+    /// Name for the new machine.
+    #[schema(example = "my-restored-machine")]
     pub name: String,
 }
 
@@ -990,12 +990,12 @@ pub struct SnapshotHistoryResponse {
     pub total_size_bytes: u64,
 }
 
-/// Request to rollback a sandbox to a specific snapshot version.
+/// Request to rollback a machine to a specific snapshot version.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct RollbackRequest {
-    /// Name of the sandbox to restore into.
-    #[schema(example = "my-sandbox")]
-    pub sandbox_name: String,
+    /// Name of the machine to restore into.
+    #[schema(example = "my-machine")]
+    pub machine_name: String,
     /// Specific version number to rollback to (latest if omitted).
     #[serde(default)]
     pub version: Option<u32>,
@@ -1004,8 +1004,8 @@ pub struct RollbackRequest {
 /// Response from rollback endpoint.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RollbackResponse {
-    /// Sandbox that was restored.
-    pub sandbox_name: String,
+    /// Machine that was restored.
+    pub machine_name: String,
     /// Snapshot version that was restored.
     pub restored_version: u32,
     /// Manifest of the restored snapshot.
@@ -1035,10 +1035,10 @@ pub struct DiskStats {
     pub apparent_size_gb: f64,
 }
 
-/// Resource statistics response for a sandbox.
+/// Resource statistics response for a machine.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ResourceStatsResponse {
-    /// Sandbox name.
+    /// Machine name.
     pub name: String,
     /// Current state (created, running, stopped).
     pub state: String,
@@ -1063,9 +1063,9 @@ pub struct ResourceStatsResponse {
 /// Request to submit a new job to the work queue.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct SubmitJobRequest {
-    /// Target sandbox to execute in.
-    #[schema(example = "my-sandbox")]
-    pub sandbox: String,
+    /// Target machine to execute in.
+    #[schema(example = "my-machine")]
+    pub machine: String,
     /// Command to execute.
     pub command: Vec<String>,
     /// Environment variables for the command.
@@ -1121,8 +1121,8 @@ impl std::fmt::Display for JobStatus {
 pub struct JobInfo {
     /// Unique job identifier.
     pub id: String,
-    /// Target sandbox name.
-    pub sandbox: String,
+    /// Target machine name.
+    pub machine: String,
     /// Command to execute.
     pub command: Vec<String>,
     /// Environment variables.
@@ -1182,9 +1182,9 @@ pub struct JobsQuery {
     /// Filter by status (queued, running, completed, failed, dead).
     #[serde(default)]
     pub status: Option<String>,
-    /// Filter by sandbox name.
+    /// Filter by machine name.
     #[serde(default)]
-    pub sandbox: Option<String>,
+    pub machine: Option<String>,
     /// Maximum number of results.
     #[serde(default)]
     pub limit: Option<usize>,
@@ -1241,7 +1241,7 @@ pub struct ListSecretsResponse {
 // MCP (Model Context Protocol) Types
 // ============================================================================
 
-/// Configuration for an MCP server to run inside a sandbox.
+/// Configuration for an MCP server to run inside a machine.
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct McpServerConfig {
     /// Display name for the MCP server.
@@ -1501,9 +1501,9 @@ pub struct ProviderInfoResponse {
     pub version: String,
     /// Supported capabilities.
     pub capabilities: Vec<String>,
-    /// Maximum number of sandboxes (null = unlimited).
+    /// Maximum number of machinees (null = unlimited).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_sandboxes: Option<usize>,
+    pub max_machinees: Option<usize>,
     /// Provider region / location.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,

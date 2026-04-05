@@ -1,7 +1,7 @@
-//! Local sandbox provider — wraps the in-process `ApiState`.
+//! Local machine provider — wraps the in-process `ApiState`.
 //!
-//! This provider delegates directly to the existing sandbox management logic,
-//! making it a thin adapter from the `SandboxProvider` trait to `ApiState`.
+//! This provider delegates directly to the existing machine management logic,
+//! making it a thin adapter from the `MachineProvider` trait to `ApiState`.
 
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -9,14 +9,14 @@ use std::sync::Arc;
 use crate::api::error::ApiError;
 use crate::api::handlers::machines::machine_entry_to_info;
 use crate::api::state::{
-    ensure_sandbox_running, with_sandbox_client, ApiState,
+    ensure_machine_running, with_machine_client, ApiState,
 };
 use crate::api::types::{
     CreateMachineRequest, EnvVar, ExecRequest, ExecResponse, MachineInfo,
 };
-use crate::provider::{ProviderError, ProviderInfo, SandboxProvider};
+use crate::provider::{ProviderError, ProviderInfo, MachineProvider};
 
-/// Local provider that manages sandboxes on the current machine via `ApiState`.
+/// Local provider that manages machinees on the current machine via `ApiState`.
 pub struct LocalProvider {
     state: Arc<ApiState>,
 }
@@ -42,7 +42,7 @@ fn api_err_to_provider(e: ApiError) -> ProviderError {
 }
 
 #[async_trait]
-impl SandboxProvider for LocalProvider {
+impl MachineProvider for LocalProvider {
     fn info(&self) -> ProviderInfo {
         ProviderInfo {
             name: "local".into(),
@@ -54,26 +54,26 @@ impl SandboxProvider for LocalProvider {
             .into_iter()
             .map(String::from)
             .collect(),
-            max_sandboxes: None,
+            max_machinees: None,
             region: Some("local".into()),
         }
     }
 
     async fn create(&self, _req: CreateMachineRequest) -> Result<MachineInfo, ProviderError> {
-        // Full sandbox creation involves RAII reservation guards, starter
+        // Full machine creation involves RAII reservation guards, starter
         // configuration, init commands, DNS filtering, etc. — all tightly
         // coupled to the Axum handler pipeline. Instead of duplicating that
         // logic, callers should use the HTTP API (which the RemoteProvider
         // wraps). The local provider exposes the simpler lifecycle operations.
         Err(ProviderError::NotSupported(
-            "use the HTTP API for sandbox creation (complex init pipeline)".into(),
+            "use the HTTP API for machine creation (complex init pipeline)".into(),
         ))
     }
 
     async fn start(&self, id: &str) -> Result<MachineInfo, ProviderError> {
         let entry = self.state.get_machine(id).map_err(api_err_to_provider)?;
 
-        ensure_sandbox_running(&entry)
+        ensure_machine_running(&entry)
             .await
             .map_err(|e| ProviderError::Internal(e.to_string()))?;
 
@@ -84,7 +84,7 @@ impl SandboxProvider for LocalProvider {
         };
         let _ = self
             .state
-            .update_sandbox_state(id, crate::config::RecordState::Running, pid);
+            .update_machine_state(id, crate::config::RecordState::Running, pid);
 
         // Build response
         let entry = entry.lock();
@@ -104,7 +104,7 @@ impl SandboxProvider for LocalProvider {
             .map_err(|e| ProviderError::Internal(e.to_string()))?
             .map_err(|e| ProviderError::Internal(e.to_string()))?;
 
-        let _ = self.state.update_sandbox_state(
+        let _ = self.state.update_machine_state(
             id,
             crate::config::RecordState::Stopped,
             None,
@@ -114,11 +114,11 @@ impl SandboxProvider for LocalProvider {
     }
 
     async fn delete(&self, id: &str) -> Result<(), ProviderError> {
-        // Stop first (ignore errors — sandbox may already be stopped)
+        // Stop first (ignore errors — machine may already be stopped)
         let _ = self.stop(id).await;
 
         self.state
-            .remove_sandbox(id)
+            .remove_machine(id)
             .map_err(api_err_to_provider)?;
 
         // Clean up data directory
@@ -148,7 +148,7 @@ impl SandboxProvider for LocalProvider {
         let entry = self.state.get_machine(id).map_err(api_err_to_provider)?;
 
         // Ensure running
-        ensure_sandbox_running(&entry)
+        ensure_machine_running(&entry)
             .await
             .map_err(|e| ProviderError::Internal(e.to_string()))?;
 
@@ -159,7 +159,7 @@ impl SandboxProvider for LocalProvider {
         let user = req.user.clone();
 
         let (exit_code, stdout, stderr) =
-            with_sandbox_client(&entry, move |c| {
+            with_machine_client(&entry, move |c| {
                 c.vm_exec_as(command, env, workdir, timeout, user)
             })
             .await

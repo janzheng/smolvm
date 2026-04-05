@@ -1,6 +1,6 @@
 # Playtest 04: Agent Autonomy
 
-**Mission**: Put Claude Code inside a sandbox and give it a real programming
+**Mission**: Put Claude Code inside a machine and give it a real programming
 task. See if it can work autonomously — install deps, write code, run tests,
 iterate on failures.
 
@@ -8,7 +8,7 @@ iterate on failures.
 
 ## Entry point
 
-Create a sandbox from `claude-code` starter with 2+ GB RAM, networking enabled.
+Create a machine from `claude-code` starter with 2+ GB RAM, networking enabled.
 Inject your ANTHROPIC_API_KEY via env.
 
 ## Missions to assign the agent
@@ -61,4 +61,4 @@ prove it works by running it and curling the endpoints."
 - smolvm as an agent execution environment (the core use case)
 - Whether the claude-code starter has everything an agent needs
 - Timeout and resource limits for long-running agent tasks
-- The full loop: create sandbox → agent works → snapshot results → compare
+- The full loop: create machine → agent works → snapshot results → compare

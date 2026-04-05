@@ -26,7 +26,7 @@ Runner: e2e-playtest.sh
 Server: smolvm v0.1.17, localhost:8080
 
 ### Setup
-No `claude-code` starter available (starters endpoint 404 in v0.1.17), no `ANTHROPIC_API_KEY` in env. Simulated what an agent would do: create sandbox, bootstrap, write code, run tests, clone a repo, build an app.
+No `claude-code` starter available (starters endpoint 404 in v0.1.17), no `ANTHROPIC_API_KEY` in env. Simulated what an agent would do: create machine, bootstrap, write code, run tests, clone a repo, build an app.
 
 ### Timeline
 | Phase | Time | Notes |
@@ -40,7 +40,7 @@ No `claude-code` starter available (starters endpoint 404 in v0.1.17), no `ANTHR
 | Write Express app + test routes | <1s | |
 | Start server + curl 3 routes | ~2s | All return correct JSON |
 
-**Total: ~30s from empty sandbox to working Express app with tests**
+**Total: ~30s from empty machine to working Express app with tests**
 
 ### Findings
 
@@ -53,12 +53,12 @@ No `claude-code` starter available (starters endpoint 404 in v0.1.17), no `ANTHR
 
 **What's painful for agents:**
 - File writing via exec is the main bottleneck (base64 gymnastics)
-- No init_commands means every sandbox needs manual bootstrap
+- No init_commands means every machine needs manual bootstrap
 - No starters means no pre-built images with tools
 - No clone/diff means can't snapshot agent work or compare before/after
 - curl not in base image — agents need to remember to install it
 
-**Agent readiness verdict**: smolvm **works** as an agent execution environment. The sandbox boots fast, networking works, package managers work, tests run. The missing features (file API, init_commands, starters, clone/diff) are all in the source code — just need a binary rebuild (S04).
+**Agent readiness verdict**: smolvm **works** as an agent execution environment. The machine boots fast, networking works, package managers work, tests run. The missing features (file API, init_commands, starters, clone/diff) are all in the source code — just need a binary rebuild (S04).
 
 ---
 
@@ -69,7 +69,7 @@ No `claude-code` starter available (starters endpoint 404 in v0.1.17), no `ANTHR
 Server: smolvm v0.1.17, localhost:8080
 
 ### What we built
-A Node.js HTTP server (Hono framework) inside a bare Alpine sandbox — from zero to serving JSON in ~10s.
+A Node.js HTTP server (Hono framework) inside a bare Alpine machine — from zero to serving JSON in ~10s.
 
 ### Findings
 
@@ -77,7 +77,7 @@ A Node.js HTTP server (Hono framework) inside a bare Alpine sandbox — from zer
 
 **Heredocs break in exec** — `cat > file << 'EOF'` via the exec API doesn't work. Workaround: use base64 encoding.
 
-**The dev loop works** — Once the escaping hurdle is cleared: npm install, background processes, curl from inside the sandbox all work.
+**The dev loop works** — Once the escaping hurdle is cleared: npm install, background processes, curl from inside the machine all work.
 
 **Verdict**: Usable for real dev work, but file I/O is the bottleneck. File API (added in later build) fixes this.
 
@@ -94,7 +94,7 @@ Server: smolvm v0.1.17, localhost:8080
 - Error messages are clear and specific (400, 409, 415)
 - Name validation is thorough (unicode, path traversal, length)
 - State persists across stop/start
-- Cross-sandbox isolation holds
+- Cross-machine isolation holds
 - S01 confirmed: VM can reach host API on port 8080 (mitigated by auth token)
 - `/proc/1/environ` readable (minor info leak of internal env vars)
 
@@ -147,7 +147,7 @@ Also fixed 2 flaky integration tests:
 - `test_microvm_overlay_root_active` — race condition, added `wait_for_agent_ready` after VM start
 - `test_from_vm_run_finds_installed_package` — packed binary boot timing, added retry loop
 
-**Integration test results: 125/125 pass across 6 suites (CLI, Sandbox, MicroVM, Container, API, Pack).**
+**Integration test results: 125/125 pass across 6 suites (CLI, Machine, MicroVM, Container, API, Pack).**
 
 ---
 

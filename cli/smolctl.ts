@@ -1,6 +1,6 @@
 #!/usr/bin/env -S deno run --allow-net --allow-env --allow-read --allow-write --allow-run
 /**
- * smolctl — CLI for managing smolvm sandboxes via REST API.
+ * smolctl — CLI for managing smolvm machinees via REST API.
  *
  * Like `wrangler` for Cloudflare Workers, but for smolvm microVMs.
  *
@@ -43,15 +43,15 @@ const TIMEOUT_MS = 30_000;
 const LONG_TIMEOUT_MS = 120_000;
 
 // ---------------------------------------------------------------------------
-// Sandbox presets (permission configs for headless agents)
+// Machine presets (permission configs for headless agents)
 // ---------------------------------------------------------------------------
 
-interface SandboxConfig {
+interface MachineConfig {
   allow: string[];
   deny?: string[];
 }
 
-const SANDBOX_PRESETS: Record<string, SandboxConfig> = {
+const SANDBOX_PRESETS: Record<string, MachineConfig> = {
   /** Auto-approve everything non-destructive. The "stop asking me" mode. */
   permissive: {
     allow: [
@@ -86,14 +86,14 @@ const SANDBOX_PRESETS: Record<string, SandboxConfig> = {
   },
 };
 
-function resolveSandboxConfig(value: string): SandboxConfig {
+function resolveMachineConfig(value: string): MachineConfig {
   if (SANDBOX_PRESETS[value]) return SANDBOX_PRESETS[value];
-  try { return JSON.parse(value) as SandboxConfig; }
-  catch { die(`Unknown sandbox preset: ${value}. Try: permissive, research, developer, or JSON`); }
+  try { return JSON.parse(value) as MachineConfig; }
+  catch { die(`Unknown machine preset: ${value}. Try: permissive, research, developer, or JSON`); }
 }
 
-/** Write agent settings.json to sandbox via file API, return the path inside the VM. */
-async function writeAgentSettings(sandbox: string, config: SandboxConfig): Promise<string> {
+/** Write agent settings.json to machine via file API, return the path inside the VM. */
+async function writeAgentSettings(machine: string, config: MachineConfig): Promise<string> {
   const settings = JSON.stringify({
     permissions: {
       allow: config.allow,
@@ -103,7 +103,7 @@ async function writeAgentSettings(sandbox: string, config: SandboxConfig): Promi
   const encoded = btoa(settings);
   const settingsPath = "/tmp/agent-settings.json";
   const encodedPath = encodeURIComponent(settingsPath);
-  const resp = await apiCall("PUT", `/sandboxes/${sandbox}/files/${encodedPath}`, { content: encoded });
+  const resp = await apiCall("PUT", `/machinees/${machine}/files/${encodedPath}`, { content: encoded });
   await okOrDie(resp, "write agent settings");
   return settingsPath;
 }
@@ -111,7 +111,7 @@ async function writeAgentSettings(sandbox: string, config: SandboxConfig): Promi
 /** Check agent output for signs of permission denials and emit a warning. */
 function checkPermissionDenials(
   exitCode: number, stdout: string, stderr: string,
-  sandboxName: string, outputJson: boolean,
+  machineName: string, outputJson: boolean,
 ): void {
   if (exitCode === 0) return;
   const combined = ((stdout ?? "") + (stderr ?? "")).toLowerCase();
@@ -119,19 +119,19 @@ function checkPermissionDenials(
   if (!signals.some((s) => combined.includes(s))) return;
 
   if (outputJson) {
-    console.error(JSON.stringify({ warning: "permission_denial_detected", sandbox: sandboxName, hint: "Try a more permissive preset." }));
+    console.error(JSON.stringify({ warning: "permission_denial_detected", machine: machineName, hint: "Try a more permissive preset." }));
   } else {
-    console.error(`\nAgent may have hit permission restrictions in sandbox "${sandboxName}".`);
-    console.error(`  Inspect presets: smolctl sandbox ls / smolctl sandbox show <preset>`);
-    console.error(`  Try: --sandbox permissive`);
+    console.error(`\nAgent may have hit permission restrictions in machine "${machineName}".`);
+    console.error(`  Inspect presets: smolctl machine ls / smolctl machine show <preset>`);
+    console.error(`  Try: --machine permissive`);
   }
 }
 
 // ---------------------------------------------------------------------------
-// Sandbox inspect commands
+// Machine inspect commands
 // ---------------------------------------------------------------------------
 
-function cmdSandboxLs() {
+function cmdMachineLs() {
   const rows = Object.entries(SANDBOX_PRESETS).map(([name, config]) => ({
     name,
     allow: config.allow.length,
@@ -140,7 +140,7 @@ function cmdSandboxLs() {
   table(rows, ["name", "allow", "deny"]);
 }
 
-function cmdSandboxShow(preset: string) {
+function cmdMachineShow(preset: string) {
   const config = SANDBOX_PRESETS[preset];
   if (!config) die(`Unknown preset: ${preset}. Available: ${Object.keys(SANDBOX_PRESETS).join(", ")}`);
   console.log(`Preset: ${preset}\n`);
@@ -152,7 +152,7 @@ function cmdSandboxShow(preset: string) {
   }
 }
 
-function cmdSandboxTest(preset: string, tool: string) {
+function cmdMachineTest(preset: string, tool: string) {
   const config = SANDBOX_PRESETS[preset];
   if (!config) die(`Unknown preset: ${preset}. Available: ${Object.keys(SANDBOX_PRESETS).join(", ")}`);
   const matches = (pattern: string, value: string) => {
@@ -524,7 +524,7 @@ function table(rows: Record<string, unknown>[], columns?: string[]) {
 // Metadata store (~/.smolvm/metadata/)
 // ---------------------------------------------------------------------------
 
-interface SandboxMeta {
+interface MachineMeta {
   name: string;
   owner?: string;
   labels?: Record<string, string>;
@@ -540,16 +540,16 @@ interface SandboxMeta {
 
 const SMOLVM_HOME = `${Deno.env.get("HOME")}/.smolvm`;
 
-async function saveMeta(meta: SandboxMeta): Promise<void> {
+async function saveMeta(meta: MachineMeta): Promise<void> {
   const dir = `${SMOLVM_HOME}/metadata`;
   await Deno.mkdir(dir, { recursive: true });
   await Deno.writeTextFile(`${dir}/${meta.name}.json`, JSON.stringify(meta, null, 2) + "\n");
 }
 
-async function loadMeta(name: string): Promise<SandboxMeta | null> {
+async function loadMeta(name: string): Promise<MachineMeta | null> {
   try {
     const text = await Deno.readTextFile(`${SMOLVM_HOME}/metadata/${name}.json`);
-    return JSON.parse(text) as SandboxMeta;
+    return JSON.parse(text) as MachineMeta;
   } catch {
     return null;
   }
@@ -559,9 +559,9 @@ async function deleteMeta(name: string): Promise<void> {
   try { await Deno.remove(`${SMOLVM_HOME}/metadata/${name}.json`); } catch { /* ok */ }
 }
 
-async function listMeta(): Promise<SandboxMeta[]> {
+async function listMeta(): Promise<MachineMeta[]> {
   const dir = `${SMOLVM_HOME}/metadata`;
-  const results: SandboxMeta[] = [];
+  const results: MachineMeta[] = [];
   try {
     for await (const entry of Deno.readDir(dir)) {
       if (entry.isFile && entry.name.endsWith(".json")) {
@@ -598,7 +598,7 @@ interface PoolNode {
   name: string;
   url: string;
   token?: string;
-  max_sandboxes?: number;
+  max_machinees?: number;
 }
 
 interface PoolConfig {
@@ -642,8 +642,8 @@ async function nodeApiCall(
   return fetch(url, init);
 }
 
-/** Check health of a single pool node. Returns { online, sandboxCount }. */
-async function checkNodeHealth(node: PoolNode): Promise<{ online: boolean; sandbox_count: number }> {
+/** Check health of a single pool node. Returns { online, machineCount }. */
+async function checkNodeHealth(node: PoolNode): Promise<{ online: boolean; machine_count: number }> {
   try {
     const baseUrl = node.url.replace(/\/$/, "");
     const h: Record<string, string> = {};
@@ -653,28 +653,28 @@ async function checkNodeHealth(node: PoolNode): Promise<{ online: boolean; sandb
       headers: h,
       signal: AbortSignal.timeout(POOL_HEALTH_TIMEOUT_MS),
     });
-    if (!resp.ok) { await resp.text(); return { online: false, sandbox_count: 0 }; }
+    if (!resp.ok) { await resp.text(); return { online: false, machine_count: 0 }; }
     await resp.json();
-    // Try to count sandboxes
+    // Try to count machinees
     try {
-      const sbResp = await fetch(`${baseUrl}/api/v1/sandboxes`, {
+      const sbResp = await fetch(`${baseUrl}/api/v1/machines`, {
         headers: h,
         signal: AbortSignal.timeout(POOL_HEALTH_TIMEOUT_MS),
       });
       if (sbResp.ok) {
-        const data = await sbResp.json() as { sandboxes: unknown[] };
-        return { online: true, sandbox_count: data.sandboxes?.length ?? 0 };
+        const data = await sbResp.json() as { machinees: unknown[] };
+        return { online: true, machine_count: data.machinees?.length ?? 0 };
       }
       await sbResp.text();
-    } catch { /* ignore sandbox count failure */ }
-    return { online: true, sandbox_count: 0 };
+    } catch { /* ignore machine count failure */ }
+    return { online: true, machine_count: 0 };
   } catch {
-    return { online: false, sandbox_count: 0 };
+    return { online: false, machine_count: 0 };
   }
 }
 
-/** Resolve which node a sandbox is on (from metadata). */
-async function resolveNodeForSandbox(name: string): Promise<PoolNode | null> {
+/** Resolve which node a machine is on (from metadata). */
+async function resolveNodeForMachine(name: string): Promise<PoolNode | null> {
   const meta = await loadMeta(name);
   if (meta?.node) {
     const pool = await loadPoolConfig();
@@ -700,8 +700,8 @@ async function pickNode(pool: PoolConfig, explicitNode?: string): Promise<PoolNo
     const checks = await Promise.all(
       pool.nodes.map(async (node) => {
         const health = await checkNodeHealth(node);
-        const remaining = node.max_sandboxes
-          ? node.max_sandboxes - health.sandbox_count
+        const remaining = node.max_machinees
+          ? node.max_machinees - health.machine_count
           : Infinity;
         return { node, online: health.online, remaining };
       }),
@@ -732,7 +732,7 @@ async function cmdPoolAdd(name: string, url: string, args: string[]) {
   if (maxStr) {
     const max = parseInt(maxStr);
     if (isNaN(max) || max < 1) die("--max must be a positive integer");
-    node.max_sandboxes = max;
+    node.max_machinees = max;
   }
   config.nodes.push(node);
   await savePoolConfig(config);
@@ -758,20 +758,20 @@ async function cmdPoolLs() {
   const results = await Promise.all(
     config.nodes.map(async (node) => {
       const health = await checkNodeHealth(node);
-      const maxStr = node.max_sandboxes != null ? String(node.max_sandboxes) : "-";
-      const sandboxStr = health.online
-        ? `${health.sandbox_count}/${node.max_sandboxes != null ? node.max_sandboxes : "\u221e"}`
+      const maxStr = node.max_machinees != null ? String(node.max_machinees) : "-";
+      const machineStr = health.online
+        ? `${health.machine_count}/${node.max_machinees != null ? node.max_machinees : "\u221e"}`
         : "-";
       return {
         name: node.name,
         url: node.url,
         status: health.online ? "online" : "offline",
-        sandboxes: sandboxStr,
+        machinees: machineStr,
         max: maxStr,
       };
     }),
   );
-  table(results, ["name", "url", "status", "sandboxes", "max"]);
+  table(results, ["name", "url", "status", "machinees", "max"]);
 }
 
 async function cmdPoolStatus() {
@@ -787,26 +787,26 @@ async function cmdPoolStatus() {
     }),
   );
   const onlineCount = results.filter((r) => r.online).length;
-  const totalSandboxes = results.reduce((sum, r) => sum + r.sandbox_count, 0);
+  const totalMachinees = results.reduce((sum, r) => sum + r.machine_count, 0);
   const totalCapacity = config.nodes.reduce((sum, n) => {
-    if (n.max_sandboxes == null) return Infinity;
-    return sum === Infinity ? Infinity : sum + n.max_sandboxes;
+    if (n.max_machinees == null) return Infinity;
+    return sum === Infinity ? Infinity : sum + n.max_machinees;
   }, 0);
   console.log(`Pool strategy: ${config.strategy}`);
   console.log(`Nodes: ${onlineCount}/${config.nodes.length} online`);
-  console.log(`Sandboxes: ${totalSandboxes}${totalCapacity === Infinity ? "" : `/${totalCapacity}`}`);
+  console.log(`Machinees: ${totalMachinees}${totalCapacity === Infinity ? "" : `/${totalCapacity}`}`);
   for (const r of results) {
     const icon = r.online ? "+" : "-";
-    console.log(`  [${icon}] ${r.node.name} (${r.node.url}) — ${r.sandbox_count} sandboxes`);
+    console.log(`  [${icon}] ${r.node.name} (${r.node.url}) — ${r.machine_count} machinees`);
   }
 }
 
-async function cmdPoolRoute(sandboxName: string) {
-  const node = await resolveNodeForSandbox(sandboxName);
+async function cmdPoolRoute(machineName: string) {
+  const node = await resolveNodeForMachine(machineName);
   if (node) {
-    console.log(`Sandbox '${sandboxName}' is on node '${node.name}' (${node.url})`);
+    console.log(`Machine '${machineName}' is on node '${node.name}' (${node.url})`);
   } else {
-    console.log(`Sandbox '${sandboxName}' has no pool node assignment (using default server).`);
+    console.log(`Machine '${machineName}' has no pool node assignment (using default server).`);
   }
 }
 
@@ -826,7 +826,7 @@ async function cmdPoolStrategy(strategy: string) {
 
 interface AuditEntry {
   timestamp: string;
-  sandbox: string;
+  machine: string;
   action: string;
   duration_ms?: number;
   details?: Record<string, unknown>;
@@ -835,7 +835,7 @@ interface AuditEntry {
 async function recordSession(entry: AuditEntry): Promise<void> {
   const dir = `${SMOLVM_HOME}/sessions`;
   await Deno.mkdir(dir, { recursive: true });
-  const file = `${dir}/${entry.sandbox}.ndjson`;
+  const file = `${dir}/${entry.machine}.ndjson`;
   await Deno.writeTextFile(file, JSON.stringify(entry) + "\n", { append: true });
 }
 
@@ -892,9 +892,9 @@ async function cmdSessionRm(name: string) {
 }
 
 /**
- * Audit trail: show secret access history for a sandbox.
+ * Audit trail: show secret access history for a machine.
  * Combines metadata (which secrets were enabled) with session logs
- * (when the sandbox was created, executed commands, etc.)
+ * (when the machine was created, executed commands, etc.)
  */
 async function cmdAudit(name: string) {
   const meta = await loadMeta(name);
@@ -960,8 +960,8 @@ async function cmdAudit(name: string) {
 
 interface EventLogEntry {
   timestamp: string;
-  event: string;       // "sandbox.create" | "sandbox.start" | "sandbox.stop" | "sandbox.delete" | "exec" | "job.submit" | "job.complete" etc.
-  sandbox?: string;
+  event: string;       // "machine.create" | "machine.start" | "machine.stop" | "machine.delete" | "exec" | "job.submit" | "job.complete" etc.
+  machine?: string;
   actor?: string;      // owner/user
   details?: Record<string, unknown>;
 }
@@ -973,8 +973,8 @@ async function logEvent(entry: EventLogEntry): Promise<void> {
 }
 
 async function cmdEvents(args: string[]) {
-  const { flags, positional } = parseFlags(args, ["sandbox", "event", "since", "limit", "json"]);
-  const filterSandbox = flag(flags, "sandbox");
+  const { flags, positional } = parseFlags(args, ["machine", "event", "since", "limit", "json"]);
+  const filterMachine = flag(flags, "machine");
   const filterEvent = flag(flags, "event");
   const since = flag(flags, "since");
   const limit = parseInt(flag(flags, "limit") ?? "50");
@@ -992,7 +992,7 @@ async function cmdEvents(args: string[]) {
   let entries = text.trim().split("\n").filter(Boolean).map(l => JSON.parse(l) as EventLogEntry);
 
   // Apply filters
-  if (filterSandbox) entries = entries.filter(e => e.sandbox === filterSandbox);
+  if (filterMachine) entries = entries.filter(e => e.machine === filterMachine);
   if (filterEvent) entries = entries.filter(e => e.event.includes(filterEvent));
   if (since) {
     const sinceDate = new Date(since);
@@ -1011,7 +1011,7 @@ async function cmdEvents(args: string[]) {
     for (const e of entries) console.log(JSON.stringify(e));
   } else {
     for (const e of entries) {
-      const sb = e.sandbox ? ` [${e.sandbox}]` : "";
+      const sb = e.machine ? ` [${e.machine}]` : "";
       const actor = e.actor ? ` by ${e.actor}` : "";
       console.log(`${e.timestamp}  ${e.event}${sb}${actor}`);
       if (e.details && !positional.includes("--brief")) {
@@ -1032,7 +1032,7 @@ async function cmdEvents(args: string[]) {
 interface StatusEvent {
   status: "queued" | "preparing" | "running" | "completed" | "failed";
   timestamp: string;
-  sandbox: string;
+  machine: string;
   details?: Record<string, unknown>;
   error?: string;
 }
@@ -1045,10 +1045,10 @@ function emitStatus(event: StatusEvent): void {
 // Lifecycle hooks
 // ---------------------------------------------------------------------------
 
-/** Run a command inside a sandbox with short timeout, swallowing errors. */
+/** Run a command inside a machine with short timeout, swallowing errors. */
 async function safeExec(name: string, cmd: string[]): Promise<{ exit_code: number; stdout: string; stderr: string } | null> {
   try {
-    const resp = await apiCall("POST", `/sandboxes/${name}/exec`, { command: cmd, timeout_secs: 5 }, 10_000);
+    const resp = await apiCall("POST", `/machinees/${name}/exec`, { command: cmd, timeout_secs: 5 }, 10_000);
     if (!resp.ok) return null;
     return await resp.json();
   } catch { return null; }
@@ -1358,7 +1358,7 @@ function hasFlag(flags: Record<string, string[]>, key: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Sandbox commands
+// Machine commands
 // ---------------------------------------------------------------------------
 
 async function cmdHealth() {
@@ -1374,9 +1374,9 @@ async function cmdHealth() {
 }
 
 async function cmdList() {
-  const resp = await apiCall("GET", "/sandboxes");
-  const data = await jsonResult<{ sandboxes: Record<string, unknown>[] }>(resp);
-  const rows = data.sandboxes.map((s) => ({
+  const resp = await apiCall("GET", "/machinees");
+  const data = await jsonResult<{ machinees: Record<string, unknown>[] }>(resp);
+  const rows = data.machinees.map((s) => ({
     name: s.name,
     state: s.state,
     pid: s.pid ?? "-",
@@ -1472,10 +1472,10 @@ async function cmdCreate(name: string, args: string[]) {
 
   const t0 = Date.now();
   const resp = targetNode
-    ? await nodeApiCall(targetNode, "POST", "/sandboxes", opts, LONG_TIMEOUT_MS)
-    : await apiCall("POST", "/sandboxes", opts, LONG_TIMEOUT_MS);
+    ? await nodeApiCall(targetNode, "POST", "/machinees", opts, LONG_TIMEOUT_MS)
+    : await apiCall("POST", "/machinees", opts, LONG_TIMEOUT_MS);
   const data = await jsonResult<Record<string, unknown>>(resp);
-  console.log(`Created sandbox: ${data.name} (${data.state})`);
+  console.log(`Created machine: ${data.name} (${data.state})`);
   if (allowedDomains.length > 0) {
     console.log(`DNS egress filtering enabled for: ${allowedDomains.join(", ")}`);
   }
@@ -1494,47 +1494,47 @@ async function cmdCreate(name: string, args: string[]) {
 
   // Record session + event log
   const now = new Date().toISOString();
-  await recordSession({ timestamp: now, sandbox: name, action: "create", duration_ms: Date.now() - t0 });
-  await logEvent({ timestamp: now, event: "sandbox.create", sandbox: name, actor: flag(flags, "owner") ?? Deno.env.get("USER"), details: { starter: flag(flags, "starter"), secrets: secrets.length > 0 ? secrets : undefined, node: targetNode?.name } });
+  await recordSession({ timestamp: now, machine: name, action: "create", duration_ms: Date.now() - t0 });
+  await logEvent({ timestamp: now, event: "machine.create", machine: name, actor: flag(flags, "owner") ?? Deno.env.get("USER"), details: { starter: flag(flags, "starter"), secrets: secrets.length > 0 ? secrets : undefined, node: targetNode?.name } });
 }
 
-/** API call that auto-routes to the correct pool node for a sandbox. */
-async function sandboxApiCall(
+/** API call that auto-routes to the correct pool node for a machine. */
+async function machineApiCall(
   name: string,
   method: string,
   path: string,
   body?: unknown,
   timeout = TIMEOUT_MS,
 ): Promise<Response> {
-  const node = await resolveNodeForSandbox(name);
+  const node = await resolveNodeForMachine(name);
   if (node) return nodeApiCall(node, method, path, body, timeout);
   return apiCall(method, path, body, timeout);
 }
 
 async function cmdStart(name: string) {
-  const resp = await sandboxApiCall(name, "POST", `/sandboxes/${name}/start`);
+  const resp = await machineApiCall(name, "POST", `/machinees/${name}/start`);
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(`Started: ${data.name} (pid: ${data.pid ?? "?"})`);
-  await logEvent({ timestamp: new Date().toISOString(), event: "sandbox.start", sandbox: name });
+  await logEvent({ timestamp: new Date().toISOString(), event: "machine.start", machine: name });
 }
 
 async function cmdStop(name: string) {
-  const resp = await sandboxApiCall(name, "POST", `/sandboxes/${name}/stop`);
+  const resp = await machineApiCall(name, "POST", `/machinees/${name}/stop`);
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(`Stopped: ${data.name}`);
-  await logEvent({ timestamp: new Date().toISOString(), event: "sandbox.stop", sandbox: name });
+  await logEvent({ timestamp: new Date().toISOString(), event: "machine.stop", machine: name });
 }
 
 async function cmdDelete(name: string, force: boolean) {
   const qs = force ? "?force=true" : "";
-  const resp = await sandboxApiCall(name, "DELETE", `/sandboxes/${name}${qs}`);
+  const resp = await machineApiCall(name, "DELETE", `/machinees/${name}${qs}`);
   await okOrDie(resp, "delete");
   console.log(`Deleted: ${name}`);
-  await logEvent({ timestamp: new Date().toISOString(), event: "sandbox.delete", sandbox: name, details: { force } });
+  await logEvent({ timestamp: new Date().toISOString(), event: "machine.delete", machine: name, details: { force } });
 }
 
 async function cmdInfo(name: string) {
-  const resp = await sandboxApiCall(name, "GET", `/sandboxes/${name}`);
+  const resp = await machineApiCall(name, "GET", `/machinees/${name}`);
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(JSON.stringify(data, null, 2));
 }
@@ -1546,7 +1546,7 @@ async function cmdExec(name: string, command: string[], args: string[]) {
   if (hasFlag(flags, "signed-only")) {
     const meta = await loadMeta(name);
     if (!meta?.signature_verified) {
-      die(`Sandbox '${name}' does not have verified signed content.\n` +
+      die(`Machine '${name}' does not have verified signed content.\n` +
         `  Push signed content with 'smolctl sync push ${name} <dir> --verify' first.`);
     }
     console.log(`[signed-only] Content verified (signer: ${meta.signature_key_id}, signed: ${meta.signature_timestamp})`);
@@ -1566,12 +1566,12 @@ async function cmdExec(name: string, command: string[], args: string[]) {
 
   const t0 = Date.now();
   const clientTimeout = (parseInt(flag(flags, "timeout") ?? "30") + 5) * 1000;
-  const resp = await sandboxApiCall(name, "POST", `/sandboxes/${name}/exec`, body, clientTimeout);
+  const resp = await machineApiCall(name, "POST", `/machinees/${name}/exec`, body, clientTimeout);
   const data = await jsonResult<{ exitCode?: number; exit_code?: number; stdout: string; stderr: string }>(resp);
   const code = data.exit_code ?? data.exitCode ?? -1;
   if (data.stdout) Deno.stdout.writeSync(new TextEncoder().encode(data.stdout));
   if (data.stderr) Deno.stderr.writeSync(new TextEncoder().encode(data.stderr));
-  await recordSession({ timestamp: new Date().toISOString(), sandbox: name, action: "exec", duration_ms: Date.now() - t0, details: { command, exit_code: code } });
+  await recordSession({ timestamp: new Date().toISOString(), machine: name, action: "exec", duration_ms: Date.now() - t0, details: { command, exit_code: code } });
   if (code !== 0) Deno.exit(code);
 }
 
@@ -1584,9 +1584,9 @@ async function cmdUp(name: string, args: string[]) {
   // Pass all args through to create (it parses its own flags)
   await cmdCreate(name, args);
   await cmdStart(name);
-  await recordSession({ timestamp: new Date().toISOString(), sandbox: name, action: "start" });
+  await recordSession({ timestamp: new Date().toISOString(), machine: name, action: "start" });
 
-  // Auto-install MCP server scripts into the sandbox when --with-mcp is used
+  // Auto-install MCP server scripts into the machine when --with-mcp is used
   if (hasFlag(flags, "with-mcp")) {
     console.log("Installing built-in MCP servers...");
     await cmdMcpInstall(name);
@@ -1596,7 +1596,7 @@ async function cmdUp(name: string, args: string[]) {
   const setupCmds = flagAll(flags, "setup");
   for (const cmd of setupCmds) {
     console.log(`[setup] ${cmd}`);
-    const resp = await apiCall("POST", `/sandboxes/${name}/exec`, {
+    const resp = await apiCall("POST", `/machinees/${name}/exec`, {
       command: ["sh", "-c", cmd],
       timeout_secs: 120,
     }, 130_000);
@@ -1607,7 +1607,7 @@ async function cmdUp(name: string, args: string[]) {
     if (code !== 0) die(`Setup command failed (exit ${code}): ${cmd}`);
   }
 
-  console.log(`Sandbox ${name} is up and running.`);
+  console.log(`Machine ${name} is up and running.`);
 }
 
 async function cmdDown(name: string, force = false) {
@@ -1623,12 +1623,12 @@ async function cmdDown(name: string, force = false) {
   try { await cmdStop(name); } catch { /* already stopped */ }
   await cmdDelete(name, false);
   await deleteMeta(name);
-  await recordSession({ timestamp: new Date().toISOString(), sandbox: name, action: "down" });
+  await recordSession({ timestamp: new Date().toISOString(), machine: name, action: "down" });
 }
 
 /**
- * Resume a sandbox from cached metadata.
- * Re-creates the sandbox with the same configuration (starter, secrets, labels, resources)
+ * Resume a machine from cached metadata.
+ * Re-creates the machine with the same configuration (starter, secrets, labels, resources)
  * and optionally restores the session log.
  */
 async function cmdResume(name: string, args: string[]) {
@@ -1637,29 +1637,29 @@ async function cmdResume(name: string, args: string[]) {
 
   // Load saved metadata
   const meta = await loadMeta(name);
-  if (!meta) die(`No cached metadata for sandbox: ${name}. Cannot resume.`);
+  if (!meta) die(`No cached metadata for machine: ${name}. Cannot resume.`);
 
-  // Check if sandbox already exists on the server
+  // Check if machine already exists on the server
   try {
-    const resp = await apiCall("GET", `/sandboxes/${name}`);
+    const resp = await apiCall("GET", `/machinees/${name}`);
     if (resp.ok) {
       const data = await resp.json();
       if (data.state === "running") {
-        console.log(`Sandbox ${name} is already running. Reconnecting.`);
-        await recordSession({ timestamp: ts(), sandbox: name, action: "resume", details: { mode: "reconnect" } });
+        console.log(`Machine ${name} is already running. Reconnecting.`);
+        await recordSession({ timestamp: ts(), machine: name, action: "resume", details: { mode: "reconnect" } });
         return;
       }
       if (data.state === "stopped") {
-        console.log(`Sandbox ${name} exists but is stopped. Restarting.`);
+        console.log(`Machine ${name} exists but is stopped. Restarting.`);
         await cmdStart(name);
-        await recordSession({ timestamp: ts(), sandbox: name, action: "resume", details: { mode: "restart" } });
+        await recordSession({ timestamp: ts(), machine: name, action: "resume", details: { mode: "restart" } });
         return;
       }
     }
-  } catch { /* sandbox doesn't exist on server, will re-create */ }
+  } catch { /* machine doesn't exist on server, will re-create */ }
 
   // Re-create from metadata
-  console.log(`Resuming sandbox: ${name} (starter: ${meta.starter ?? "default"})`);
+  console.log(`Resuming machine: ${name} (starter: ${meta.starter ?? "default"})`);
   const createOpts: Record<string, unknown> = {
     name,
     resources: {
@@ -1671,7 +1671,7 @@ async function cmdResume(name: string, args: string[]) {
   if (meta.starter) createOpts.from_starter = meta.starter;
   if (meta.secrets && meta.secrets.length > 0) createOpts.secrets = meta.secrets;
 
-  const createResp = await apiCall("POST", "/sandboxes", createOpts, LONG_TIMEOUT_MS);
+  const createResp = await apiCall("POST", "/machinees", createOpts, LONG_TIMEOUT_MS);
   await jsonResult<Record<string, unknown>>(createResp);
 
   await cmdStart(name);
@@ -1683,42 +1683,42 @@ async function cmdResume(name: string, args: string[]) {
   // Post-start setup hooks
   for (const cmd of flagAll(flags, "setup")) {
     console.log(`[setup] ${cmd}`);
-    const resp = await apiCall("POST", `/sandboxes/${name}/exec`, {
+    const resp = await apiCall("POST", `/machinees/${name}/exec`, {
       command: ["sh", "-c", cmd], timeout_secs: 120,
     }, 130_000);
     const data = await jsonResult<{ exit_code?: number; exitCode?: number }>(resp);
     if ((data.exit_code ?? data.exitCode ?? -1) !== 0) die(`Setup command failed: ${cmd}`);
   }
 
-  await recordSession({ timestamp: ts(), sandbox: name, action: "resume", details: { mode: "recreate", starter: meta.starter, secrets: meta.secrets } });
-  console.log(`Sandbox ${name} resumed.`);
+  await recordSession({ timestamp: ts(), machine: name, action: "resume", details: { mode: "recreate", starter: meta.starter, secrets: meta.secrets } });
+  console.log(`Machine ${name} resumed.`);
 }
 
 async function cmdPrune() {
-  const resp = await apiCall("GET", "/sandboxes");
-  const data = await jsonResult<{ sandboxes: { name: string; state: string }[] }>(resp);
-  if (data.sandboxes.length === 0) {
-    console.log("No sandboxes to prune.");
+  const resp = await apiCall("GET", "/machinees");
+  const data = await jsonResult<{ machinees: { name: string; state: string }[] }>(resp);
+  if (data.machinees.length === 0) {
+    console.log("No machinees to prune.");
     return;
   }
-  for (const sb of data.sandboxes) {
+  for (const sb of data.machinees) {
     try {
-      if (sb.state === "running") await apiCall("POST", `/sandboxes/${sb.name}/stop`);
+      if (sb.state === "running") await apiCall("POST", `/machinees/${sb.name}/stop`);
     } catch { /* ignore */ }
     try {
-      await apiCall("DELETE", `/sandboxes/${sb.name}?force=true`);
+      await apiCall("DELETE", `/machinees/${sb.name}?force=true`);
       console.log(`  pruned: ${sb.name}`);
     } catch (e) {
       console.error(`  failed: ${sb.name} — ${e}`);
     }
   }
-  console.log(`Pruned ${data.sandboxes.length} sandbox(es).`);
+  console.log(`Pruned ${data.machinees.length} machine(es).`);
 }
 
 async function cmdStats(name: string) {
-  const resp = await sandboxApiCall(name, "GET", `/sandboxes/${name}/stats`);
+  const resp = await machineApiCall(name, "GET", `/machinees/${name}/stats`);
   const data = await jsonResult<Record<string, unknown>>(resp);
-  console.log(`Sandbox: ${data.name} (${data.state})`);
+  console.log(`Machine: ${data.name} (${data.state})`);
   console.log(`  CPUs:     ${data.cpus}`);
   console.log(`  Memory:   ${data.memory_mb} MB`);
   console.log(`  Network:  ${data.network}`);
@@ -1810,8 +1810,8 @@ function starterReadme(meta: StarterMeta): string {
     "# Build the starter image",
     `smolctl starter build ${meta.name}`,
     "",
-    "# Create a sandbox using this starter",
-    `smolctl up my-sandbox --starter ${meta.name}`,
+    "# Create a machine using this starter",
+    `smolctl up my-machine --starter ${meta.name}`,
     "```",
     "",
     "## Customization",
@@ -2128,13 +2128,13 @@ async function cmdProviderInfo() {
     name: string;
     version: string;
     capabilities: string[];
-    max_sandboxes?: number;
+    max_machinees?: number;
     region?: string;
   }>(resp);
   console.log(`Provider: ${data.name}`);
   console.log(`Version:  ${data.version}`);
   console.log(`Region:   ${data.region ?? "-"}`);
-  console.log(`Max VMs:  ${data.max_sandboxes ?? "unlimited"}`);
+  console.log(`Max VMs:  ${data.max_machinees ?? "unlimited"}`);
   console.log(`Capabilities: ${data.capabilities.join(", ")}`);
 }
 
@@ -2207,7 +2207,7 @@ async function cmdLogs(name: string, args: string[]) {
   const tail = flag(flags, "tail") ?? "100";
   const follow = !hasFlag(flags, "no-follow");
   const qs = `?follow=${follow}&tail=${tail}`;
-  const resp = await fetch(`${API}/sandboxes/${name}/logs${qs}`, {
+  const resp = await fetch(`${API}/machinees/${name}/logs${qs}`, {
     headers: authHeaders(),
   });
   if (!resp.ok) {
@@ -2242,13 +2242,13 @@ async function cmdClone(source: string, newName: string, args?: string[]) {
   const noBranch = args?.includes("--no-branch");
   // Flush source filesystem to ensure consistent clone (ext4 journal may have unflushed writes)
   try { await gitExec(source, "sync", 5); } catch { /* best effort */ }
-  const resp = await apiCall("POST", `/sandboxes/${source}/clone`, { name: newName });
+  const resp = await apiCall("POST", `/machinees/${source}/clone`, { name: newName });
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(`Cloned: ${source} -> ${data.name} (${data.state})`);
 
   // Start the clone so we can exec
   try {
-    const startResp = await apiCall("POST", `/sandboxes/${newName}/start`);
+    const startResp = await apiCall("POST", `/machinees/${newName}/start`);
     await jsonResult<Record<string, unknown>>(startResp);
   } catch { /* already running or can't start */ }
 
@@ -2267,13 +2267,13 @@ async function cmdClone(source: string, newName: string, args?: string[]) {
 }
 
 async function cmdDiff(name: string, other: string) {
-  const resp = await apiCall("GET", `/sandboxes/${name}/diff/${other}`);
+  const resp = await apiCall("GET", `/machinees/${name}/diff/${other}`);
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(JSON.stringify(data, null, 2));
 }
 
 async function cmdMerge(source: string, target: string) {
-  const resp = await apiCall("POST", `/sandboxes/${source}/merge/${target}`, {});
+  const resp = await apiCall("POST", `/machinees/${source}/merge/${target}`, {});
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(JSON.stringify(data, null, 2));
 }
@@ -2291,7 +2291,7 @@ async function cmdSnapshotPush(name: string, args?: string[]) {
   if (description) body.description = description;
   if (parent_snapshot) body.parent_snapshot = parent_snapshot;
   if (incremental) body.incremental = true;
-  const resp = await apiCall("POST", `/sandboxes/${name}/push`, Object.keys(body).length ? body : undefined);
+  const resp = await apiCall("POST", `/machinees/${name}/push`, Object.keys(body).length ? body : undefined);
   const data = await jsonResult<{ name: string; path: string; manifest: Record<string, unknown> }>(resp);
   console.log(`Pushed snapshot: ${data.name}`);
   if (data.manifest.snapshot_version && (data.manifest.snapshot_version as number) >= 2) console.log(`  type: incremental (v${data.manifest.sequence ?? data.manifest.snapshot_version})`);
@@ -2325,8 +2325,8 @@ async function cmdSnapshotLs(flags: string[] = []) {
   }
 }
 
-async function cmdSnapshotPull(snapName: string, sandboxName: string) {
-  const resp = await apiCall("POST", `/snapshots/${snapName}/pull`, { name: sandboxName });
+async function cmdSnapshotPull(snapName: string, machineName: string) {
+  const resp = await apiCall("POST", `/snapshots/${snapName}/pull`, { name: machineName });
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(`Pulled: ${snapName} -> ${data.name} (${data.state})`);
 }
@@ -2403,7 +2403,7 @@ async function cmdSnapshotImport(filePath: string, overrideName?: string) {
       if (manifest.parent_snapshot) console.log(`  parent: ${manifest.parent_snapshot}`);
     }
   } catch { /* can't read manifest, not critical */ }
-  console.log(`Use: smolctl snapshot pull ${name} <sandbox-name>`);
+  console.log(`Use: smolctl snapshot pull ${name} <machine-name>`);
 }
 
 async function cmdSnapshotUpload(name: string) {
@@ -2517,33 +2517,33 @@ async function cmdSnapshotDownload(name: string) {
   const stat = await Deno.stat(dst);
   const sizeMb = ((stat.size || 0) / (1024 * 1024)).toFixed(1);
   console.log(`Downloaded: ${dst} (${sizeMb} MB)`);
-  console.log(`Use: smolctl snapshot pull ${name} <sandbox-name>`);
+  console.log(`Use: smolctl snapshot pull ${name} <machine-name>`);
 }
 
 // ---------------------------------------------------------------------------
 // Workspace export/import — lightweight (~1MB git repo vs ~100MB full disk)
 // ---------------------------------------------------------------------------
 
-async function cmdWorkspaceExport(sandbox: string, destPath?: string) {
-  console.log(`Exporting workspace from '${sandbox}'...`);
+async function cmdWorkspaceExport(machine: string, destPath?: string) {
+  console.log(`Exporting workspace from '${machine}'...`);
 
-  // Check sandbox is running
-  const infoResp = await apiCall("GET", `/sandboxes/${sandbox}`);
-  if (!infoResp.ok) die(`sandbox '${sandbox}' not found`);
+  // Check machine is running
+  const infoResp = await apiCall("GET", `/machinees/${machine}`);
+  if (!infoResp.ok) die(`machine '${machine}' not found`);
   const info = await infoResp.json();
-  if (info.state !== "running") die(`sandbox '${sandbox}' is not running (state: ${info.state}). Start it first.`);
+  if (info.state !== "running") die(`machine '${machine}' is not running (state: ${info.state}). Start it first.`);
 
   // Resolve workspace path inside VM
-  const wsCheck = await apiCall("POST", `/sandboxes/${sandbox}/exec`, {
+  const wsCheck = await apiCall("POST", `/machinees/${machine}/exec`, {
     command: ["sh", "-c", "test -d /storage/workspace/.git && echo /storage/workspace || (test -d /workspace/.git && echo /workspace || echo none)"],
     timeout_secs: 5,
   });
   const wsData = await jsonResult<{ stdout: string }>(wsCheck);
   const wsPath = wsData.stdout.trim();
-  if (wsPath === "none") die(`no git workspace found in '${sandbox}'. Initialize with: smolctl git init ${sandbox}`);
+  if (wsPath === "none") die(`no git workspace found in '${machine}'. Initialize with: smolctl git init ${machine}`);
 
   // Capture git info for the filename/metadata
-  const gitInfoResp = await apiCall("POST", `/sandboxes/${sandbox}/exec`, {
+  const gitInfoResp = await apiCall("POST", `/machinees/${machine}/exec`, {
     command: ["sh", "-c", `cd ${wsPath} && echo "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)|$(git rev-parse --short HEAD 2>/dev/null || echo unknown)|$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"`],
     timeout_secs: 5,
   });
@@ -2552,7 +2552,7 @@ async function cmdWorkspaceExport(sandbox: string, destPath?: string) {
 
   // Tar the workspace inside the VM and base64 encode for transport
   const tarCmd = `cd ${wsPath} && tar czf - . 2>/dev/null | base64`;
-  const resp = await apiCall("POST", `/sandboxes/${sandbox}/exec`, {
+  const resp = await apiCall("POST", `/machinees/${machine}/exec`, {
     command: ["sh", "-c", tarCmd],
     timeout_secs: 120,
   }, LONG_TIMEOUT_MS);
@@ -2566,16 +2566,16 @@ async function cmdWorkspaceExport(sandbox: string, destPath?: string) {
   const sizeMb = (raw.byteLength / (1024 * 1024)).toFixed(2);
 
   // Write to destination
-  const dst = destPath || `./${sandbox}-workspace.tar.gz`;
+  const dst = destPath || `./${machine}-workspace.tar.gz`;
   await Deno.writeFile(dst, raw);
 
   console.log(`Exported workspace: ${dst} (${sizeMb} MB)`);
   console.log(`  git: ${branch}@${commit}${parseInt(dirtyCount) > 0 ? " (dirty)" : ""}`);
-  console.log(`  source: ${sandbox}:${wsPath}`);
+  console.log(`  source: ${machine}:${wsPath}`);
 }
 
-async function cmdWorkspaceImport(filePath: string, sandbox: string) {
-  console.log(`Importing workspace into '${sandbox}'...`);
+async function cmdWorkspaceImport(filePath: string, machine: string) {
+  console.log(`Importing workspace into '${machine}'...`);
 
   // Verify file exists
   let fileInfo: Deno.FileInfo;
@@ -2587,14 +2587,14 @@ async function cmdWorkspaceImport(filePath: string, sandbox: string) {
   }
   const sizeMb = ((fileInfo.size || 0) / (1024 * 1024)).toFixed(2);
 
-  // Check sandbox is running
-  const infoResp = await apiCall("GET", `/sandboxes/${sandbox}`);
-  if (!infoResp.ok) die(`sandbox '${sandbox}' not found`);
+  // Check machine is running
+  const infoResp = await apiCall("GET", `/machinees/${machine}`);
+  if (!infoResp.ok) die(`machine '${machine}' not found`);
   const info = await infoResp.json();
-  if (info.state !== "running") die(`sandbox '${sandbox}' is not running (state: ${info.state}). Start it first.`);
+  if (info.state !== "running") die(`machine '${machine}' is not running (state: ${info.state}). Start it first.`);
 
   // Ensure workspace directory exists and has git
-  await apiCall("POST", `/sandboxes/${sandbox}/exec`, {
+  await apiCall("POST", `/machinees/${machine}/exec`, {
     command: ["sh", "-c", "mkdir -p /storage/workspace && test -L /workspace || ln -sfn /storage/workspace /workspace 2>/dev/null || true"],
     timeout_secs: 5,
   });
@@ -2602,7 +2602,7 @@ async function cmdWorkspaceImport(filePath: string, sandbox: string) {
   // Upload the tar.gz via archive endpoint to /storage/workspace
   const tarData = await Deno.readFile(filePath);
   const qs = `?dir=${encodeURIComponent("/storage/workspace")}`;
-  const resp = await fetch(`${API}/sandboxes/${sandbox}/archive/upload${qs}`, {
+  const resp = await fetch(`${API}/machinees/${machine}/archive/upload${qs}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/gzip",
@@ -2614,19 +2614,19 @@ async function cmdWorkspaceImport(filePath: string, sandbox: string) {
   await okOrDie(resp, "workspace import");
 
   // Mark safe.directory so git works
-  await apiCall("POST", `/sandboxes/${sandbox}/exec`, {
+  await apiCall("POST", `/machinees/${machine}/exec`, {
     command: ["sh", "-c", "git config --global --add safe.directory /storage/workspace 2>/dev/null || true"],
     timeout_secs: 5,
   });
 
   // Verify git history survived
-  const verifyResp = await apiCall("POST", `/sandboxes/${sandbox}/exec`, {
+  const verifyResp = await apiCall("POST", `/machinees/${machine}/exec`, {
     command: ["sh", "-c", "cd /storage/workspace && git log --oneline -3 2>/dev/null || echo '(no git history)'"],
     timeout_secs: 5,
   });
   const verifyData = await jsonResult<{ stdout: string }>(verifyResp);
 
-  console.log(`Imported workspace: ${filePath} (${sizeMb} MB) -> ${sandbox}:/storage/workspace`);
+  console.log(`Imported workspace: ${filePath} (${sizeMb} MB) -> ${machine}:/storage/workspace`);
   console.log(`  recent commits:`);
   for (const line of verifyData.stdout.trim().split("\n").slice(0, 3)) {
     console.log(`    ${line}`);
@@ -2637,30 +2637,30 @@ async function cmdWorkspaceImport(filePath: string, sandbox: string) {
 // Docker interop — workspace-only Dockerfile generation
 // ---------------------------------------------------------------------------
 
-async function cmdToDocker(sandbox: string, args: string[]) {
+async function cmdToDocker(machine: string, args: string[]) {
   const { flags } = parseFlags(args, ["tag", "output"]);
-  const tag = flagAll(flags, "tag")[0] || `${sandbox}:latest`;
-  const outputDir = flagAll(flags, "output")[0] || `./${sandbox}-docker`;
+  const tag = flagAll(flags, "tag")[0] || `${machine}:latest`;
+  const outputDir = flagAll(flags, "output")[0] || `./${machine}-docker`;
 
-  console.log(`Generating Docker build context from '${sandbox}'...`);
+  console.log(`Generating Docker build context from '${machine}'...`);
 
-  // Check sandbox is running
-  const infoResp = await apiCall("GET", `/sandboxes/${sandbox}`);
-  if (!infoResp.ok) die(`sandbox '${sandbox}' not found`);
+  // Check machine is running
+  const infoResp = await apiCall("GET", `/machinees/${machine}`);
+  if (!infoResp.ok) die(`machine '${machine}' not found`);
   const info = await infoResp.json();
-  if (info.state !== "running") die(`sandbox '${sandbox}' is not running (state: ${info.state}). Start it first.`);
+  if (info.state !== "running") die(`machine '${machine}' is not running (state: ${info.state}). Start it first.`);
 
   // Resolve workspace path
-  const wsCheck = await apiCall("POST", `/sandboxes/${sandbox}/exec`, {
+  const wsCheck = await apiCall("POST", `/machinees/${machine}/exec`, {
     command: ["sh", "-c", "test -d /storage/workspace/.git && echo /storage/workspace || (test -d /workspace/.git && echo /workspace || echo none)"],
     timeout_secs: 5,
   });
   const wsData = await jsonResult<{ stdout: string }>(wsCheck);
   const wsPath = wsData.stdout.trim();
-  if (wsPath === "none") die(`no git workspace found in '${sandbox}'. Initialize with: smolctl git init ${sandbox}`);
+  if (wsPath === "none") die(`no git workspace found in '${machine}'. Initialize with: smolctl git init ${machine}`);
 
   // Get git info
-  const gitResp = await apiCall("POST", `/sandboxes/${sandbox}/exec`, {
+  const gitResp = await apiCall("POST", `/machinees/${machine}/exec`, {
     command: ["sh", "-c", `cd ${wsPath} && echo "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)|$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"`],
     timeout_secs: 5,
   });
@@ -2668,7 +2668,7 @@ async function cmdToDocker(sandbox: string, args: string[]) {
   const [branch, commit] = gitInfo.stdout.trim().split("|");
 
   // Detect installed packages (best-effort)
-  const pkgResp = await apiCall("POST", `/sandboxes/${sandbox}/exec`, {
+  const pkgResp = await apiCall("POST", `/machinees/${machine}/exec`, {
     command: ["sh", "-c", "apk info -q 2>/dev/null | sort | tr '\\n' ' '"],
     timeout_secs: 5,
   });
@@ -2680,7 +2680,7 @@ async function cmdToDocker(sandbox: string, args: string[]) {
   await Deno.mkdir(outputDir, { recursive: true });
 
   const tarCmd = `cd ${wsPath} && tar czf - . 2>/dev/null | base64`;
-  const resp = await apiCall("POST", `/sandboxes/${sandbox}/exec`, {
+  const resp = await apiCall("POST", `/machinees/${machine}/exec`, {
     command: ["sh", "-c", tarCmd],
     timeout_secs: 120,
   }, LONG_TIMEOUT_MS);
@@ -2707,7 +2707,7 @@ async function cmdToDocker(sandbox: string, args: string[]) {
   const dockerfile = [
     `FROM alpine:3.19`,
     ``,
-    `# Generated by smolctl to-docker from sandbox '${sandbox}'`,
+    `# Generated by smolctl to-docker from machine '${machine}'`,
     `# git: ${branch}@${commit}`,
     `# date: ${new Date().toISOString()}`,
     ``,
@@ -2772,16 +2772,16 @@ async function cmdSnapshotMerge(snapName: string, targetVm: string, args: string
   const strategy = flag(flags, "strategy");
   const tempName = `_merge-${snapName}-${Date.now()}`;
 
-  // 1. Pull snapshot into temp sandbox
-  console.log(`Pulling snapshot '${snapName}' into temp sandbox '${tempName}'...`);
+  // 1. Pull snapshot into temp machine
+  console.log(`Pulling snapshot '${snapName}' into temp machine '${tempName}'...`);
   const pullResp = await apiCall("POST", `/snapshots/${snapName}/pull`, { name: tempName });
   await okOrDie(pullResp, "snapshot pull for merge");
 
   try {
-    // 2. Start temp sandbox
-    console.log("Starting temp sandbox...");
-    const startResp = await apiCall("POST", `/sandboxes/${tempName}/start`);
-    await okOrDie(startResp, "start temp sandbox");
+    // 2. Start temp machine
+    console.log("Starting temp machine...");
+    const startResp = await apiCall("POST", `/machinees/${tempName}/start`);
+    await okOrDie(startResp, "start temp machine");
     // Wait for ready
     for (let i = 0; i < 30; i++) {
       await new Promise(r => setTimeout(r, 1000));
@@ -2798,17 +2798,17 @@ async function cmdSnapshotMerge(snapName: string, targetVm: string, args: string
     await cmdGitMerge(tempName, targetVm, strategy ? ["--strategy", strategy] : []);
     console.log(`Merged snapshot '${snapName}' into '${targetVm}'`);
   } finally {
-    // 4. Clean up temp sandbox
-    console.log("Cleaning up temp sandbox...");
-    try { await apiCall("POST", `/sandboxes/${tempName}/stop`); } catch { /* may already be stopped */ }
-    try { await apiCall("DELETE", `/sandboxes/${tempName}`); } catch { /* best effort */ }
+    // 4. Clean up temp machine
+    console.log("Cleaning up temp machine...");
+    try { await apiCall("POST", `/machinees/${tempName}/stop`); } catch { /* may already be stopped */ }
+    try { await apiCall("DELETE", `/machinees/${tempName}`); } catch { /* best effort */ }
   }
 }
 
 // ── Snapshot file access ──────────────────────────────────────────────
 
 /**
- * Boot a temp sandbox from a snapshot, run a callback, then clean up.
+ * Boot a temp machine from a snapshot, run a callback, then clean up.
  * Reusable helper for snapshot merge, cp, ls-files.
  */
 async function withTempFromSnapshot(
@@ -2817,14 +2817,14 @@ async function withTempFromSnapshot(
   fn: (tempName: string) => Promise<void>,
 ): Promise<void> {
   const tempName = `_${prefix}-${snapName}-${Date.now()}`;
-  console.log(`Pulling snapshot '${snapName}' into temp sandbox '${tempName}'...`);
+  console.log(`Pulling snapshot '${snapName}' into temp machine '${tempName}'...`);
   const pullResp = await apiCall("POST", `/snapshots/${snapName}/pull`, { name: tempName }, LONG_TIMEOUT_MS);
   await okOrDie(pullResp, "snapshot pull");
 
   try {
-    console.log("Starting temp sandbox...");
-    const startResp = await apiCall("POST", `/sandboxes/${tempName}/start`, undefined, LONG_TIMEOUT_MS);
-    await okOrDie(startResp, "start temp sandbox");
+    console.log("Starting temp machine...");
+    const startResp = await apiCall("POST", `/machinees/${tempName}/start`, undefined, LONG_TIMEOUT_MS);
+    await okOrDie(startResp, "start temp machine");
     // Wait for ready
     for (let i = 0; i < 30; i++) {
       await new Promise(r => setTimeout(r, 1000));
@@ -2837,9 +2837,9 @@ async function withTempFromSnapshot(
     // Mounting /dev/vda would hide the overlay workspace.
     await fn(tempName);
   } finally {
-    console.log("Cleaning up temp sandbox...");
-    try { await apiCall("POST", `/sandboxes/${tempName}/stop`); } catch { /* may already be stopped */ }
-    try { await apiCall("DELETE", `/sandboxes/${tempName}`); } catch { /* best effort */ }
+    console.log("Cleaning up temp machine...");
+    try { await apiCall("POST", `/machinees/${tempName}/stop`); } catch { /* may already be stopped */ }
+    try { await apiCall("DELETE", `/machinees/${tempName}`); } catch { /* best effort */ }
   }
 }
 
@@ -2873,7 +2873,7 @@ async function cmdSnapshotLsFiles(snapName: string, path?: string, args: string[
     const cmd = recursive
       ? `find ${targetPath} -type f 2>/dev/null | sort`
       : `ls -la ${targetPath} 2>/dev/null`;
-    const resp = await apiCall("POST", `/sandboxes/${tempName}/exec`, {
+    const resp = await apiCall("POST", `/machinees/${tempName}/exec`, {
       command: ["sh", "-c", cmd],
       timeout_secs: 15,
     }, LONG_TIMEOUT_MS);
@@ -2898,36 +2898,36 @@ async function cmdSnapshotCp(src: string, dst: string, args: string[]) {
   const { flags } = parseFlags(args, ["exclude"]);
   const excludes = flagAll(flags, "exclude");
 
-  const srcIsSnap = srcP.sandbox && isSnapshot(srcP.sandbox);
-  const dstIsSnap = dstP.sandbox && isSnapshot(dstP.sandbox);
+  const srcIsSnap = srcP.machine && isSnapshot(srcP.machine);
+  const dstIsSnap = dstP.machine && isSnapshot(dstP.machine);
 
-  if (srcIsSnap && !dstP.sandbox) {
+  if (srcIsSnap && !dstP.machine) {
     // Extract from snapshot → local
-    const snapName = srcP.sandbox!;
+    const snapName = srcP.machine!;
     const remotePath = srcP.path;
     const localPath = dstP.path;
     console.log(`Extracting ${snapName}:${remotePath} → ${localPath}`);
 
     await withTempFromSnapshot(snapName, "cp", async (tempName) => {
-      await cpSandboxToLocal(tempName, remotePath, localPath, excludes);
+      await cpMachineToLocal(tempName, remotePath, localPath, excludes);
     });
     console.log(`Done: extracted from snapshot '${snapName}'`);
 
-  } else if (!srcP.sandbox && dstIsSnap) {
+  } else if (!srcP.machine && dstIsSnap) {
     // Inject local → snapshot
-    const snapName = dstP.sandbox!;
+    const snapName = dstP.machine!;
     const remotePath = dstP.path;
     const localPath = srcP.path;
     const filename = localPath.split("/").pop() || "files";
     console.log(`Injecting ${localPath} → ${snapName}:${remotePath}`);
 
     await withTempFromSnapshot(snapName, "cp", async (tempName) => {
-      await cpLocalToSandbox(localPath, tempName, remotePath, excludes);
+      await cpLocalToMachine(localPath, tempName, remotePath, excludes);
       // Git commit the change
       await gitExec(tempName, `cd /storage/workspace && git add -A && git commit -m "snapshot cp: added ${filename}" --allow-empty`, 15);
       // Push back as updated snapshot
       console.log("Pushing updated snapshot...");
-      const pushResp = await apiCall("POST", `/sandboxes/${tempName}/push`, { description: `snapshot cp: added ${filename}` });
+      const pushResp = await apiCall("POST", `/machinees/${tempName}/push`, { description: `snapshot cp: added ${filename}` });
       await okOrDie(pushResp, "push updated snapshot");
     });
     console.log(`Done: injected into snapshot '${snapName}'`);
@@ -2990,21 +2990,21 @@ async function cmdSnapshotHistory(name: string) {
   }
 }
 
-async function cmdSnapshotRollback(snapName: string, sandboxName: string, args: string[]) {
+async function cmdSnapshotRollback(snapName: string, machineName: string, args: string[]) {
   const { flags } = parseFlags(args, ["version"]);
   const version = flag(flags, "version") ? parseInt(flag(flags, "version")!) : undefined;
 
-  const body: Record<string, unknown> = { sandbox_name: sandboxName };
+  const body: Record<string, unknown> = { machine_name: machineName };
   if (version !== undefined) body.version = version;
 
-  console.log(`Rolling back ${sandboxName} to ${snapName}${version ? ` v${version}` : " (latest)"}...`);
+  console.log(`Rolling back ${machineName} to ${snapName}${version ? ` v${version}` : " (latest)"}...`);
   const resp = await apiCall("POST", `/snapshots/${snapName}/rollback`, body);
   const data = await jsonResult<{
-    sandbox_name: string;
+    machine_name: string;
     restored_version: number;
     manifest: Record<string, unknown>;
   }>(resp);
-  console.log(`Rolled back: ${data.sandbox_name} → v${data.restored_version}`);
+  console.log(`Rolled back: ${data.machine_name} → v${data.restored_version}`);
   if (data.manifest.git_branch) console.log(`  git: ${data.manifest.git_branch}@${(data.manifest.git_commit as string || "").slice(0, 8)}`);
   if (data.manifest.description) console.log(`  desc: ${data.manifest.description}`);
 }
@@ -3028,19 +3028,19 @@ async function cmdSnapshotSquash(name: string, args: string[]) {
 
   console.log(`Squashing ${hist.total_snapshots} versions of ${name} (${formatBytes(hist.total_size_bytes)})...`);
 
-  // 2. Pull latest into a temp sandbox
+  // 2. Pull latest into a temp machine
   const tempName = `_squash-${name}-${Date.now()}`;
   const pullResp = await apiCall("POST", `/snapshots/${name}/pull`, { name: tempName });
   await jsonResult(pullResp);
 
   // 3. Push as a fresh full snapshot (overwrites latest)
-  const pushResp = await apiCall("POST", `/sandboxes/${tempName}/push`, {
+  const pushResp = await apiCall("POST", `/machinees/${tempName}/push`, {
     description: `squashed from ${hist.total_snapshots} versions`,
   });
   await jsonResult(pushResp);
 
-  // 4. Clean up temp sandbox
-  await apiCall("DELETE", `/sandboxes/${tempName}`);
+  // 4. Clean up temp machine
+  await apiCall("DELETE", `/machinees/${tempName}`);
 
   // 5. Delete old versioned archives (unless --keep)
   if (!keepOld) {
@@ -3078,15 +3078,15 @@ function formatBytes(bytes: number): string {
 // Images
 // ---------------------------------------------------------------------------
 
-async function cmdImagePull(sandbox: string, image: string) {
+async function cmdImagePull(machine: string, image: string) {
   console.log(`Pulling ${image}...`);
-  const resp = await apiCall("POST", `/sandboxes/${sandbox}/images/pull`, { image }, LONG_TIMEOUT_MS);
+  const resp = await apiCall("POST", `/machinees/${machine}/images/pull`, { image }, LONG_TIMEOUT_MS);
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(`Pulled: ${JSON.stringify(data)}`);
 }
 
-async function cmdImageLs(sandbox: string) {
-  const resp = await apiCall("GET", `/sandboxes/${sandbox}/images`);
+async function cmdImageLs(machine: string) {
+  const resp = await apiCall("GET", `/machinees/${machine}/images`);
   const data = await jsonResult<{ images: Record<string, unknown>[] }>(resp);
   if (data.images.length === 0) {
     console.log("(none)");
@@ -3097,7 +3097,7 @@ async function cmdImageLs(sandbox: string) {
   }
 }
 
-async function cmdRun(sandbox: string, image: string, command: string[], args: string[]) {
+async function cmdRun(machine: string, image: string, command: string[], args: string[]) {
   const { flags } = parseFlags(args, ["env", "workdir", "user", "timeout"]);
   const body: Record<string, unknown> = {
     image,
@@ -3107,7 +3107,7 @@ async function cmdRun(sandbox: string, image: string, command: string[], args: s
   if (flag(flags, "user")) body.user = flag(flags, "user");
   if (flag(flags, "workdir")) body.workdir = flag(flags, "workdir");
 
-  const resp = await apiCall("POST", `/sandboxes/${sandbox}/run`, body, LONG_TIMEOUT_MS);
+  const resp = await apiCall("POST", `/machinees/${machine}/run`, body, LONG_TIMEOUT_MS);
   const data = await jsonResult<{ exitCode?: number; exit_code?: number; stdout: string; stderr: string }>(resp);
   const code = data.exit_code ?? data.exitCode ?? -1;
   if (data.stdout) Deno.stdout.writeSync(new TextEncoder().encode(data.stdout));
@@ -3126,7 +3126,7 @@ async function cmdFilesLs(name: string, dir?: string) {
   // Use a delimiter to avoid ambiguity from spaces in filenames and type names
   const esc = targetDir.replace(/'/g, "'\\''");
   const script = `ls -1a '${esc}' 2>/dev/null | while read f; do [ "$f" = "." ] || [ "$f" = ".." ] && continue; if [ -d "${esc}/$f" ]; then t=dir; else t=file; fi; s=$(stat -c '%s' "${esc}/$f" 2>/dev/null || echo 0); p=$(stat -c '%a' "${esc}/$f" 2>/dev/null || echo 644); echo "$s|$p|$t|$f"; done`;
-  const resp = await apiCall("POST", `/sandboxes/${name}/exec`, {
+  const resp = await apiCall("POST", `/machinees/${name}/exec`, {
     command: ["sh", "-c", script],
     timeout_secs: 15,
   });
@@ -3146,7 +3146,7 @@ async function cmdFilesLs(name: string, dir?: string) {
 
 async function cmdFilesCat(name: string, path: string) {
   const encodedPath = encodeURIComponent(path);
-  const resp = await apiCall("GET", `/sandboxes/${name}/files/${encodedPath}`);
+  const resp = await apiCall("GET", `/machinees/${name}/files/${encodedPath}`);
   const data = await jsonResult<{ content: string }>(resp);
   const decoded = atob(data.content);
   Deno.stdout.writeSync(new TextEncoder().encode(decoded));
@@ -3173,30 +3173,30 @@ async function cmdFilesWrite(name: string, path: string, args: string[]) {
   }
   const encoded = btoa(content);
   const encodedPath = encodeURIComponent(path);
-  const resp = await apiCall("PUT", `/sandboxes/${name}/files/${encodedPath}`, { content: encoded });
+  const resp = await apiCall("PUT", `/machinees/${name}/files/${encodedPath}`, { content: encoded });
   await okOrDie(resp, "write");
   console.log(`Wrote: ${path}`);
 }
 
 async function cmdFilesRm(name: string, path: string) {
   const encodedPath = encodeURIComponent(path);
-  const resp = await apiCall("DELETE", `/sandboxes/${name}/files/${encodedPath}`);
+  const resp = await apiCall("DELETE", `/machinees/${name}/files/${encodedPath}`);
   await okOrDie(resp, "delete");
   console.log(`Deleted: ${path}`);
 }
 
 // ---------------------------------------------------------------------------
-// cp — copy files/dirs in and out of sandboxes
+// cp — copy files/dirs in and out of machinees
 // ---------------------------------------------------------------------------
 
 /**
- * Parse a cp-style path: "sandbox:/path" or "/local/path"
- * Returns { sandbox, path } if remote, { sandbox: null, path } if local.
+ * Parse a cp-style path: "machine:/path" or "/local/path"
+ * Returns { machine, path } if remote, { machine: null, path } if local.
  */
-function parseCpPath(s: string): { sandbox: string | null; path: string } {
+function parseCpPath(s: string): { machine: string | null; path: string } {
   const match = s.match(/^([a-zA-Z0-9_-]+):(.+)$/);
-  if (match) return { sandbox: match[1], path: match[2] };
-  return { sandbox: null, path: s };
+  if (match) return { machine: match[1], path: match[2] };
+  return { machine: null, path: s };
 }
 
 async function cmdCp(src: string, dst: string, args: string[]) {
@@ -3205,18 +3205,18 @@ async function cmdCp(src: string, dst: string, args: string[]) {
   const srcP = parseCpPath(src);
   const dstP = parseCpPath(dst);
 
-  if (!srcP.sandbox && dstP.sandbox) {
-    // Local -> sandbox (upload)
-    await cpLocalToSandbox(srcP.path, dstP.sandbox, dstP.path, excludes);
-  } else if (srcP.sandbox && !dstP.sandbox) {
-    // Sandbox -> local (download)
-    await cpSandboxToLocal(srcP.sandbox, srcP.path, dstP.path);
+  if (!srcP.machine && dstP.machine) {
+    // Local -> machine (upload)
+    await cpLocalToMachine(srcP.path, dstP.machine, dstP.path, excludes);
+  } else if (srcP.machine && !dstP.machine) {
+    // Machine -> local (download)
+    await cpMachineToLocal(srcP.machine, srcP.path, dstP.path);
   } else {
-    die("cp requires one local path and one sandbox:path (e.g., smolctl cp ./src my-vm:/workspace/src)");
+    die("cp requires one local path and one machine:path (e.g., smolctl cp ./src my-vm:/workspace/src)");
   }
 }
 
-async function cpLocalToSandbox(localPath: string, sandbox: string, remotePath: string, excludes: string[]) {
+async function cpLocalToMachine(localPath: string, machine: string, remotePath: string, excludes: string[]) {
   // Create tar of local path, upload via archive endpoint
   const stat = await Deno.stat(localPath).catch(() => null);
   if (!stat) die(`local path not found: ${localPath}`);
@@ -3226,9 +3226,9 @@ async function cpLocalToSandbox(localPath: string, sandbox: string, remotePath: 
     const content = await Deno.readTextFile(localPath);
     const encoded = btoa(content);
     const encodedPath = encodeURIComponent(remotePath);
-    const resp = await apiCall("PUT", `/sandboxes/${sandbox}/files/${encodedPath}`, { content: encoded });
+    const resp = await apiCall("PUT", `/machinees/${machine}/files/${encodedPath}`, { content: encoded });
     await okOrDie(resp, "upload");
-    console.log(`Copied: ${localPath} -> ${sandbox}:${remotePath}`);
+    console.log(`Copied: ${localPath} -> ${machine}:${remotePath}`);
     return;
   }
 
@@ -3250,7 +3250,7 @@ async function cpLocalToSandbox(localPath: string, sandbox: string, remotePath: 
   }
 
   const qs = `?dir=${encodeURIComponent(remotePath)}`;
-  const resp = await fetch(`${API}/sandboxes/${sandbox}/archive/upload${qs}`, {
+  const resp = await fetch(`${API}/machinees/${machine}/archive/upload${qs}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/gzip",
@@ -3261,16 +3261,16 @@ async function cpLocalToSandbox(localPath: string, sandbox: string, remotePath: 
   });
   await okOrDie(resp, "archive upload");
   const size = (output.stdout.byteLength / 1024).toFixed(1);
-  console.log(`Copied: ${localPath} -> ${sandbox}:${remotePath} (${size}KB compressed)`);
+  console.log(`Copied: ${localPath} -> ${machine}:${remotePath} (${size}KB compressed)`);
 }
 
-async function cpSandboxToLocal(sandbox: string, remotePath: string, localPath: string, excludes: string[] = []) {
+async function cpMachineToLocal(machine: string, remotePath: string, localPath: string, excludes: string[] = []) {
   // Use exec to tar inside VM, get base64 output, decode locally
   // This works around the archive download endpoint bug (invalid gzip)
-  console.log(`Downloading ${sandbox}:${remotePath}...`);
+  console.log(`Downloading ${machine}:${remotePath}...`);
 
   // Check if remote path is a file or directory
-  const checkResp = await apiCall("POST", `/sandboxes/${sandbox}/exec`, {
+  const checkResp = await apiCall("POST", `/machinees/${machine}/exec`, {
     command: ["sh", "-c", `test -f '${remotePath}' && echo FILE || echo DIR`],
     timeout_secs: 5,
   });
@@ -3280,14 +3280,14 @@ async function cpSandboxToLocal(sandbox: string, remotePath: string, localPath: 
   if (isFile) {
     // Single file: read via file API and write locally
     const encodedPath = encodeURIComponent(remotePath);
-    const fileResp = await apiCall("GET", `/sandboxes/${sandbox}/files/${encodedPath}`);
+    const fileResp = await apiCall("GET", `/machinees/${machine}/files/${encodedPath}`);
     const fileData = await jsonResult<{ content: string }>(fileResp);
     const decoded = atob(fileData.content);
     // Ensure parent directory exists
     const parentDir = localPath.replace(/\/[^/]+$/, "");
     if (parentDir) await Deno.mkdir(parentDir, { recursive: true }).catch(() => {});
     await Deno.writeTextFile(localPath, decoded);
-    console.log(`Copied: ${sandbox}:${remotePath} -> ${localPath}`);
+    console.log(`Copied: ${machine}:${remotePath} -> ${localPath}`);
     return;
   }
 
@@ -3297,14 +3297,14 @@ async function cpSandboxToLocal(sandbox: string, remotePath: string, localPath: 
   const tarCmd = `tar czf - ${excludeFlags} -C '${remotePath}' . 2>/dev/null | base64`.replace(/  +/g, " ");
 
   // Create tar.gz inside VM, base64 encode for transport
-  const resp = await apiCall("POST", `/sandboxes/${sandbox}/exec`, {
+  const resp = await apiCall("POST", `/machinees/${machine}/exec`, {
     command: ["sh", "-c", tarCmd],
     timeout_secs: 120,
   }, LONG_TIMEOUT_MS);
   const data = await jsonResult<{ exitCode?: number; exit_code?: number; stdout: string; stderr: string }>(resp);
   const code = data.exit_code ?? data.exitCode ?? -1;
   if (code !== 0) {
-    die(`tar inside sandbox failed: ${data.stderr}`);
+    die(`tar inside machine failed: ${data.stderr}`);
   }
 
   // Decode base64 and extract
@@ -3327,14 +3327,14 @@ async function cpSandboxToLocal(sandbox: string, remotePath: string, localPath: 
     const stderr = new TextDecoder().decode(output.stderr);
     die(`tar extract failed: ${stderr}`);
   }
-  console.log(`Copied: ${sandbox}:${remotePath} -> ${localPath} (${size}KB compressed)`);
+  console.log(`Copied: ${machine}:${remotePath} -> ${localPath} (${size}KB compressed)`);
 }
 
 // ---------------------------------------------------------------------------
 // Sync push/pull
 // ---------------------------------------------------------------------------
 
-async function cmdSyncPush(sandbox: string, args: string[]) {
+async function cmdSyncPush(machine: string, args: string[]) {
   const { flags, positional } = parseFlags(args, ["to", "exclude", "dry-run", "verify"]);
   const localDir = positional[0] ?? ".";
   const remoteDir = flag(flags, "to") ?? "/workspace";
@@ -3360,8 +3360,8 @@ async function cmdSyncPush(sandbox: string, args: string[]) {
         `  Run 'smolctl sign file ${localDir}' to sign, or remove --verify to push unsigned.`);
     }
     console.log(`[verify] Signature valid (signer: ${sigData!.signer}, signed: ${sigData!.timestamp})`);
-    // Store verification in sandbox metadata
-    const meta = await loadMeta(sandbox) ?? { name: sandbox, created_at: new Date().toISOString() };
+    // Store verification in machine metadata
+    const meta = await loadMeta(machine) ?? { name: machine, created_at: new Date().toISOString() };
     meta.signature_verified = true;
     meta.signature_key_id = sigData!.signer;
     meta.signature_timestamp = sigData!.timestamp;
@@ -3402,16 +3402,16 @@ async function cmdSyncPush(sandbox: string, args: string[]) {
     await writer.close();
     const listOutput = await listProc.output();
     const listing = new TextDecoder().decode(listOutput.stdout);
-    console.log(`[dry-run] Would push ${resolvedLocal} → ${sandbox}:${remoteDir}`);
+    console.log(`[dry-run] Would push ${resolvedLocal} → ${machine}:${remoteDir}`);
     if (excludes.length > 0) console.log(`[dry-run] Excludes: ${excludes.join(", ")}`);
     console.log(listing);
     return;
   }
 
-  await cpLocalToSandbox(resolvedLocal, sandbox, remoteDir, excludes);
+  await cpLocalToMachine(resolvedLocal, machine, remoteDir, excludes);
 }
 
-async function cmdSyncPull(sandbox: string, args: string[]) {
+async function cmdSyncPull(machine: string, args: string[]) {
   const { flags, positional } = parseFlags(args, ["from", "exclude", "dry-run"]);
   const localDir = positional[0] ?? ".";
   const remoteDir = flag(flags, "from") ?? "/workspace";
@@ -3419,21 +3419,21 @@ async function cmdSyncPull(sandbox: string, args: string[]) {
 
   if (hasFlag(flags, "dry-run")) {
     // Show what's in the remote directory
-    const resp = await apiCall("POST", `/sandboxes/${sandbox}/exec`, {
+    const resp = await apiCall("POST", `/machinees/${machine}/exec`, {
       command: ["sh", "-c", `ls -la '${remoteDir}' 2>&1`],
       timeout_secs: 15,
     });
     const data = await jsonResult<{ exit_code?: number; exitCode?: number; stdout: string; stderr: string }>(resp);
-    console.log(`[dry-run] Would pull ${sandbox}:${remoteDir} → ${localDir}`);
+    console.log(`[dry-run] Would pull ${machine}:${remoteDir} → ${localDir}`);
     if (excludes.length > 0) console.log(`[dry-run] Excludes: ${excludes.join(", ")}`);
     console.log(data.stdout);
     return;
   }
 
-  await cpSandboxToLocal(sandbox, remoteDir, localDir, excludes);
+  await cpMachineToLocal(machine, remoteDir, localDir, excludes);
 }
 
-async function cmdSyncWatch(sandbox: string, args: string[]) {
+async function cmdSyncWatch(machine: string, args: string[]) {
   const { flags, positional } = parseFlags(args, ["to", "exclude", "debounce"]);
   const localDir = positional[0] ?? ".";
   const remoteDir = flag(flags, "to") ?? "/workspace";
@@ -3458,10 +3458,10 @@ async function cmdSyncWatch(sandbox: string, args: string[]) {
   }
 
   // Initial full push
-  console.log(`[watch] Initial push: ${resolvedLocal} → ${sandbox}:${remoteDir}`);
+  console.log(`[watch] Initial push: ${resolvedLocal} → ${machine}:${remoteDir}`);
   if (excludes.length > 0) console.log(`[watch] Excludes: ${excludes.join(", ")}`);
   console.log(`[watch] Debounce: ${debounceMs}ms\n`);
-  await cpLocalToSandbox(resolvedLocal, sandbox, remoteDir, excludes);
+  await cpLocalToMachine(resolvedLocal, machine, remoteDir, excludes);
   console.log(`[watch] Watching for changes... (Ctrl+C to stop)\n`);
 
   // Watch loop with debounce
@@ -3503,9 +3503,9 @@ async function cmdSyncWatch(sandbox: string, args: string[]) {
       console.log(`[change] ${count} file(s): ${preview}`);
       const t0 = performance.now();
       try {
-        await cpLocalToSandbox(resolvedLocal, sandbox, remoteDir, excludes);
+        await cpLocalToMachine(resolvedLocal, machine, remoteDir, excludes);
         const ms = Math.round(performance.now() - t0);
-        console.log(`[synced] ${sandbox}:${remoteDir} (${ms}ms)\n`);
+        console.log(`[synced] ${machine}:${remoteDir} (${ms}ms)\n`);
       } catch (e) {
         console.error(`[error] Sync failed: ${e}\n`);
       }
@@ -3760,29 +3760,29 @@ async function cmdTunnelShare() {
 }
 
 // ---------------------------------------------------------------------------
-// Git clone into sandbox
+// Git clone into machine
 // ---------------------------------------------------------------------------
 
-async function cmdGitClone(sandbox: string, repoUrl: string, dir?: string) {
+async function cmdGitClone(machine: string, repoUrl: string, dir?: string) {
   const targetDir = dir ?? "/workspace";
-  console.log(`Cloning ${repoUrl} into ${sandbox}:${targetDir}...`);
-  await cmdExec(sandbox, ["sh", "-c", `apk add git 2>/dev/null; git clone ${repoUrl} ${targetDir}`], ["--timeout", "120"]);
-  console.log(`Cloned into ${sandbox}:${targetDir}`);
+  console.log(`Cloning ${repoUrl} into ${machine}:${targetDir}...`);
+  await cmdExec(machine, ["sh", "-c", `apk add git 2>/dev/null; git clone ${repoUrl} ${targetDir}`], ["--timeout", "120"]);
+  console.log(`Cloned into ${machine}:${targetDir}`);
 }
 
 // ---------------------------------------------------------------------------
 // Git workspace commands — init, status, log, commit, diff, merge
 // ---------------------------------------------------------------------------
 
-/** Execute a shell command inside a sandbox and return result. */
+/** Execute a shell command inside a machine and return result. */
 async function gitExec(
-  sandbox: string,
+  machine: string,
   shellCmd: string,
   timeoutSecs = 30,
 ): Promise<{ exit_code: number; stdout: string; stderr: string }> {
   const resp = await apiCall(
     "POST",
-    `/sandboxes/${sandbox}/exec`,
+    `/machinees/${machine}/exec`,
     { command: ["sh", "-c", shellCmd], timeout_secs: timeoutSecs },
     (timeoutSecs + 10) * 1000,
   );
@@ -3797,43 +3797,43 @@ async function gitExec(
 }
 
 /** Ensure /dev/vda is mounted at /storage (needed after clone/restart — init_commands only run on create). */
-async function ensureStorageMounted(sandbox: string): Promise<void> {
+async function ensureStorageMounted(machine: string): Promise<void> {
   // Check if /dev/vda is actually mounted (not just if /storage dir exists)
-  await gitExec(sandbox, "grep -q '/dev/vda' /proc/mounts 2>/dev/null || (mkdir -p /storage/workspace && mount /dev/vda /storage 2>/dev/null) || true");
+  await gitExec(machine, "grep -q '/dev/vda' /proc/mounts 2>/dev/null || (mkdir -p /storage/workspace && mount /dev/vda /storage 2>/dev/null) || true");
   // Ensure /workspace symlink points to /storage/workspace
-  await gitExec(sandbox, "mkdir -p /storage/workspace && (test -L /workspace || (rm -rf /workspace && ln -sfn /storage/workspace /workspace)) 2>/dev/null || true");
+  await gitExec(machine, "mkdir -p /storage/workspace && (test -L /workspace || (rm -rf /workspace && ln -sfn /storage/workspace /workspace)) 2>/dev/null || true");
 }
 
 /** Resolve the git workspace path — prefers /storage/workspace (per-VM isolated), falls back to /workspace. */
-async function resolveGitWorkspace(sandbox: string): Promise<string> {
-  const r = await gitExec(sandbox, "test -d /storage/workspace/.git && echo /storage/workspace || (test -d /workspace/.git && echo /workspace || echo none)");
+async function resolveGitWorkspace(machine: string): Promise<string> {
+  const r = await gitExec(machine, "test -d /storage/workspace/.git && echo /storage/workspace || (test -d /workspace/.git && echo /workspace || echo none)");
   return r.stdout.trim();
 }
 
 /** Check if workspace has a git repo. */
-async function hasGitWorkspace(sandbox: string): Promise<boolean> {
-  const ws = await resolveGitWorkspace(sandbox);
+async function hasGitWorkspace(machine: string): Promise<boolean> {
+  const ws = await resolveGitWorkspace(machine);
   return ws !== "none";
 }
 
 /** Get current branch name. */
-async function gitCurrentBranch(sandbox: string): Promise<string> {
-  const ws = await resolveGitWorkspace(sandbox);
+async function gitCurrentBranch(machine: string): Promise<string> {
+  const ws = await resolveGitWorkspace(machine);
   if (ws === "none") return "main";
-  const r = await gitExec(sandbox, `git -C ${ws} rev-parse --abbrev-ref HEAD 2>/dev/null || echo main`);
+  const r = await gitExec(machine, `git -C ${ws} rev-parse --abbrev-ref HEAD 2>/dev/null || echo main`);
   return r.stdout.trim() || "main";
 }
 
 /** Get the workspace path for git operations (resolve once, pass to functions). */
-async function getGitWs(sandbox: string): Promise<string> {
-  const ws = await resolveGitWorkspace(sandbox);
-  if (ws === "none") throw new Error(`${sandbox} has no git workspace. Run: smolctl git init ${sandbox}`);
+async function getGitWs(machine: string): Promise<string> {
+  const ws = await resolveGitWorkspace(machine);
+  if (ws === "none") throw new Error(`${machine} has no git workspace. Run: smolctl git init ${machine}`);
   return ws;
 }
 
-async function cmdGitInit(sandbox: string) {
-  console.log(`Initializing git workspace in ${sandbox}:/storage/workspace...`);
-  await gitExec(sandbox, [
+async function cmdGitInit(machine: string) {
+  console.log(`Initializing git workspace in ${machine}:/storage/workspace...`);
+  await gitExec(machine, [
     "git config --global user.name smolvm",
     "git config --global user.email smolvm@localhost",
     "git config --global --add safe.directory /storage/workspace",
@@ -3846,30 +3846,30 @@ async function cmdGitInit(sandbox: string) {
     "git commit --allow-empty -m 'workspace init'",
   ].join(" && "));
   // Symlink /workspace -> /storage/workspace for compatibility
-  await gitExec(sandbox, "ln -sfn /storage/workspace /workspace 2>/dev/null || true");
+  await gitExec(machine, "ln -sfn /storage/workspace /workspace 2>/dev/null || true");
   console.log("Git workspace initialized at /storage/workspace (symlinked to /workspace).");
 }
 
-async function cmdGitStatus(sandbox: string) {
-  const ws = await getGitWs(sandbox);
-  const r = await gitExec(sandbox, `cd ${ws} && git status`);
+async function cmdGitStatus(machine: string) {
+  const ws = await getGitWs(machine);
+  const r = await gitExec(machine, `cd ${ws} && git status`);
   Deno.stdout.writeSync(new TextEncoder().encode(r.stdout));
 }
 
-async function cmdGitLog(sandbox: string, args: string[]) {
-  const ws = await getGitWs(sandbox);
+async function cmdGitLog(machine: string, args: string[]) {
+  const ws = await getGitWs(machine);
   const { flags } = parseFlags(args, ["n"]);
   const n = flag(flags, "n") ?? "20";
-  const r = await gitExec(sandbox, `cd ${ws} && git log --oneline -${n}`);
+  const r = await gitExec(machine, `cd ${ws} && git log --oneline -${n}`);
   Deno.stdout.writeSync(new TextEncoder().encode(r.stdout));
 }
 
-async function cmdGitCommit(sandbox: string, args: string[]) {
-  const ws = await getGitWs(sandbox);
+async function cmdGitCommit(machine: string, args: string[]) {
+  const ws = await getGitWs(machine);
   const { flags } = parseFlags(args, ["m"]);
   const msg = flag(flags, "m") ?? "auto-commit";
   const safeMsg = msg.replace(/'/g, "'\\''");
-  const r = await gitExec(sandbox, `cd ${ws} && git add -A && git commit -m '${safeMsg}'`);
+  const r = await gitExec(machine, `cd ${ws} && git add -A && git commit -m '${safeMsg}'`);
   Deno.stdout.writeSync(new TextEncoder().encode(r.stdout));
   if (r.exit_code !== 0 && r.stderr) {
     Deno.stderr.writeSync(new TextEncoder().encode(r.stderr));
@@ -3877,8 +3877,8 @@ async function cmdGitCommit(sandbox: string, args: string[]) {
 }
 
 /**
- * Transfer a git bundle from source to target sandbox using the file API.
- * Returns the branch name in the source sandbox.
+ * Transfer a git bundle from source to target machine using the file API.
+ * Returns the branch name in the source machine.
  */
 async function gitBundleTransfer(source: string, target: string): Promise<string> {
   const srcWs = await getGitWs(source);
@@ -4045,7 +4045,7 @@ async function cmdFleetFanout(source: string, count: number, args: string[]) {
   for (let i = 0; i < count; i++) {
     const cloneName = `${source}-fork-${i}`;
     names.push(cloneName);
-    const resp = await apiCall("POST", `/sandboxes/${source}/clone`, { name: cloneName });
+    const resp = await apiCall("POST", `/machinees/${source}/clone`, { name: cloneName });
     await jsonResult<Record<string, unknown>>(resp);
     console.log(`  cloned: ${cloneName}`);
   }
@@ -4054,7 +4054,7 @@ async function cmdFleetFanout(source: string, count: number, args: string[]) {
   console.log("Starting clones...");
   await Promise.allSettled(
     names.map(async (name) => {
-      const resp = await apiCall("POST", `/sandboxes/${name}/start`);
+      const resp = await apiCall("POST", `/machinees/${name}/start`);
       await jsonResult<Record<string, unknown>>(resp);
       await ensureStorageMounted(name);
     }),
@@ -4080,15 +4080,15 @@ async function cmdFleetGather(prefix: string, target: string) {
 
   const tgtWs = await getGitWs(target);
 
-  // Find all sandboxes matching prefix
-  const resp = await apiCall("GET", "/sandboxes");
-  const data = await jsonResult<{ sandboxes: { name: string; state: string }[] }>(resp);
-  const forks = data.sandboxes
+  // Find all machinees matching prefix
+  const resp = await apiCall("GET", "/machinees");
+  const data = await jsonResult<{ machinees: { name: string; state: string }[] }>(resp);
+  const forks = data.machinees
     .filter((s) => s.name.startsWith(prefix) && s.name !== target)
     .sort((a, b) => a.name.localeCompare(b.name));
 
   if (forks.length === 0) {
-    console.log(`No sandboxes found matching prefix: ${prefix}`);
+    console.log(`No machinees found matching prefix: ${prefix}`);
     return;
   }
 
@@ -4099,7 +4099,7 @@ async function cmdFleetGather(prefix: string, target: string) {
     // Ensure running
     if (fork.state !== "running") {
       try {
-        await apiCall("POST", `/sandboxes/${fork.name}/start`);
+        await apiCall("POST", `/machinees/${fork.name}/start`);
         await new Promise((r) => setTimeout(r, 2000));
         await ensureStorageMounted(fork.name);
       } catch {
@@ -4145,8 +4145,8 @@ async function cmdFleetGather(prefix: string, target: string) {
 // Container commands
 // ---------------------------------------------------------------------------
 
-async function cmdContainerLs(sandbox: string) {
-  const resp = await apiCall("GET", `/sandboxes/${sandbox}/containers`);
+async function cmdContainerLs(machine: string) {
+  const resp = await apiCall("GET", `/machinees/${machine}/containers`);
   const data = await jsonResult<{ containers: Record<string, unknown>[] }>(resp);
   const rows = data.containers.map((c) => ({
     id: c.id,
@@ -4157,7 +4157,7 @@ async function cmdContainerLs(sandbox: string) {
   table(rows, ["id", "image", "state", "command"]);
 }
 
-async function cmdContainerCreate(sandbox: string, image: string, args: string[]) {
+async function cmdContainerCreate(machine: string, image: string, args: string[]) {
   const { flags } = parseFlags(args, ["env", "workdir", "cmd"]);
   const body: Record<string, unknown> = { image };
   const cmds = flagAll(flags, "cmd");
@@ -4169,31 +4169,31 @@ async function cmdContainerCreate(sandbox: string, image: string, args: string[]
   if (envPairs.length > 0) body.env = envPairs;
   if (flag(flags, "workdir")) body.workdir = flag(flags, "workdir");
 
-  const resp = await apiCall("POST", `/sandboxes/${sandbox}/containers`, body, LONG_TIMEOUT_MS);
+  const resp = await apiCall("POST", `/machinees/${machine}/containers`, body, LONG_TIMEOUT_MS);
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(`Created container: ${data.id} (${data.state})`);
 }
 
-async function cmdContainerStart(sandbox: string, containerId: string) {
-  const resp = await apiCall("POST", `/sandboxes/${sandbox}/containers/${containerId}/start`);
+async function cmdContainerStart(machine: string, containerId: string) {
+  const resp = await apiCall("POST", `/machinees/${machine}/containers/${containerId}/start`);
   await okOrDie(resp, "container start");
   console.log(`Started: ${containerId}`);
 }
 
-async function cmdContainerStop(sandbox: string, containerId: string) {
-  const resp = await apiCall("POST", `/sandboxes/${sandbox}/containers/${containerId}/stop`, { timeout_secs: 10 });
+async function cmdContainerStop(machine: string, containerId: string) {
+  const resp = await apiCall("POST", `/machinees/${machine}/containers/${containerId}/stop`, { timeout_secs: 10 });
   await okOrDie(resp, "container stop");
   console.log(`Stopped: ${containerId}`);
 }
 
-async function cmdContainerRm(sandbox: string, containerId: string, force: boolean) {
+async function cmdContainerRm(machine: string, containerId: string, force: boolean) {
   const body = force ? { force: true } : undefined;
-  const resp = await apiCall("DELETE", `/sandboxes/${sandbox}/containers/${containerId}`, body);
+  const resp = await apiCall("DELETE", `/machinees/${machine}/containers/${containerId}`, body);
   await okOrDie(resp, "container rm");
   console.log(`Deleted: ${containerId}`);
 }
 
-async function cmdContainerExec(sandbox: string, containerId: string, command: string[], args: string[]) {
+async function cmdContainerExec(machine: string, containerId: string, command: string[], args: string[]) {
   const { flags } = parseFlags(args, ["env", "workdir", "timeout"]);
   const body: Record<string, unknown> = {
     command,
@@ -4206,7 +4206,7 @@ async function cmdContainerExec(sandbox: string, containerId: string, command: s
   if (envPairs.length > 0) body.env = envPairs;
   if (flag(flags, "workdir")) body.workdir = flag(flags, "workdir");
 
-  const resp = await apiCall("POST", `/sandboxes/${sandbox}/containers/${containerId}/exec`, body);
+  const resp = await apiCall("POST", `/machinees/${machine}/containers/${containerId}/exec`, body);
   const data = await jsonResult<{ exit_code: number; stdout: string; stderr: string }>(resp);
   if (data.stdout) Deno.stdout.writeSync(new TextEncoder().encode(data.stdout));
   if (data.stderr) Deno.stderr.writeSync(new TextEncoder().encode(data.stderr));
@@ -4219,13 +4219,13 @@ async function cmdContainerExec(sandbox: string, containerId: string, command: s
 // MCP commands
 // ---------------------------------------------------------------------------
 
-async function cmdMcpTools(sandbox: string) {
+async function cmdMcpTools(machine: string) {
   // Get configured MCP servers from the Rust API
-  const serversResp = await apiCall("GET", `/sandboxes/${sandbox}/mcp/servers`);
+  const serversResp = await apiCall("GET", `/machinees/${machine}/mcp/servers`);
   const servers = await jsonResult<Array<{ name: string; command: string[]; workdir?: string }>>(serversResp);
 
   if (servers.length === 0) {
-    console.log("No MCP servers configured. Use --with-mcp when creating sandbox.");
+    console.log("No MCP servers configured. Use --with-mcp when creating machine.");
     return;
   }
 
@@ -4240,7 +4240,7 @@ async function cmdMcpTools(sandbox: string) {
     const shellCmd = `printf '${initMsg}\\n${listMsg}\\n' | timeout 30 ${cmdStr} 2>/dev/null`;
 
     try {
-      const execResp = await apiCall("POST", `/sandboxes/${sandbox}/exec`, {
+      const execResp = await apiCall("POST", `/machinees/${machine}/exec`, {
         command: ["sh", "-c", shellCmd],
         timeout_secs: 35,
       }, 40_000);
@@ -4282,7 +4282,7 @@ async function cmdMcpTools(sandbox: string) {
   }
 }
 
-async function cmdMcpCall(sandbox: string, server: string, tool: string, argsJson: string) {
+async function cmdMcpCall(machine: string, server: string, tool: string, argsJson: string) {
   let toolArgs: unknown;
   try {
     toolArgs = JSON.parse(argsJson);
@@ -4291,7 +4291,7 @@ async function cmdMcpCall(sandbox: string, server: string, tool: string, argsJso
   }
 
   // Get server config
-  const serversResp = await apiCall("GET", `/sandboxes/${sandbox}/mcp/servers`);
+  const serversResp = await apiCall("GET", `/machinees/${machine}/mcp/servers`);
   const servers = await jsonResult<Array<{ name: string; command: string[]; workdir?: string }>>(serversResp);
   const serverConfig = servers.find(s => s.name === server);
   if (!serverConfig) die(`MCP server '${server}' not configured. Available: ${servers.map(s => s.name).join(", ")}`);
@@ -4302,7 +4302,7 @@ async function cmdMcpCall(sandbox: string, server: string, tool: string, argsJso
   const cmdStr = serverConfig.command.map((s: string) => s.includes(" ") ? `'${s}'` : s).join(" ");
   const shellCmd = `printf '${initMsg}\\n${callMsg}\\n' | timeout 60 ${cmdStr} 2>/dev/null`;
 
-  const execResp = await apiCall("POST", `/sandboxes/${sandbox}/exec`, {
+  const execResp = await apiCall("POST", `/machinees/${machine}/exec`, {
     command: ["sh", "-c", shellCmd],
     timeout_secs: 65,
   }, 70_000);
@@ -4329,8 +4329,8 @@ async function cmdMcpCall(sandbox: string, server: string, tool: string, argsJso
   if (isError) Deno.exit(1);
 }
 
-async function cmdMcpServers(sandbox: string) {
-  const resp = await apiCall("GET", `/sandboxes/${sandbox}/mcp/servers`);
+async function cmdMcpServers(machine: string) {
+  const resp = await apiCall("GET", `/machinees/${machine}/mcp/servers`);
   const data = await jsonResult<Array<{ name: string; command: string[]; workdir?: string }>>(resp);
   if (data.length === 0) {
     console.log("No MCP servers configured.");
@@ -4341,8 +4341,8 @@ async function cmdMcpServers(sandbox: string) {
 
 // ---------------------------------------------------------------------------
 
-/** Push built-in MCP server scripts into a running sandbox via file API. */
-async function cmdMcpInstall(sandbox: string) {
+/** Push built-in MCP server scripts into a running machine via file API. */
+async function cmdMcpInstall(machine: string) {
   const mcpFiles = ["filesystem.sh", "exec.sh", "git.sh"];
 
   // Resolve the path to mcp-servers/ relative to this CLI script
@@ -4363,8 +4363,8 @@ async function cmdMcpInstall(sandbox: string) {
     die("Could not find mcp-servers/ directory. Run from the CX04-smolvm project root or alongside the CLI.");
   }
 
-  // Create target directory in the sandbox
-  const mkdirResp = await apiCall("POST", `/sandboxes/${sandbox}/exec`, {
+  // Create target directory in the machine
+  const mkdirResp = await apiCall("POST", `/machinees/${machine}/exec`, {
     command: ["mkdir", "-p", "/opt/smolvm/mcp-servers"],
     timeout_secs: 10,
   });
@@ -4377,26 +4377,26 @@ async function cmdMcpInstall(sandbox: string) {
     for (let i = 0; i < contentBytes.length; i++) binary += String.fromCharCode(contentBytes[i]);
     const encoded = btoa(binary);
     const encodedPath = encodeURIComponent(`/opt/smolvm/mcp-servers/${file}`);
-    const resp = await apiCall("PUT", `/sandboxes/${sandbox}/files/${encodedPath}`, { content: encoded });
+    const resp = await apiCall("PUT", `/machinees/${machine}/files/${encodedPath}`, { content: encoded });
     await okOrDie(resp, `write ${file}`);
     console.log(`  installed: /opt/smolvm/mcp-servers/${file}`);
   }
 
   // Make scripts executable
-  const chmodResp = await apiCall("POST", `/sandboxes/${sandbox}/exec`, {
+  const chmodResp = await apiCall("POST", `/machinees/${machine}/exec`, {
     command: ["chmod", "+x", ...mcpFiles.map((s) => `/opt/smolvm/mcp-servers/${s}`)],
     timeout_secs: 10,
   });
   await okOrDie(chmodResp, "chmod");
 
-  console.log(`\nInstalled ${mcpFiles.length} MCP servers in sandbox '${sandbox}'.`);
+  console.log(`\nInstalled ${mcpFiles.length} MCP servers in machine '${machine}'.`);
   console.log("Use --with-mcp on create/up to auto-configure them, or add via --mcp flags.");
 }
 
 // ---------------------------------------------------------------------------
 
-async function cmdDebugMounts(sandbox: string) {
-  const resp = await apiCall("GET", `/sandboxes/${sandbox}/debug/mounts`);
+async function cmdDebugMounts(machine: string) {
+  const resp = await apiCall("GET", `/machinees/${machine}/debug/mounts`);
   const data = await jsonResult<{
     configured: { tag: string; source: string; target: string; readonly: boolean }[];
     guest_mounts: string;
@@ -4404,7 +4404,7 @@ async function cmdDebugMounts(sandbox: string) {
     virtiofs_supported: boolean;
   }>(resp);
 
-  console.log(`=== Mount Diagnostics: ${sandbox} ===\n`);
+  console.log(`=== Mount Diagnostics: ${machine} ===\n`);
   console.log(`virtiofs supported: ${data.virtiofs_supported}\n`);
 
   if (data.configured.length > 0) {
@@ -4425,8 +4425,8 @@ async function cmdDebugMounts(sandbox: string) {
   console.log(data.mnt_listing || "(empty)");
 }
 
-async function cmdDebugNetwork(sandbox: string) {
-  const resp = await apiCall("GET", `/sandboxes/${sandbox}/debug/network`);
+async function cmdDebugNetwork(machine: string) {
+  const resp = await apiCall("GET", `/machinees/${machine}/debug/network`);
   const data = await jsonResult<{
     configured_ports: { host: number; guest: number }[];
     listening_ports: string;
@@ -4434,7 +4434,7 @@ async function cmdDebugNetwork(sandbox: string) {
     network_enabled: boolean;
   }>(resp);
 
-  console.log(`=== Network Diagnostics: ${sandbox} ===\n`);
+  console.log(`=== Network Diagnostics: ${machine} ===\n`);
   console.log(`network enabled: ${data.network_enabled}\n`);
 
   if (data.configured_ports.length > 0) {
@@ -4453,11 +4453,11 @@ async function cmdDebugNetwork(sandbox: string) {
   console.log(data.interfaces || "(none)");
 }
 
-async function cmdDnsStatus(sandbox: string) {
-  const resp = await apiCall("GET", `/sandboxes/${sandbox}/dns`);
+async function cmdDnsStatus(machine: string) {
+  const resp = await apiCall("GET", `/machinees/${machine}/dns`);
   const data = await jsonResult<{ active: boolean; allowed_domains: string[] }>(resp);
 
-  console.log(`=== DNS Filter Status: ${sandbox} ===\n`);
+  console.log(`=== DNS Filter Status: ${machine} ===\n`);
   console.log(`active: ${data.active}`);
   if (data.active && data.allowed_domains.length > 0) {
     console.log(`allowed domains: ${data.allowed_domains.join(", ")}`);
@@ -4484,14 +4484,14 @@ async function resolveOAuthToken(flags: Record<string, string[]>): Promise<strin
   return Deno.env.get("CLAUDE_CODE_OAUTH_TOKEN")?.trim();
 }
 
-/** Generate a short random suffix for agent sandbox names. */
+/** Generate a short random suffix for agent machine names. */
 function agentId(): string {
   return Math.random().toString(36).slice(2, 8);
 }
 
 async function cmdAgentRun(prompt: string, args: string[]) {
   const { flags } = parseFlags(args, [
-    "cpus", "memory", "secret", "starter", "name", "timeout", "keep", "user", "workdir", "json", "status", "label", "owner", "description", "setup", "sandbox", "oauth-token",
+    "cpus", "memory", "secret", "starter", "name", "timeout", "keep", "user", "workdir", "json", "status", "label", "owner", "description", "setup", "machine", "oauth-token",
   ]);
 
   const name = flag(flags, "name") ?? `agent-${agentId()}`;
@@ -4506,9 +4506,9 @@ async function cmdAgentRun(prompt: string, args: string[]) {
   const streaming = hasFlag(flags, "status") || outputJson;
   const ts = () => new Date().toISOString();
 
-  // 1. Create sandbox
-  if (streaming) emitStatus({ status: "queued", timestamp: ts(), sandbox: name, details: { starter, secrets } });
-  if (!outputJson) console.log(`Creating agent sandbox: ${name} (starter: ${starter})`);
+  // 1. Create machine
+  if (streaming) emitStatus({ status: "queued", timestamp: ts(), machine: name, details: { starter, secrets } });
+  if (!outputJson) console.log(`Creating agent machine: ${name} (starter: ${starter})`);
   const createOpts: Record<string, unknown> = {
     name,
     from_starter: starter,
@@ -4522,9 +4522,9 @@ async function cmdAgentRun(prompt: string, args: string[]) {
   if (flag(flags, "user")) createOpts.default_user = flag(flags, "user");
 
   const t0 = Date.now();
-  const createResp = await apiCall("POST", "/sandboxes", createOpts, LONG_TIMEOUT_MS);
+  const createResp = await apiCall("POST", "/machinees", createOpts, LONG_TIMEOUT_MS);
   await jsonResult<Record<string, unknown>>(createResp);
-  await recordSession({ timestamp: ts(), sandbox: name, action: "create", duration_ms: Date.now() - t0, details: { starter, secrets } });
+  await recordSession({ timestamp: ts(), machine: name, action: "create", duration_ms: Date.now() - t0, details: { starter, secrets } });
 
   // Save metadata
   await saveMeta({
@@ -4538,18 +4538,18 @@ async function cmdAgentRun(prompt: string, args: string[]) {
   });
 
   // 2. Start
-  if (streaming) emitStatus({ status: "preparing", timestamp: ts(), sandbox: name });
-  if (!outputJson) console.log("Starting sandbox...");
+  if (streaming) emitStatus({ status: "preparing", timestamp: ts(), machine: name });
+  if (!outputJson) console.log("Starting machine...");
   const t1 = Date.now();
-  const startResp = await apiCall("POST", `/sandboxes/${name}/start`);
+  const startResp = await apiCall("POST", `/machinees/${name}/start`);
   await jsonResult<Record<string, unknown>>(startResp);
-  await recordSession({ timestamp: ts(), sandbox: name, action: "start", duration_ms: Date.now() - t1 });
+  await recordSession({ timestamp: ts(), machine: name, action: "start", duration_ms: Date.now() - t1 });
 
   // Post-start setup hooks
   const setupCmds = flagAll(flags, "setup");
   for (const cmd of setupCmds) {
     if (!outputJson) console.log(`[setup] ${cmd}`);
-    const setupResp = await apiCall("POST", `/sandboxes/${name}/exec`, {
+    const setupResp = await apiCall("POST", `/machinees/${name}/exec`, {
       command: ["sh", "-c", cmd], timeout_secs: 120,
     }, 130_000);
     const setupResult = await jsonResult<{ exit_code?: number; exitCode?: number; stdout: string; stderr: string }>(setupResp);
@@ -4558,13 +4558,13 @@ async function cmdAgentRun(prompt: string, args: string[]) {
     }
   }
 
-  // 3. Write sandbox settings + run claude with prompt
-  const sandboxPreset = flag(flags, "sandbox") ?? "permissive";
-  const sandboxConfig = resolveSandboxConfig(sandboxPreset);
-  const settingsPath = await writeAgentSettings(name, sandboxConfig);
-  if (!outputJson) console.log(`Sandbox: ${SANDBOX_PRESETS[sandboxPreset] ? sandboxPreset : "custom"} (${sandboxConfig.allow.length} allow rules)`);
+  // 3. Write machine settings + run claude with prompt
+  const machinePreset = flag(flags, "machine") ?? "permissive";
+  const machineConfig = resolveMachineConfig(machinePreset);
+  const settingsPath = await writeAgentSettings(name, machineConfig);
+  if (!outputJson) console.log(`Machine: ${SANDBOX_PRESETS[machinePreset] ? machinePreset : "custom"} (${machineConfig.allow.length} allow rules)`);
 
-  if (streaming) emitStatus({ status: "running", timestamp: ts(), sandbox: name, details: { timeout_secs: timeoutSecs } });
+  if (streaming) emitStatus({ status: "running", timestamp: ts(), machine: name, details: { timeout_secs: timeoutSecs } });
   if (!outputJson) console.log(`Running agent (timeout: ${timeoutSecs}s)...\n`);
   const execBody: Record<string, unknown> = {
     command: ["claude", "-p", "--settings", settingsPath, "--output-format", "text", prompt],
@@ -4580,18 +4580,18 @@ async function cmdAgentRun(prompt: string, args: string[]) {
 
   const t2 = Date.now();
   const clientTimeout = (timeoutSecs + 10) * 1000;
-  const execResp = await apiCall("POST", `/sandboxes/${name}/exec`, execBody, clientTimeout);
+  const execResp = await apiCall("POST", `/machinees/${name}/exec`, execBody, clientTimeout);
   const result = await jsonResult<{ exit_code?: number; exitCode?: number; stdout: string; stderr: string }>(execResp);
   const exitCode = result.exit_code ?? result.exitCode ?? -1;
-  await recordSession({ timestamp: ts(), sandbox: name, action: "exec", duration_ms: Date.now() - t2, details: { prompt: prompt.slice(0, 200), exit_code: exitCode } });
+  await recordSession({ timestamp: ts(), machine: name, action: "exec", duration_ms: Date.now() - t2, details: { prompt: prompt.slice(0, 200), exit_code: exitCode } });
 
   if (streaming) {
     const status = exitCode === 0 ? "completed" : "failed";
-    emitStatus({ status, timestamp: ts(), sandbox: name, details: { exit_code: exitCode }, error: exitCode !== 0 ? result.stderr?.slice(0, 500) : undefined });
+    emitStatus({ status, timestamp: ts(), machine: name, details: { exit_code: exitCode }, error: exitCode !== 0 ? result.stderr?.slice(0, 500) : undefined });
   }
 
   if (outputJson) {
-    console.log(JSON.stringify({ sandbox: name, exit_code: exitCode, stdout: result.stdout, stderr: result.stderr }));
+    console.log(JSON.stringify({ machine: name, exit_code: exitCode, stdout: result.stdout, stderr: result.stderr }));
   } else {
     if (result.stdout) Deno.stdout.writeSync(new TextEncoder().encode(result.stdout));
     if (result.stderr) Deno.stderr.writeSync(new TextEncoder().encode(result.stderr));
@@ -4599,13 +4599,13 @@ async function cmdAgentRun(prompt: string, args: string[]) {
 
   // 4. Cleanup (unless --keep)
   if (!keep) {
-    if (!outputJson) console.log(`\nCleaning up sandbox: ${name}`);
-    try { await apiCall("POST", `/sandboxes/${name}/stop`); } catch { /* ok */ }
-    try { await apiCall("DELETE", `/sandboxes/${name}?force=true`); } catch { /* ok */ }
+    if (!outputJson) console.log(`\nCleaning up machine: ${name}`);
+    try { await apiCall("POST", `/machinees/${name}/stop`); } catch { /* ok */ }
+    try { await apiCall("DELETE", `/machinees/${name}?force=true`); } catch { /* ok */ }
     await deleteMeta(name);
-    await recordSession({ timestamp: ts(), sandbox: name, action: "cleanup" });
+    await recordSession({ timestamp: ts(), machine: name, action: "cleanup" });
   } else if (!outputJson) {
-    console.log(`\nSandbox kept alive: ${name}`);
+    console.log(`\nMachine kept alive: ${name}`);
     console.log(`  Inspect: smolctl sh ${name} "ls /workspace"`);
     console.log(`  Cleanup: smolctl down ${name}`);
   }
@@ -4616,7 +4616,7 @@ async function cmdAgentRun(prompt: string, args: string[]) {
 
 async function cmdAgentFleet(prefix: string, promptsFile: string, args: string[]) {
   const { flags } = parseFlags(args, [
-    "cpus", "memory", "secret", "starter", "timeout", "keep", "user", "workdir", "json", "sandbox", "oauth-token",
+    "cpus", "memory", "secret", "starter", "timeout", "keep", "user", "workdir", "json", "machine", "oauth-token",
   ]);
 
   // Read prompts file: one prompt per line (blank lines skipped)
@@ -4640,7 +4640,7 @@ async function cmdAgentFleet(prefix: string, promptsFile: string, args: string[]
 
   console.log(`Dispatching ${count} agent(s) with prefix "${prefix}"...`);
 
-  // 1. Create all sandboxes
+  // 1. Create all machinees
   const names: string[] = [];
   for (let i = 0; i < count; i++) {
     const name = `${prefix}-${i}`;
@@ -4656,26 +4656,26 @@ async function cmdAgentFleet(prefix: string, promptsFile: string, args: string[]
       secrets,
     };
     if (flag(flags, "user")) createOpts.default_user = flag(flags, "user");
-    const resp = await apiCall("POST", "/sandboxes", createOpts, LONG_TIMEOUT_MS);
+    const resp = await apiCall("POST", "/machinees", createOpts, LONG_TIMEOUT_MS);
     await jsonResult<Record<string, unknown>>(resp);
     console.log(`  created: ${name}`);
   }
 
   // 2. Start all in parallel
-  console.log("Starting all sandboxes...");
+  console.log("Starting all machinees...");
   await Promise.allSettled(
     names.map(async (name) => {
-      const resp = await apiCall("POST", `/sandboxes/${name}/start`);
+      const resp = await apiCall("POST", `/machinees/${name}/start`);
       await jsonResult<Record<string, unknown>>(resp);
     }),
   );
 
-  // 3. Write sandbox settings to all sandboxes + dispatch prompts
-  const sandboxPreset = flag(flags, "sandbox") ?? "permissive";
-  const sandboxConfig = resolveSandboxConfig(sandboxPreset);
+  // 3. Write machine settings to all machinees + dispatch prompts
+  const machinePreset = flag(flags, "machine") ?? "permissive";
+  const machineConfig = resolveMachineConfig(machinePreset);
   const settingsPaths: Record<string, string> = {};
   for (const name of names) {
-    settingsPaths[name] = await writeAgentSettings(name, sandboxConfig);
+    settingsPaths[name] = await writeAgentSettings(name, machineConfig);
   }
 
   console.log("Running agents...\n");
@@ -4690,7 +4690,7 @@ async function cmdAgentFleet(prefix: string, promptsFile: string, args: string[]
       if (flag(flags, "workdir")) execBody.workdir = flag(flags, "workdir");
       if (flag(flags, "user")) execBody.user = flag(flags, "user");
 
-      const resp = await apiCall("POST", `/sandboxes/${name}/exec`, execBody, clientTimeout);
+      const resp = await apiCall("POST", `/machinees/${name}/exec`, execBody, clientTimeout);
       const d = await jsonResult<{ exit_code?: number; exitCode?: number; stdout: string; stderr: string }>(resp);
       return { name, prompt: prompts[i], exit_code: d.exit_code ?? d.exitCode ?? -1, stdout: d.stdout, stderr: d.stderr };
     }),
@@ -4701,7 +4701,7 @@ async function cmdAgentFleet(prefix: string, promptsFile: string, args: string[]
     if (r.status === "fulfilled") {
       const { name, prompt, exit_code, stdout, stderr } = r.value;
       if (outputJson) {
-        console.log(JSON.stringify({ sandbox: name, prompt, exit_code, stdout, stderr }));
+        console.log(JSON.stringify({ machine: name, prompt, exit_code, stdout, stderr }));
       } else {
         console.log(`\n${"═".repeat(60)}`);
         console.log(`Agent: ${name} (exit: ${exit_code})`);
@@ -4720,12 +4720,12 @@ async function cmdAgentFleet(prefix: string, promptsFile: string, args: string[]
     console.log(`\nCleaning up fleet "${prefix}"...`);
     await Promise.allSettled(
       names.map(async (name) => {
-        try { const r = await apiCall("POST", `/sandboxes/${name}/stop`); await r.text(); } catch { /* ok */ }
-        try { const r = await apiCall("DELETE", `/sandboxes/${name}?force=true`); await r.text(); } catch { /* ok */ }
+        try { const r = await apiCall("POST", `/machinees/${name}/stop`); await r.text(); } catch { /* ok */ }
+        try { const r = await apiCall("DELETE", `/machinees/${name}?force=true`); await r.text(); } catch { /* ok */ }
       }),
     );
   } else {
-    console.log(`\nSandboxes kept alive. Cleanup: smolctl fleet down ${prefix}`);
+    console.log(`\nMachinees kept alive. Cleanup: smolctl fleet down ${prefix}`);
   }
 }
 
@@ -4738,7 +4738,7 @@ async function cmdAgentMerge(source: string, target: string, args: string[]) {
   if (files.length > 0) body.files = files;
 
   console.log(`Merging ${source} → ${target} (strategy: ${strategy})`);
-  const resp = await apiCall("POST", `/sandboxes/${source}/merge/${target}`, body);
+  const resp = await apiCall("POST", `/machinees/${source}/merge/${target}`, body);
   const data = await jsonResult<{ merged_files: string[]; skipped_files: string[] }>(resp);
   console.log(`  merged: ${data.merged_files.length} file(s)`);
   for (const f of data.merged_files) console.log(`    ${f}`);
@@ -4753,30 +4753,30 @@ async function cmdAgentCollect(prefix: string, args: string[]) {
   const targetDir = flag(flags, "to") ?? ".";
   const dir = flag(flags, "dir") ?? "/workspace";
 
-  // Find all fleet sandboxes
-  const resp = await apiCall("GET", "/sandboxes");
-  const data = await jsonResult<{ sandboxes: { name: string; state: string }[] }>(resp);
-  const matches = data.sandboxes
+  // Find all fleet machinees
+  const resp = await apiCall("GET", "/machinees");
+  const data = await jsonResult<{ machinees: { name: string; state: string }[] }>(resp);
+  const matches = data.machinees
     .filter((s) => s.name.startsWith(`${prefix}-`))
     .sort((a, b) => a.name.localeCompare(b.name));
 
   if (matches.length === 0) {
-    die(`No sandboxes matching prefix "${prefix}".`);
+    die(`No machinees matching prefix "${prefix}".`);
   }
 
   console.log(`Collecting results from ${matches.length} agent(s) to ${targetDir}/`);
 
   for (const s of matches) {
     const outDir = `${targetDir}/${s.name}`;
-    // Download archive from sandbox
+    // Download archive from machine
     const archiveResp = await fetch(
-      `${API}/sandboxes/${s.name}/archive?dir=${encodeURIComponent(dir)}`,
+      `${API}/machinees/${s.name}/archive?dir=${encodeURIComponent(dir)}`,
       { headers: authHeaders() },
     );
     if (!archiveResp.ok) {
       // Fallback: use exec tar if archive endpoint fails
       console.log(`  ${s.name}: using exec fallback...`);
-      const tarResp = await apiCall("POST", `/sandboxes/${s.name}/exec`, {
+      const tarResp = await apiCall("POST", `/machinees/${s.name}/exec`, {
         command: ["sh", "-c", `tar czf - -C ${dir} . | base64`],
         timeout_secs: 60,
       }, 70_000);
@@ -4811,23 +4811,23 @@ async function cmdAgentCollect(prefix: string, args: string[]) {
 // ---------------------------------------------------------------------------
 
 /**
- * Agent worker: creates (or reuses) a sandbox, then enters a poll loop
- * claiming jobs from the work queue and executing them inside the sandbox.
+ * Agent worker: creates (or reuses) a machine, then enters a poll loop
+ * claiming jobs from the work queue and executing them inside the machine.
  *
  * Usage: smolctl agent worker [flags]
- *   --name <name>         sandbox name (default: worker-<id>)
+ *   --name <name>         machine name (default: worker-<id>)
  *   --starter <name>      starter to use (default: claude-code)
  *   --secret <name>       secret to enable (repeatable, default: anthropic)
  *   --poll-interval <sec> seconds between polls (default: 5)
  *   --max-jobs <n>        exit after N jobs (default: unlimited, 0)
- *   --keep                keep sandbox alive after worker exits
+ *   --keep                keep machine alive after worker exits
  *   --status              emit NDJSON status events to stderr
- *   --reuse <name>        reuse existing sandbox instead of creating one
+ *   --reuse <name>        reuse existing machine instead of creating one
  */
 async function cmdAgentWorker(args: string[]) {
   const { flags } = parseFlags(args, [
     "name", "starter", "secret", "cpus", "memory", "poll-interval", "max-jobs",
-    "keep", "status", "reuse", "user", "setup", "sandbox",
+    "keep", "status", "reuse", "user", "setup", "machine",
   ]);
 
   const reuse = flag(flags, "reuse");
@@ -4841,10 +4841,10 @@ async function cmdAgentWorker(args: string[]) {
   const streaming = hasFlag(flags, "status");
   const ts = () => new Date().toISOString();
 
-  // Create or verify sandbox
+  // Create or verify machine
   if (!reuse) {
-    if (streaming) emitStatus({ status: "queued", timestamp: ts(), sandbox: name, details: { starter, secrets, mode: "worker" } });
-    console.log(`Creating worker sandbox: ${name} (starter: ${starter})`);
+    if (streaming) emitStatus({ status: "queued", timestamp: ts(), machine: name, details: { starter, secrets, mode: "worker" } });
+    console.log(`Creating worker machine: ${name} (starter: ${starter})`);
     const createOpts: Record<string, unknown> = {
       name,
       from_starter: starter,
@@ -4857,33 +4857,33 @@ async function cmdAgentWorker(args: string[]) {
     };
     if (flag(flags, "user")) createOpts.default_user = flag(flags, "user");
 
-    const createResp = await apiCall("POST", "/sandboxes", createOpts, LONG_TIMEOUT_MS);
+    const createResp = await apiCall("POST", "/machinees", createOpts, LONG_TIMEOUT_MS);
     await jsonResult<Record<string, unknown>>(createResp);
 
-    if (streaming) emitStatus({ status: "preparing", timestamp: ts(), sandbox: name });
-    const startResp = await apiCall("POST", `/sandboxes/${name}/start`);
+    if (streaming) emitStatus({ status: "preparing", timestamp: ts(), machine: name });
+    const startResp = await apiCall("POST", `/machinees/${name}/start`);
     await jsonResult<Record<string, unknown>>(startResp);
 
     // Post-start setup hooks
     for (const cmd of flagAll(flags, "setup")) {
       console.log(`[setup] ${cmd}`);
-      const setupResp = await apiCall("POST", `/sandboxes/${name}/exec`, {
+      const setupResp = await apiCall("POST", `/machinees/${name}/exec`, {
         command: ["sh", "-c", cmd], timeout_secs: 120,
       }, 130_000);
       const setupResult = await jsonResult<{ exit_code?: number; exitCode?: number }>(setupResp);
       if ((setupResult.exit_code ?? setupResult.exitCode ?? -1) !== 0) die(`Setup failed: ${cmd}`);
     }
   } else {
-    console.log(`Reusing existing sandbox: ${name}`);
+    console.log(`Reusing existing machine: ${name}`);
   }
 
-  // Write sandbox settings for agent permission control
-  const sandboxPreset = flag(flags, "sandbox") ?? "permissive";
-  const sandboxConfig = resolveSandboxConfig(sandboxPreset);
-  const workerSettingsPath = await writeAgentSettings(name, sandboxConfig);
-  console.log(`Sandbox: ${SANDBOX_PRESETS[sandboxPreset] ? sandboxPreset : "custom"} (settings at ${workerSettingsPath})`);
+  // Write machine settings for agent permission control
+  const machinePreset = flag(flags, "machine") ?? "permissive";
+  const machineConfig = resolveMachineConfig(machinePreset);
+  const workerSettingsPath = await writeAgentSettings(name, machineConfig);
+  console.log(`Machine: ${SANDBOX_PRESETS[machinePreset] ? machinePreset : "custom"} (settings at ${workerSettingsPath})`);
 
-  if (streaming) emitStatus({ status: "running", timestamp: ts(), sandbox: name, details: { mode: "worker", poll_interval_ms: pollInterval } });
+  if (streaming) emitStatus({ status: "running", timestamp: ts(), machine: name, details: { mode: "worker", poll_interval_ms: pollInterval } });
   console.log(`Worker polling for jobs (interval: ${pollInterval / 1000}s, max: ${maxJobs || "unlimited"})...`);
 
   let completed = 0;
@@ -4894,9 +4894,9 @@ async function cmdAgentWorker(args: string[]) {
     running = false;
     console.log("\nWorker shutting down...");
     if (!keep && !reuse) {
-      try { await apiCall("POST", `/sandboxes/${name}/stop`); } catch { /* ok */ }
-      try { await apiCall("DELETE", `/sandboxes/${name}?force=true`); } catch { /* ok */ }
-      console.log(`Sandbox ${name} cleaned up.`);
+      try { await apiCall("POST", `/machinees/${name}/stop`); } catch { /* ok */ }
+      try { await apiCall("DELETE", `/machinees/${name}?force=true`); } catch { /* ok */ }
+      console.log(`Machine ${name} cleaned up.`);
     }
   };
   Deno.addSignalListener("SIGINT", () => { cleanup().then(() => Deno.exit(0)); });
@@ -4910,23 +4910,23 @@ async function cmdAgentWorker(args: string[]) {
     }
 
     const job = await jsonResult<{
-      id: string; sandbox: string; command: string[]; workdir?: string;
+      id: string; machine: string; command: string[]; workdir?: string;
       timeout_secs: number; env?: { name: string; value: string }[];
     }>(pollResp);
 
-    // Check if job targets this sandbox (or any)
-    if (job.sandbox !== name && job.sandbox !== "*") {
-      // Job is for a different sandbox — we already claimed it, so fail it back
-      await apiCall("POST", `/jobs/${job.id}/fail`, { error: `claimed by wrong worker (wanted ${job.sandbox}, got ${name})` });
+    // Check if job targets this machine (or any)
+    if (job.machine !== name && job.machine !== "*") {
+      // Job is for a different machine — we already claimed it, so fail it back
+      await apiCall("POST", `/jobs/${job.id}/fail`, { error: `claimed by wrong worker (wanted ${job.machine}, got ${name})` });
       continue;
     }
 
     console.log(`[job ${job.id}] Executing: ${job.command.join(" ")}`);
-    if (streaming) emitStatus({ status: "running", timestamp: ts(), sandbox: name, details: { job_id: job.id, command: job.command } });
-    await recordSession({ timestamp: ts(), sandbox: name, action: "job_exec", details: { job_id: job.id, command: job.command } });
+    if (streaming) emitStatus({ status: "running", timestamp: ts(), machine: name, details: { job_id: job.id, command: job.command } });
+    await recordSession({ timestamp: ts(), machine: name, action: "job_exec", details: { job_id: job.id, command: job.command } });
 
-    // Execute the job command inside the sandbox
-    // Inject --settings for claude commands so they run with sandbox permissions
+    // Execute the job command inside the machine
+    // Inject --settings for claude commands so they run with machine permissions
     const jobCmd = [...job.command];
     if (jobCmd[0] === "claude" && !jobCmd.includes("--settings")) {
       const pIdx = jobCmd.indexOf("-p");
@@ -4942,7 +4942,7 @@ async function cmdAgentWorker(args: string[]) {
 
     try {
       const clientTimeout = (job.timeout_secs + 10) * 1000;
-      const execResp = await apiCall("POST", `/sandboxes/${name}/exec`, execBody, clientTimeout);
+      const execResp = await apiCall("POST", `/machinees/${name}/exec`, execBody, clientTimeout);
       const result = await jsonResult<{ exit_code?: number; exitCode?: number; stdout: string; stderr: string }>(execResp);
       const exitCode = result.exit_code ?? result.exitCode ?? -1;
 
@@ -4954,14 +4954,14 @@ async function cmdAgentWorker(args: string[]) {
           stderr: result.stderr,
         });
         console.log(`[job ${job.id}] Completed (exit: ${exitCode})`);
-        if (streaming) emitStatus({ status: "completed", timestamp: ts(), sandbox: name, details: { job_id: job.id, exit_code: exitCode } });
+        if (streaming) emitStatus({ status: "completed", timestamp: ts(), machine: name, details: { job_id: job.id, exit_code: exitCode } });
       } else {
         await apiCall("POST", `/jobs/${job.id}/fail`, { error: `exit code ${exitCode}: ${result.stderr?.slice(0, 500)}` });
         console.log(`[job ${job.id}] Failed (exit: ${exitCode})`);
-        if (streaming) emitStatus({ status: "failed", timestamp: ts(), sandbox: name, details: { job_id: job.id, exit_code: exitCode }, error: result.stderr?.slice(0, 500) });
+        if (streaming) emitStatus({ status: "failed", timestamp: ts(), machine: name, details: { job_id: job.id, exit_code: exitCode }, error: result.stderr?.slice(0, 500) });
       }
 
-      await recordSession({ timestamp: ts(), sandbox: name, action: "job_complete", details: { job_id: job.id, exit_code: exitCode } });
+      await recordSession({ timestamp: ts(), machine: name, action: "job_complete", details: { job_id: job.id, exit_code: exitCode } });
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e);
       await apiCall("POST", `/jobs/${job.id}/fail`, { error: errMsg });
@@ -4975,14 +4975,14 @@ async function cmdAgentWorker(args: string[]) {
     }
   }
 
-  if (streaming) emitStatus({ status: "completed", timestamp: ts(), sandbox: name, details: { jobs_completed: completed, mode: "worker" } });
+  if (streaming) emitStatus({ status: "completed", timestamp: ts(), machine: name, details: { jobs_completed: completed, mode: "worker" } });
 
   if (!keep && !reuse) {
-    console.log(`Cleaning up sandbox: ${name}`);
-    try { await apiCall("POST", `/sandboxes/${name}/stop`); } catch { /* ok */ }
-    try { await apiCall("DELETE", `/sandboxes/${name}?force=true`); } catch { /* ok */ }
+    console.log(`Cleaning up machine: ${name}`);
+    try { await apiCall("POST", `/machinees/${name}/stop`); } catch { /* ok */ }
+    try { await apiCall("DELETE", `/machinees/${name}?force=true`); } catch { /* ok */ }
   } else {
-    console.log(`Sandbox kept alive: ${name}`);
+    console.log(`Machine kept alive: ${name}`);
   }
 }
 
@@ -4990,7 +4990,7 @@ async function cmdAgentWorker(args: string[]) {
 // Fleet commands
 // ---------------------------------------------------------------------------
 
-/** Build create-sandbox request body from parsed flags. Reused by fleet up. */
+/** Build create-machine request body from parsed flags. Reused by fleet up. */
 function buildCreateOpts(name: string, flags: Record<string, string[]>): Record<string, unknown> {
   const opts: Record<string, unknown> = {
     name,
@@ -5012,14 +5012,14 @@ function buildCreateOpts(name: string, flags: Record<string, string[]>): Record<
 async function cmdFleetUp(prefix: string, count: number, args: string[]) {
   const { flags } = parseFlags(args, ["cpus", "memory", "no-network", "init", "user", "starter", "secret"]);
 
-  // Create all sandboxes
+  // Create all machinees
   console.log(`Creating fleet: ${prefix}-0..${count - 1}`);
   const names: string[] = [];
   for (let i = 0; i < count; i++) {
     const name = `${prefix}-${i}`;
     names.push(name);
     const opts = buildCreateOpts(name, flags);
-    const resp = await apiCall("POST", "/sandboxes", opts, LONG_TIMEOUT_MS);
+    const resp = await apiCall("POST", "/machinees", opts, LONG_TIMEOUT_MS);
     await jsonResult<Record<string, unknown>>(resp);
     console.log(`  created: ${name}`);
   }
@@ -5028,7 +5028,7 @@ async function cmdFleetUp(prefix: string, count: number, args: string[]) {
   console.log("Starting all...");
   const startResults = await Promise.allSettled(
     names.map(async (name) => {
-      const resp = await apiCall("POST", `/sandboxes/${name}/start`);
+      const resp = await apiCall("POST", `/machinees/${name}/start`);
       await jsonResult<Record<string, unknown>>(resp);
       return name;
     }),
@@ -5037,29 +5037,29 @@ async function cmdFleetUp(prefix: string, count: number, args: string[]) {
     if (r.status === "fulfilled") console.log(`  started: ${r.value}`);
     else console.error(`  failed: ${r.reason}`);
   }
-  console.log(`Fleet ${prefix} is up (${count} sandboxes).`);
+  console.log(`Fleet ${prefix} is up (${count} machinees).`);
 }
 
 async function cmdFleetDown(prefix: string) {
-  const resp = await apiCall("GET", "/sandboxes");
-  const data = await jsonResult<{ sandboxes: { name: string; state: string }[] }>(resp);
-  const matches = data.sandboxes.filter((s) => s.name.startsWith(`${prefix}-`));
+  const resp = await apiCall("GET", "/machinees");
+  const data = await jsonResult<{ machinees: { name: string; state: string }[] }>(resp);
+  const matches = data.machinees.filter((s) => s.name.startsWith(`${prefix}-`));
   if (matches.length === 0) {
-    console.log(`No sandboxes matching prefix "${prefix}".`);
+    console.log(`No machinees matching prefix "${prefix}".`);
     return;
   }
 
-  console.log(`Tearing down ${matches.length} sandbox(es) in fleet "${prefix}"...`);
+  console.log(`Tearing down ${matches.length} machine(es) in fleet "${prefix}"...`);
   await Promise.allSettled(
     matches.map(async (s) => {
       try {
         if (s.state === "running") {
-          const resp = await apiCall("POST", `/sandboxes/${s.name}/stop`);
+          const resp = await apiCall("POST", `/machinees/${s.name}/stop`);
           await resp.text();
         }
       } catch { /* ignore */ }
       try {
-        const resp = await apiCall("DELETE", `/sandboxes/${s.name}?force=true`);
+        const resp = await apiCall("DELETE", `/machinees/${s.name}?force=true`);
         await resp.text();
         console.log(`  removed: ${s.name}`);
       } catch (e) {
@@ -5071,11 +5071,11 @@ async function cmdFleetDown(prefix: string) {
 }
 
 async function cmdFleetLs(prefix?: string) {
-  const resp = await apiCall("GET", "/sandboxes");
-  const data = await jsonResult<{ sandboxes: Record<string, unknown>[] }>(resp);
+  const resp = await apiCall("GET", "/machinees");
+  const data = await jsonResult<{ machinees: Record<string, unknown>[] }>(resp);
   const matches = prefix
-    ? data.sandboxes.filter((s) => String(s.name).startsWith(`${prefix}-`))
-    : data.sandboxes;
+    ? data.machinees.filter((s) => String(s.name).startsWith(`${prefix}-`))
+    : data.machinees;
   const rows = matches.map((s) => ({
     name: s.name,
     state: s.state,
@@ -5088,15 +5088,15 @@ async function cmdFleetLs(prefix?: string) {
 async function cmdFleetExec(prefix: string, cmd: string, args: string[]) {
   const { flags } = parseFlags(args, ["env", "workdir", "user", "timeout"]);
 
-  // Find fleet sandboxes
-  const resp = await apiCall("GET", "/sandboxes");
-  const data = await jsonResult<{ sandboxes: { name: string; state: string }[] }>(resp);
-  const matches = data.sandboxes
+  // Find fleet machinees
+  const resp = await apiCall("GET", "/machinees");
+  const data = await jsonResult<{ machinees: { name: string; state: string }[] }>(resp);
+  const matches = data.machinees
     .filter((s) => s.name.startsWith(`${prefix}-`) && s.state === "running")
     .sort((a, b) => a.name.localeCompare(b.name));
 
   if (matches.length === 0) {
-    die(`No running sandboxes matching prefix "${prefix}".`);
+    die(`No running machinees matching prefix "${prefix}".`);
   }
 
   // Build exec body
@@ -5114,10 +5114,10 @@ async function cmdFleetExec(prefix: string, cmd: string, args: string[]) {
 
   const clientTimeout = (parseInt(flag(flags, "timeout") ?? "30") + 5) * 1000;
 
-  console.log(`Executing on ${matches.length} sandbox(es)...`);
+  console.log(`Executing on ${matches.length} machine(es)...`);
   const results = await Promise.allSettled(
     matches.map(async (s) => {
-      const r = await apiCall("POST", `/sandboxes/${s.name}/exec`, body, clientTimeout);
+      const r = await apiCall("POST", `/machinees/${s.name}/exec`, body, clientTimeout);
       const d = await jsonResult<{ exit_code?: number; exitCode?: number; stdout: string; stderr: string }>(r);
       return { name: s.name, ...d, exit_code: d.exit_code ?? d.exitCode ?? -1 };
     }),
@@ -5198,13 +5198,13 @@ async function cmdDashboard() {
   Deno.stdin.setRaw(true);
 
   const refresh = async () => {
-    let sandboxes: Record<string, unknown>[] = [];
+    let machinees: Record<string, unknown>[] = [];
     let serverUp = false;
     let healthData: Record<string, unknown> = {};
     try {
-      const resp = await apiCall("GET", "/sandboxes");
+      const resp = await apiCall("GET", "/machinees");
       const data = await resp.json();
-      sandboxes = data.sandboxes ?? [];
+      machinees = data.machinees ?? [];
       serverUp = true;
     } catch { /* server may be down */ }
 
@@ -5235,8 +5235,8 @@ async function cmdDashboard() {
     const metaMap = new Map(metas.map(m => [m.name, m]));
 
     const lines: string[] = [];
-    const running = sandboxes.filter(s => s.state === "Running").length;
-    const stopped = sandboxes.length - running;
+    const running = machinees.filter(s => s.state === "Running").length;
+    const stopped = machinees.length - running;
     const sessionUp = fmtUptime(new Date(startTime).toISOString());
     const provider = String(healthData.provider ?? "local");
 
@@ -5249,17 +5249,17 @@ async function cmdDashboard() {
     const serverStatus = serverUp
       ? `${ANSI.green}connected${ANSI.reset}`
       : `${ANSI.red}unreachable${ANSI.reset}`;
-    lines.push(boxLine(`Provider: ${ANSI.bold}${provider}${ANSI.reset} | Sandboxes: ${ANSI.green}${running} running${ANSI.reset}, ${stopped} stopped`, W));
+    lines.push(boxLine(`Provider: ${ANSI.bold}${provider}${ANSI.reset} | Machinees: ${ANSI.green}${running} running${ANSI.reset}, ${stopped} stopped`, W));
     lines.push(boxLine(`Server: ${ANSI.cyan}${BASE_URL}${ANSI.reset} | ${serverStatus} | Session: ${sessionUp}`, W));
     lines.push(midBorder);
 
     lines.push(boxLine(`${ANSI.bold}SANDBOXES${ANSI.reset}`, W));
-    if (sandboxes.length === 0) {
-      lines.push(boxLine(`${ANSI.dim}(no sandboxes)${ANSI.reset}`, W));
+    if (machinees.length === 0) {
+      lines.push(boxLine(`${ANSI.dim}(no machinees)${ANSI.reset}`, W));
     } else {
       const hdr = "NAME".padEnd(16) + "STATUS".padEnd(14) + "STARTER".padEnd(14) + "UPTIME".padEnd(10) + "PID";
       lines.push(boxLine(`${ANSI.dim}${hdr}${ANSI.reset}`, W));
-      for (const s of sandboxes.slice(0, 10)) {
+      for (const s of machinees.slice(0, 10)) {
         const name = String(s.name ?? "").slice(0, 15).padEnd(16);
         const icon = statusIcon(String(s.state ?? "unknown"));
         const iconPad = " ".repeat(Math.max(0, 14 - statusVisLen(String(s.state ?? "unknown"))));
@@ -5283,7 +5283,7 @@ async function cmdDashboard() {
           ? new Date(ev.timestamp).toLocaleTimeString("en-GB", { hour12: false })
           : "??:??:??";
         const evType = (ev.event ?? "").padEnd(18);
-        const sb = (ev.sandbox ?? "").padEnd(16);
+        const sb = (ev.machine ?? "").padEnd(16);
         const detail = ev.details
           ? Object.entries(ev.details).map(([k, v]) => `${k}=${v}`).join(" ").slice(0, 20)
           : "";
@@ -5301,7 +5301,7 @@ async function cmdDashboard() {
       for (const j of jobs.slice(0, 5)) {
         const id = String(j.id ?? "").slice(0, 11).padEnd(12);
         const jstatus = String(j.status ?? "").padEnd(12);
-        const jsb = String(j.sandbox ?? "-").slice(0, 15).padEnd(16);
+        const jsb = String(j.machine ?? "-").slice(0, 15).padEnd(16);
         const jcmd = String(j.command ?? "").slice(0, W - 48);
         lines.push(boxLine(`${id}${jstatus}${jsb}${jcmd}`, W));
       }
@@ -5339,7 +5339,7 @@ async function cmdDashboard() {
 // ---------------------------------------------------------------------------
 
 function usage(): never {
-  console.log(`smolctl — manage smolvm sandboxes
+  console.log(`smolctl — manage smolvm machinees
 
 USAGE:
   smolctl <command> [args...]
@@ -5350,8 +5350,8 @@ AUTH:
   auth logout                    Clear stored tokens from .env
 
 SANDBOX LIFECYCLE:
-  ls                             List all sandboxes
-  create <name> [flags]          Create a sandbox
+  ls                             List all machinees
+  create <name> [flags]          Create a machine
     --cpus <n>                     CPU count (default: 2)
     --memory <mb>                  Memory in MB (default: 1024)
     --no-network                   Disable networking
@@ -5364,16 +5364,16 @@ SANDBOX LIFECYCLE:
     --with-mcp                     Auto-configure built-in MCP servers
                                    (filesystem, exec, git) — requires Deno in image
     --mcp "name=X,cmd=Y"          Add custom MCP server (repeatable)
-  start <name>                   Start a sandbox
-  stop <name>                    Stop a sandbox
-  rm <name> [--force]            Delete a sandbox
-  info <name>                    Show sandbox details (JSON)
+  start <name>                   Start a machine
+  stop <name>                    Stop a machine
+  rm <name> [--force]            Delete a machine
+  info <name>                    Show machine details (JSON)
   up <name> [create flags]       Create + start (one shot)
     --setup <cmd>                  Post-start command (repeatable)
     --label key=value              Set metadata label (repeatable)
-    --owner <name>                 Set sandbox owner
+    --owner <name>                 Set machine owner
   down <name> [--force]          Stop + delete (checks for uncommitted work)
-  prune                          Stop + delete ALL sandboxes
+  prune                          Stop + delete ALL machinees
 
 EXECUTION:
   exec <name> <cmd...> [flags]   Run a command (no shell)
@@ -5391,57 +5391,57 @@ FILE OPERATIONS:
   files write <name> <path>      Write file (--data or stdin)
   files rm <name> <path>         Delete a file
   cp <src> <dst> [--exclude p]   Copy files/dirs in or out
-                                   Local to sandbox:  cp ./src vm:/workspace/src
-                                   Sandbox to local:  cp vm:/workspace/out ./out
-  git clone <name> <url> [dir]   Git clone repo into sandbox
+                                   Local to machine:  cp ./src vm:/workspace/src
+                                   Machine to local:  cp vm:/workspace/out ./out
+  git clone <name> <url> [dir]   Git clone repo into machine
 
 FILE SYNC:
-  sync push <sandbox> [dir] [flags]  Push local dir to sandbox
+  sync push <machine> [dir] [flags]  Push local dir to machine
     --to /remote                       Remote path (default: /workspace)
     --exclude <pattern>                Exclude pattern (repeatable)
     --dry-run                          Show what would be synced
     --verify                           Require valid signature before push
-  sync pull <sandbox> [dir] [flags]  Pull sandbox dir to local
+  sync pull <machine> [dir] [flags]  Pull machine dir to local
     --from /remote                     Remote path (default: /workspace)
     --exclude <pattern>                Exclude pattern (repeatable)
     --dry-run                          Show what would be synced
-  sync watch <sandbox> [dir] [flags] Watch local dir, auto-push on change
+  sync watch <machine> [dir] [flags] Watch local dir, auto-push on change
     --to /remote                       Remote path (default: /workspace)
     --exclude <pattern>                Exclude pattern (repeatable)
     --debounce <ms>                    Debounce delay (default: 500)
 
 CLONING & SNAPSHOTS:
-  clone <name> <new-name>        Clone sandbox (APFS COW)
-  diff <name> <other>            Compare two sandboxes
-  merge <source> <target>        Merge files between sandboxes
-  snapshot push <name>           Export sandbox as snapshot
+  clone <name> <new-name>        Clone machine (APFS COW)
+  diff <name> <other>            Compare two machinees
+  merge <source> <target>        Merge files between machinees
+  snapshot push <name>           Export machine as snapshot
   snapshot ls                    List snapshots
-  snapshot pull <snap> <name>    Restore snapshot to new sandbox
+  snapshot pull <snap> <name>    Restore snapshot to new machine
   snapshot rm <name>             Delete snapshot
 
 IMAGES:
-  image pull <sandbox> <img>     Pull OCI image into sandbox
-  image ls <sandbox>             List pulled images
+  image pull <machine> <img>     Pull OCI image into machine
+  image ls <machine>             List pulled images
 
-CONTAINERS (inside a sandbox):
-  container ls <sandbox>                     List containers
-  container create <sandbox> <image> [flags] Create container
+CONTAINERS (inside a machine):
+  container ls <machine>                     List containers
+  container create <machine> <image> [flags] Create container
     --cmd <arg>                                Command arg (repeatable)
     --env KEY=VALUE                            Set env var (repeatable)
     --workdir /path                            Working directory
-  container start <sandbox> <id>             Start container
-  container stop <sandbox> <id>              Stop container
-  container rm <sandbox> <id> [--force]      Delete container
-  container exec <sandbox> <id> <cmd...>     Exec in container
+  container start <machine> <id>             Start container
+  container stop <machine> <id>              Stop container
+  container rm <machine> <id> [--force]      Delete container
+  container exec <machine> <id> <cmd...>     Exec in container
     --env KEY=VALUE                            Set env var (repeatable)
     --workdir /path                            Working directory
     --timeout <secs>                           Timeout (default: 30)
 
 AGENT (AI agent orchestration):
-  agent run "<prompt>" [flags]   Run Claude Code in an isolated sandbox
-    --sandbox <preset>             Permission sandbox: permissive|research|developer|'{json}'
+  agent run "<prompt>" [flags]   Run Claude Code in an isolated machine
+    --machine <preset>             Permission machine: permissive|research|developer|'{json}'
                                    (default: permissive — auto-approve all non-destructive tools)
-    --name <name>                  Sandbox name (default: agent-<random>)
+    --name <name>                  Machine name (default: agent-<random>)
     --starter <name>               Starter template (default: claude-code)
     --secret <name>                Secret to inject (default: anthropic, repeatable)
     --oauth-token <token>          Use Claude subscription auth (or set CLAUDE_CODE_OAUTH_TOKEN
@@ -5451,12 +5451,12 @@ AGENT (AI agent orchestration):
     --timeout <secs>               Agent timeout (default: 300)
     --workdir /path                Working directory for agent
     --user <name>                  Run as user
-    --keep                         Don't cleanup sandbox after run
+    --keep                         Don't cleanup machine after run
     --json                         Output results as JSON
     --status                       Emit NDJSON status events to stderr
     --setup <cmd>                  Run command after start (repeatable)
     --label key=value              Set metadata label (repeatable)
-    --owner <name>                 Set sandbox owner (default: $USER)
+    --owner <name>                 Set machine owner (default: $USER)
   agent fleet <prefix> <prompts-file> [flags]
                                  Dispatch multiple agents in parallel
                                    Prompts file: one prompt per line (# = comment)
@@ -5468,18 +5468,18 @@ AGENT (AI agent orchestration):
     --dir <path>                   Remote dir to collect (default: /workspace)
 
 SANDBOX PRESETS (permission profiles for agents):
-  sandbox ls                     List available presets
-  sandbox show <preset>          Show allow/deny rules for a preset
-  sandbox test <preset> <tool>   Check if a tool would be allowed by a preset
+  machine ls                     List available presets
+  machine show <preset>          Show allow/deny rules for a preset
+  machine test <preset> <tool>   Check if a tool would be allowed by a preset
 
 METADATA & IDENTITY:
-  meta                           List all sandbox metadata
-  meta <name>                    Show metadata for a sandbox
+  meta                           List all machine metadata
+  meta <name>                    Show metadata for a machine
   meta set <name> [flags]        Update metadata
     --label key=value              Set label (repeatable)
     --owner <name>                 Set owner
     --description "text"           Set description
-  whoami <name>                  Show sandbox identity
+  whoami <name>                  Show machine identity
 
 SESSION RECORDING:
   session ls                     List recorded sessions
@@ -5487,10 +5487,10 @@ SESSION RECORDING:
   session rm <name>              Delete session recording
 
 FLEET (batch orchestration):
-  fleet up <prefix> <N> [flags]  Create + start N sandboxes (prefix-0..N-1)
+  fleet up <prefix> <N> [flags]  Create + start N machinees (prefix-0..N-1)
                                    Accepts same flags as 'create'
-  fleet down <prefix>            Stop + delete all sandboxes with prefix
-  fleet ls [prefix]              List fleet sandboxes (or all if no prefix)
+  fleet down <prefix>            Stop + delete all machinees with prefix
+  fleet ls [prefix]              List fleet machinees (or all if no prefix)
   fleet exec <prefix> <cmd>      Exec shell cmd across all running fleet members
     --env KEY=VALUE                Set env var (repeatable)
     --workdir /path                Working directory
@@ -5498,8 +5498,8 @@ FLEET (batch orchestration):
     --timeout <secs>               Timeout (default: 30)
 
 DEBUG:
-  debug mounts <sandbox>         Diagnose mount issues (virtiofs)
-  debug network <sandbox>        Diagnose network/port issues
+  debug mounts <machine>         Diagnose mount issues (virtiofs)
+  debug network <machine>        Diagnose network/port issues
 
 TUNNEL:
   tunnel start [--port 9090]     Start cloudflared tunnel to server
@@ -5514,10 +5514,10 @@ SECRETS:
   secret update --secret K=V     Update secrets at runtime (repeatable)
 
 PERMISSIONS (RBAC):
-  permission grant <name>        Grant a role to a token on a sandbox
+  permission grant <name>        Grant a role to a token on a machine
     --token <token>                Bearer token to grant access to
     --role <role>                  Role: owner, operator, readonly
-  permission ls <name>           List permissions on a sandbox
+  permission ls <name>           List permissions on a machine
   permission revoke <name> <hash>  Revoke permission by token hash
 
 CODE SIGNING:
@@ -5536,14 +5536,14 @@ CODE SIGNING:
 POOL (multi-node management):
   pool add <name> <url> [flags]  Add a node to the pool
     --token <token>                Bearer token for auth
-    --max <n>                      Max sandboxes on this node
+    --max <n>                      Max machinees on this node
   pool rm <name>                 Remove a node from the pool
-  pool ls                        List nodes with status, sandbox count
+  pool ls                        List nodes with status, machine count
   pool status                    Show aggregate pool stats
-  pool route <sandbox>           Show which node a sandbox is on
+  pool route <machine>           Show which node a machine is on
   pool strategy <name>           Set routing strategy (round-robin, least-loaded)
 
-  Pool-aware sandbox creation:
+  Pool-aware machine creation:
     create <name> --pool           Route to a node using pool strategy
     create <name> --node <name>    Route to a specific node
     up <name> --pool               Same as create, with --pool
@@ -5557,9 +5557,9 @@ PROVIDERS:
   provider rm <name>             Remove a provider
 
 MONITORING:
-  dashboard                      Live TUI with sandboxes, events, jobs
+  dashboard                      Live TUI with machinees, events, jobs
   stats <name>                   Resource stats (CPU, memory, disk)
-  logs <name> [--no-follow]      Stream sandbox logs
+  logs <name> [--no-follow]      Stream machine logs
   metrics                        Prometheus metrics (raw)
   health                         Server health check
   starters                       List available starter templates (from API)
@@ -5577,10 +5577,10 @@ STARTER AUTHORING:
   starter import <path>          Import starter from .tar.gz
 
 MCP SERVERS:
-  mcp tools <sandbox>            List tools from all MCP servers
+  mcp tools <machine>            List tools from all MCP servers
   mcp call <sb> <srv> <tool> [j] Call an MCP tool (args as JSON)
-  mcp servers <sandbox>          List configured MCP servers
-  mcp install <sandbox>          Push built-in MCP servers to a running sandbox
+  mcp servers <machine>          List configured MCP servers
+  mcp install <machine>          Push built-in MCP servers to a running machine
                                    (filesystem.ts, exec.ts, git.ts)
 ENVIRONMENT:
   SMOLVM_URL          Server URL (default: http://127.0.0.1:9090)
@@ -5751,9 +5751,9 @@ try {
       }
       break;
     case "run":
-      if (rest.length < 3) die("usage: smolctl run <sandbox> <image> <cmd...>");
+      if (rest.length < 3) die("usage: smolctl run <machine> <image> <cmd...>");
       {
-        const sandbox = rest[0];
+        const machine = rest[0];
         const image = rest[1];
         const runParts: string[] = [];
         const runFlags: string[] = [];
@@ -5763,7 +5763,7 @@ try {
           if (inF) runFlags.push(r);
           else runParts.push(r);
         }
-        await cmdRun(sandbox, image, runParts, runFlags);
+        await cmdRun(machine, image, runParts, runFlags);
       }
       break;
 
@@ -5807,15 +5807,15 @@ try {
       const sub = rest[0];
       switch (sub) {
         case "push":
-          if (!rest[1]) die("usage: smolctl sync push <sandbox> [dir] [--to /remote] [--exclude pattern] [--dry-run] [--verify]");
+          if (!rest[1]) die("usage: smolctl sync push <machine> [dir] [--to /remote] [--exclude pattern] [--dry-run] [--verify]");
           await cmdSyncPush(rest[1], rest.slice(2));
           break;
         case "pull":
-          if (!rest[1]) die("usage: smolctl sync pull <sandbox> [dir] [--from /remote] [--exclude pattern] [--dry-run]");
+          if (!rest[1]) die("usage: smolctl sync pull <machine> [dir] [--from /remote] [--exclude pattern] [--dry-run]");
           await cmdSyncPull(rest[1], rest.slice(2));
           break;
         case "watch":
-          if (!rest[1]) die("usage: smolctl sync watch <sandbox> [dir] [--to /remote] [--exclude pattern] [--debounce ms]");
+          if (!rest[1]) die("usage: smolctl sync watch <machine> [dir] [--to /remote] [--exclude pattern] [--debounce ms]");
           await cmdSyncWatch(rest[1], rest.slice(2));
           break;
         default:
@@ -5846,19 +5846,19 @@ try {
       break;
     }
 
-    // Sandbox presets
-    case "sandbox": {
+    // Machine presets
+    case "machine": {
       const sub = rest[0];
       switch (sub) {
-        case "ls": case "list": cmdSandboxLs(); break;
+        case "ls": case "list": cmdMachineLs(); break;
         case "show":
-          if (!rest[1]) die("usage: smolctl sandbox show <preset>");
-          cmdSandboxShow(rest[1]); break;
+          if (!rest[1]) die("usage: smolctl machine show <preset>");
+          cmdMachineShow(rest[1]); break;
         case "test":
-          if (!rest[1] || !rest[2]) die("usage: smolctl sandbox test <preset> <tool>");
-          cmdSandboxTest(rest[1], rest[2]); break;
+          if (!rest[1] || !rest[2]) die("usage: smolctl machine test <preset> <tool>");
+          cmdMachineTest(rest[1], rest[2]); break;
         default:
-          die(`unknown sandbox subcommand: ${sub}. Try: ls, show, test`);
+          die(`unknown machine subcommand: ${sub}. Try: ls, show, test`);
       }
       break;
     }
@@ -5960,7 +5960,7 @@ try {
         await saveMeta(existing);
         console.log(`Updated metadata for: ${rest[1]}`);
       } else {
-        // Show metadata for a specific sandbox
+        // Show metadata for a specific machine
         const meta = await loadMeta(sub);
         if (!meta) die(`No metadata for: ${sub}`);
         console.log(JSON.stringify(meta, null, 2));
@@ -6005,8 +6005,8 @@ try {
       {
         const meta = await loadMeta(rest[0]);
         if (meta) {
-          // Write identity to sandbox
-          const identResp = await apiCall("POST", `/sandboxes/${rest[0]}/exec`, {
+          // Write identity to machine
+          const identResp = await apiCall("POST", `/machinees/${rest[0]}/exec`, {
             command: ["sh", "-c", `cat /etc/smolvm.json 2>/dev/null || echo '${JSON.stringify(meta).replace(/'/g, "'\\''")}'`],
             timeout_secs: 5,
           }, 10_000);
@@ -6014,7 +6014,7 @@ try {
           console.log(data.stdout.trim());
         } else {
           // Fallback: just show server info
-          const infoResp = await apiCall("GET", `/sandboxes/${rest[0]}`);
+          const infoResp = await apiCall("GET", `/machinees/${rest[0]}`);
           const data = await jsonResult<Record<string, unknown>>(infoResp);
           console.log(JSON.stringify({ name: data.name, state: data.state }, null, 2));
         }
@@ -6025,23 +6025,23 @@ try {
     case "git":
       switch (rest[0]) {
         case "clone":
-          if (rest.length < 3) die("usage: smolctl git clone <sandbox> <repo-url> [dir]");
+          if (rest.length < 3) die("usage: smolctl git clone <machine> <repo-url> [dir]");
           await cmdGitClone(rest[1], rest[2], rest[3]);
           break;
         case "init":
-          if (!rest[1]) die("usage: smolctl git init <sandbox>");
+          if (!rest[1]) die("usage: smolctl git init <machine>");
           await cmdGitInit(rest[1]);
           break;
         case "status":
-          if (!rest[1]) die("usage: smolctl git status <sandbox>");
+          if (!rest[1]) die("usage: smolctl git status <machine>");
           await cmdGitStatus(rest[1]);
           break;
         case "log":
-          if (!rest[1]) die("usage: smolctl git log <sandbox> [-n 20]");
+          if (!rest[1]) die("usage: smolctl git log <machine> [-n 20]");
           await cmdGitLog(rest[1], rest.slice(2));
           break;
         case "commit":
-          if (!rest[1]) die("usage: smolctl git commit <sandbox> -m 'message'");
+          if (!rest[1]) die("usage: smolctl git commit <machine> -m 'message'");
           await cmdGitCommit(rest[1], rest.slice(2));
           break;
         case "diff":
@@ -6085,7 +6085,7 @@ try {
           await cmdSnapshotLs(rest.slice(1));
           break;
         case "pull":
-          if (rest.length < 3) die("usage: smolctl snapshot pull <snap-name> <sandbox-name>");
+          if (rest.length < 3) die("usage: smolctl snapshot pull <snap-name> <machine-name>");
           await cmdSnapshotPull(rest[1], rest[2]);
           break;
         case "rm":
@@ -6119,7 +6119,7 @@ try {
           await cmdSnapshotHistory(rest[1]);
           break;
         case "rollback":
-          if (!rest[1] || !rest[2]) die("usage: smolctl snapshot rollback <snap-name> <sandbox-name> [--version N]");
+          if (!rest[1] || !rest[2]) die("usage: smolctl snapshot rollback <snap-name> <machine-name> [--version N]");
           await cmdSnapshotRollback(rest[1], rest[2], rest.slice(3));
           break;
         case "squash":
@@ -6136,16 +6136,16 @@ try {
           break;
         case "export-workspace":
         case "export-ws":
-          if (!rest[1]) die("usage: smolctl snapshot export-workspace <sandbox> [path]");
+          if (!rest[1]) die("usage: smolctl snapshot export-workspace <machine> [path]");
           await cmdWorkspaceExport(rest[1], rest[2]);
           break;
         case "import-workspace":
         case "import-ws":
-          if (!rest[1] || !rest[2]) die("usage: smolctl snapshot import-workspace <path> <sandbox>");
+          if (!rest[1] || !rest[2]) die("usage: smolctl snapshot import-workspace <path> <machine>");
           await cmdWorkspaceImport(rest[1], rest[2]);
           break;
         case "to-docker":
-          if (!rest[1]) die("usage: smolctl snapshot to-docker <sandbox> [--tag image:tag] [--output dir]");
+          if (!rest[1]) die("usage: smolctl snapshot to-docker <machine> [--tag image:tag] [--output dir]");
           await cmdToDocker(rest[1], rest.slice(2));
           break;
         case "cp":
@@ -6170,12 +6170,12 @@ try {
       const sub = rest[0];
       switch (sub) {
         case "pull":
-          if (rest.length < 3) die("usage: smolctl image pull <sandbox> <image>");
+          if (rest.length < 3) die("usage: smolctl image pull <machine> <image>");
           await cmdImagePull(rest[1], rest[2]);
           break;
         case "ls":
         case "list":
-          if (!rest[1]) die("usage: smolctl image ls <sandbox>");
+          if (!rest[1]) die("usage: smolctl image ls <machine>");
           await cmdImageLs(rest[1]);
           break;
         default:
@@ -6192,29 +6192,29 @@ try {
       switch (sub) {
         case "ls":
         case "list":
-          if (!cArgs[0]) die("usage: smolctl container ls <sandbox>");
+          if (!cArgs[0]) die("usage: smolctl container ls <machine>");
           await cmdContainerLs(cArgs[0]);
           break;
         case "create":
-          if (cArgs.length < 2) die("usage: smolctl container create <sandbox> <image> [--cmd arg] [--env K=V] [--workdir /p]");
+          if (cArgs.length < 2) die("usage: smolctl container create <machine> <image> [--cmd arg] [--env K=V] [--workdir /p]");
           await cmdContainerCreate(cArgs[0], cArgs[1], cArgs.slice(2));
           break;
         case "start":
-          if (cArgs.length < 2) die("usage: smolctl container start <sandbox> <id>");
+          if (cArgs.length < 2) die("usage: smolctl container start <machine> <id>");
           await cmdContainerStart(cArgs[0], cArgs[1]);
           break;
         case "stop":
-          if (cArgs.length < 2) die("usage: smolctl container stop <sandbox> <id>");
+          if (cArgs.length < 2) die("usage: smolctl container stop <machine> <id>");
           await cmdContainerStop(cArgs[0], cArgs[1]);
           break;
         case "rm":
         case "delete":
-          if (cArgs.length < 2) die("usage: smolctl container rm <sandbox> <id> [--force]");
+          if (cArgs.length < 2) die("usage: smolctl container rm <machine> <id> [--force]");
           await cmdContainerRm(cArgs[0], cArgs[1], cArgs.includes("--force"));
           break;
         case "exec": {
-          if (cArgs.length < 3) die("usage: smolctl container exec <sandbox> <id> <cmd...> [--env K=V] [--workdir /p] [--timeout s]");
-          const sandbox = cArgs[0];
+          if (cArgs.length < 3) die("usage: smolctl container exec <machine> <id> <cmd...> [--env K=V] [--workdir /p] [--timeout s]");
+          const machine = cArgs[0];
           const cid = cArgs[1];
           const cmdParts: string[] = [];
           const flagParts: string[] = [];
@@ -6224,7 +6224,7 @@ try {
             if (inFlags) flagParts.push(r);
             else cmdParts.push(r);
           }
-          await cmdContainerExec(sandbox, cid, cmdParts, flagParts);
+          await cmdContainerExec(machine, cid, cmdParts, flagParts);
           break;
         }
         default:
@@ -6236,28 +6236,28 @@ try {
     // MCP
     case "mcp": {
       const sub = rest[0];
-      if (!sub) die("usage: smolctl mcp <tools|call|servers|install> <sandbox> [args]");
+      if (!sub) die("usage: smolctl mcp <tools|call|servers|install> <machine> [args]");
       switch (sub) {
         case "tools":
         case "tool": {
-          if (!rest[1]) die("usage: smolctl mcp tools <sandbox>");
+          if (!rest[1]) die("usage: smolctl mcp tools <machine>");
           await cmdMcpTools(rest[1]);
           break;
         }
         case "call": {
-          if (!rest[1] || !rest[2] || !rest[3]) die("usage: smolctl mcp call <sandbox> <server> <tool> [args-json]");
+          if (!rest[1] || !rest[2] || !rest[3]) die("usage: smolctl mcp call <machine> <server> <tool> [args-json]");
           const argsJson = rest[4] ?? "{}";
           await cmdMcpCall(rest[1], rest[2], rest[3], argsJson);
           break;
         }
         case "servers":
         case "server": {
-          if (!rest[1]) die("usage: smolctl mcp servers <sandbox>");
+          if (!rest[1]) die("usage: smolctl mcp servers <machine>");
           await cmdMcpServers(rest[1]);
           break;
         }
         case "install": {
-          if (!rest[1]) die("usage: smolctl mcp install <sandbox>");
+          if (!rest[1]) die("usage: smolctl mcp install <machine>");
           await cmdMcpInstall(rest[1]);
           break;
         }
@@ -6273,12 +6273,12 @@ try {
       switch (sub) {
         case "mounts":
         case "mount":
-          if (!rest[1]) die("usage: smolctl debug mounts <sandbox>");
+          if (!rest[1]) die("usage: smolctl debug mounts <machine>");
           await cmdDebugMounts(rest[1]);
           break;
         case "network":
         case "net":
-          if (!rest[1]) die("usage: smolctl debug network <sandbox>");
+          if (!rest[1]) die("usage: smolctl debug network <machine>");
           await cmdDebugNetwork(rest[1]);
           break;
         default:
@@ -6291,13 +6291,13 @@ try {
     case "dns": {
       const dnsSub = rest[0];
       if (dnsSub === "status" || dnsSub === "check") {
-        if (!rest[1]) die("usage: smolctl dns status <sandbox>");
+        if (!rest[1]) die("usage: smolctl dns status <machine>");
         await cmdDnsStatus(rest[1]);
       } else if (dnsSub && !rest[1]) {
-        // Allow shorthand: smolctl dns <sandbox>
+        // Allow shorthand: smolctl dns <machine>
         await cmdDnsStatus(dnsSub);
       } else {
-        die("usage: smolctl dns [status|check] <sandbox>");
+        die("usage: smolctl dns [status|check] <machine>");
       }
       break;
     }
@@ -6400,16 +6400,16 @@ try {
     case "permissions":
     case "perm": {
       const sub = rest[0];
-      if (!sub) die("usage: smolctl permission <grant|ls|revoke> <sandbox> [flags]");
+      if (!sub) die("usage: smolctl permission <grant|ls|revoke> <machine> [flags]");
       switch (sub) {
         case "grant": {
           const name = rest[1];
-          if (!name) die("usage: smolctl permission grant <sandbox> --token <token> --role <owner|operator|readonly>");
+          if (!name) die("usage: smolctl permission grant <machine> --token <token> --role <owner|operator|readonly>");
           const { flags: pf } = parseFlags(rest.slice(2), ["token", "role"]);
           const grantToken = flag(pf, "token");
           const role = flag(pf, "role");
-          if (!grantToken || !role) die("usage: smolctl permission grant <sandbox> --token <token> --role <owner|operator|readonly>");
-          const resp = await apiCall("POST", `/sandboxes/${name}/permissions`, { token: grantToken, role });
+          if (!grantToken || !role) die("usage: smolctl permission grant <machine> --token <token> --role <owner|operator|readonly>");
+          const resp = await apiCall("POST", `/machinees/${name}/permissions`, { token: grantToken, role });
           const data = await jsonResult<{ message: string }>(resp);
           console.log(data.message);
           break;
@@ -6417,11 +6417,11 @@ try {
         case "ls":
         case "list": {
           const name = rest[1];
-          if (!name) die("usage: smolctl permission ls <sandbox>");
-          const resp = await apiCall("GET", `/sandboxes/${name}/permissions`);
-          const data = await jsonResult<{ sandbox: string; permissions: Array<{ token_hash: string; role: string }> }>(resp);
+          if (!name) die("usage: smolctl permission ls <machine>");
+          const resp = await apiCall("GET", `/machinees/${name}/permissions`);
+          const data = await jsonResult<{ machine: string; permissions: Array<{ token_hash: string; role: string }> }>(resp);
           if (data.permissions.length === 0) {
-            console.log(`No permissions set on sandbox '${name}' (RBAC not active)`);
+            console.log(`No permissions set on machine '${name}' (RBAC not active)`);
           } else {
             table(data.permissions.map(p => ({ token_hash: p.token_hash, role: p.role })), ["token_hash", "role"]);
           }
@@ -6430,8 +6430,8 @@ try {
         case "revoke": {
           const name = rest[1];
           const tokenHash = rest[2];
-          if (!name || !tokenHash) die("usage: smolctl permission revoke <sandbox> <token-hash>");
-          const resp = await apiCall("DELETE", `/sandboxes/${name}/permissions/${tokenHash}`);
+          if (!name || !tokenHash) die("usage: smolctl permission revoke <machine> <token-hash>");
+          const resp = await apiCall("DELETE", `/machinees/${name}/permissions/${tokenHash}`);
           const data = await jsonResult<{ message: string }>(resp);
           console.log(data.message);
           break;
@@ -6446,14 +6446,14 @@ try {
     case "job":
     case "jobs": {
       const { flags: jFlags, positional: jPos } = parseFlags(rest.slice(1), [
-        "priority", "max-retries", "timeout", "label", "status", "sandbox", "limit",
+        "priority", "max-retries", "timeout", "label", "status", "machine", "limit",
         "exit-code", "stdout", "stderr", "error", "interval",
       ]);
       const sub = rest[0];
       switch (sub) {
         case "submit": {
-          if (!jPos[0] || !jPos[1]) die("usage: smolctl job submit <sandbox> <command...>");
-          const sandbox = jPos[0];
+          if (!jPos[0] || !jPos[1]) die("usage: smolctl job submit <machine> <command...>");
+          const machine = jPos[0];
           const command = jPos.slice(1);
           const priority = Number(flag(jFlags, "priority") || "0");
           const maxRetries = Number(flag(jFlags, "max-retries") || "0");
@@ -6464,7 +6464,7 @@ try {
             if (k && v.length) labels[k] = v.join("=");
           }
           const resp = await apiCall("POST", "/jobs", {
-            sandbox,
+            machine,
             command,
             env: [],
             timeout_secs: timeoutSecs,
@@ -6479,11 +6479,11 @@ try {
         case "ls":
         case "list": {
           const jStatus = flag(jFlags, "status") || undefined;
-          const jSandbox = flag(jFlags, "sandbox") || undefined;
+          const jMachine = flag(jFlags, "machine") || undefined;
           const jLimit = flag(jFlags, "limit") || undefined;
           const params = new URLSearchParams();
           if (jStatus) params.set("status", jStatus);
-          if (jSandbox) params.set("sandbox", jSandbox);
+          if (jMachine) params.set("machine", jMachine);
           if (jLimit) params.set("limit", jLimit);
           const qs = params.toString() ? `?${params.toString()}` : "";
           const resp = await apiCall("GET", `/jobs${qs}`);
@@ -6492,7 +6492,7 @@ try {
             console.log("No jobs.");
           } else {
             for (const j of data.jobs) {
-              console.log(`${j.id}  ${j.status}  sandbox=${j.sandbox}  priority=${j.priority}  attempts=${j.attempts}`);
+              console.log(`${j.id}  ${j.status}  machine=${j.machine}  priority=${j.priority}  attempts=${j.attempts}`);
             }
           }
           break;
@@ -6561,7 +6561,7 @@ try {
             const resp = await apiCall("GET", `/jobs/${jobId}`);
             job = await jsonResult<Record<string, unknown>>(resp);
             if (job.status !== lastStatus) {
-              const event = { status: job.status, timestamp: new Date().toISOString(), job_id: job.id, sandbox: job.sandbox };
+              const event = { status: job.status, timestamp: new Date().toISOString(), job_id: job.id, machine: job.machine };
               Deno.stderr.writeSync(new TextEncoder().encode(JSON.stringify(event) + "\n"));
               lastStatus = job.status as string;
               if (job.status === "completed" || job.status === "failed" || job.status === "dead") break;
@@ -6679,7 +6679,7 @@ try {
           await cmdPoolStatus();
           break;
         case "route":
-          if (!rest[1]) die("usage: smolctl pool route <sandbox-name>");
+          if (!rest[1]) die("usage: smolctl pool route <machine-name>");
           await cmdPoolRoute(rest[1]);
           break;
         case "strategy":

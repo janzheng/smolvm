@@ -99,23 +99,23 @@ pub fn extract_bearer_token(headers: &axum::http::HeaderMap) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-/// Check whether the given token has at least the `required` role on a sandbox.
+/// Check whether the given token has at least the `required` role on a machine.
 ///
-/// **Backwards compatible**: if the sandbox has no `owner_token_hash` set
+/// **Backwards compatible**: if the machine has no `owner_token_hash` set
 /// (i.e., it was created before RBAC was added, or auth is disabled),
 /// all requests are allowed.
 ///
 /// Role hierarchy: Owner > Operator > ReadOnly
 pub fn check_permission(
     state: &ApiState,
-    sandbox_name: &str,
+    machine_name: &str,
     token: &str,
     required: MachineRole,
 ) -> Result<(), ApiError> {
-    let entry = state.get_machine(sandbox_name)?;
+    let entry = state.get_machine(machine_name)?;
     let entry = entry.lock();
 
-    // Backwards compatible: if no owner was set, RBAC is disabled for this sandbox
+    // Backwards compatible: if no owner was set, RBAC is disabled for this machine
     if entry.owner_token_hash.is_none() {
         return Ok(());
     }
@@ -130,8 +130,8 @@ pub fn check_permission(
                 return Ok(());
             } else {
                 return Err(ApiError::Forbidden(format!(
-                    "insufficient permissions: have '{}', need '{}' on sandbox '{}'",
-                    perm.role, required, sandbox_name
+                    "insufficient permissions: have '{}', need '{}' on machine '{}'",
+                    perm.role, required, machine_name
                 )));
             }
         }
@@ -139,8 +139,8 @@ pub fn check_permission(
 
     // Token not in permissions list at all
     Err(ApiError::Forbidden(format!(
-        "no permissions on sandbox '{}'",
-        sandbox_name
+        "no permissions on machine '{}'",
+        machine_name
     )))
 }
 
@@ -197,7 +197,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sandbox_role_ordering() {
+    fn test_machine_role_ordering() {
         assert!(MachineRole::Owner > MachineRole::Operator);
         assert!(MachineRole::Operator > MachineRole::ReadOnly);
         assert!(MachineRole::Owner >= MachineRole::Owner);

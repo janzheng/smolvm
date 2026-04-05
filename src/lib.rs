@@ -113,7 +113,7 @@ pub use vm::config::{NetworkPolicy, RootfsSource, Timeouts, VmConfig, VmId};
 pub use vm::state::{ExitReason, VmState};
 pub use vm::{default_backend, VmBackend, VmHandle};
 
-pub use provider::{ProviderError, ProviderInfo, SandboxProvider};
+pub use provider::{ProviderError, ProviderInfo, MachineProvider};
 pub use provider_local::LocalProvider;
 pub use provider_remote::RemoteProvider;
 

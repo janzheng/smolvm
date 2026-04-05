@@ -54,7 +54,7 @@ cleanup() {
     # Kill any orphaned smolvm processes
     pkill -f "smolvm-bin microvm" 2>/dev/null || true
     pkill -f "smolvm microvm start" 2>/dev/null || true
-    pkill -f "smolvm sandbox" 2>/dev/null || true
+    pkill -f "smolvm machine" 2>/dev/null || true
 }
 
 # Ensure cleanup runs on exit (normal or error)
@@ -71,7 +71,7 @@ sleep 1
 measure_exec() {
     local START_TIME=$(python3 -c "import time; print(time.time())")
 
-    $SMOLVM sandbox run "$IMAGE" -- /bin/true > /dev/null 2>&1
+    $SMOLVM machine run "$IMAGE" -- /bin/true > /dev/null 2>&1
 
     local END_TIME=$(python3 -c "import time; print(time.time())")
     python3 -c "print(int(($END_TIME - $START_TIME) * 1000))"
@@ -124,7 +124,7 @@ declare -a ECHO_TIMES
 for i in $(seq 1 $ITERATIONS); do
     START_TIME=$(python3 -c "import time; print(time.time())")
 
-    $SMOLVM sandbox run "$IMAGE" -- /bin/echo "hello" > /dev/null 2>&1
+    $SMOLVM machine run "$IMAGE" -- /bin/echo "hello" > /dev/null 2>&1
 
     END_TIME=$(python3 -c "import time; print(time.time())")
     DURATION=$(python3 -c "print(int(($END_TIME - $START_TIME) * 1000))")

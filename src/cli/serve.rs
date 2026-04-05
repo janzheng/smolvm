@@ -11,21 +11,21 @@ use super::openapi::OpenapiCmd;
 
 /// Start the HTTP API server for programmatic control.
 #[derive(Parser, Debug)]
-#[command(about = "Start the HTTP API server for programmatic sandbox management")]
+#[command(about = "Start the HTTP API server for programmatic machine management")]
 pub enum ServeCmd {
     /// Start the HTTP API server
     #[command(after_long_help = "\
-Sandboxes persist independently of the server - they continue running even if the server stops.
+Machinees persist independently of the server - they continue running even if the server stops.
 
 API ENDPOINTS:
   GET    /health                       Health check
-  POST   /api/v1/machines             Create sandbox
-  GET    /api/v1/machines             List sandboxes
-  GET    /api/v1/machines/:id         Get sandbox status
-  POST   /api/v1/machines/:id/start   Start sandbox
-  POST   /api/v1/machines/:id/stop    Stop sandbox
+  POST   /api/v1/machines             Create machine
+  GET    /api/v1/machines             List machinees
+  GET    /api/v1/machines/:id         Get machine status
+  POST   /api/v1/machines/:id/start   Start machine
+  POST   /api/v1/machines/:id/stop    Stop machine
   POST   /api/v1/machines/:id/exec    Execute command
-  DELETE /api/v1/machines/:id         Delete sandbox
+  DELETE /api/v1/machines/:id         Delete machine
 
 EXAMPLES:
   smolvm serve start                         Listen on 127.0.0.1:9090 (default)
@@ -82,7 +82,7 @@ pub struct ServeStartCmd {
     /// Register a secret for the secret proxy (repeatable).
     /// Format: NAME=VALUE (e.g., --secret anthropic=test-ant-xxx).
     /// Also reads SMOLVM_SECRET_* environment variables.
-    /// Secrets are injected into sandboxes that request them via the `secrets` field,
+    /// Secrets are injected into machinees that request them via the `secrets` field,
     /// without the real key ever entering the VM.
     #[arg(long = "secret", value_name = "NAME=VALUE")]
     secrets: Vec<String>,
@@ -194,7 +194,7 @@ impl ServeStartCmd {
             eprintln!("         Consider using --listen 127.0.0.1:9090 for local-only access.");
         }
 
-        // Create shared state and load persisted sandboxes
+        // Create shared state and load persisted machinees
         let mut api_state = ApiState::new().map_err(|e| {
             smolvm::error::Error::config("initialize api state", format!("{:?}", e))
         })?;
@@ -203,10 +203,10 @@ impl ServeStartCmd {
             api_state.set_proxy_config(pc);
         }
         let state = Arc::new(api_state);
-        let loaded = state.load_persisted_sandboxes();
+        let loaded = state.load_persisted_machinees();
         if !loaded.is_empty() {
             println!(
-                "Reconnected to {} existing sandbox(es): {}",
+                "Reconnected to {} existing machine(es): {}",
                 loaded.len(),
                 loaded.join(", ")
             );

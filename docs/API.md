@@ -16,16 +16,16 @@ Prometheus-format metrics (VM count, boot times, exec latency, disk usage).
 
 ---
 
-## Sandboxes
+## Machinees
 
-Sandboxes are lightweight VMs with an overlay filesystem.
+Machinees are lightweight VMs with an overlay filesystem.
 
-### `POST /api/v1/sandboxes`
-Create a new sandbox.
+### `POST /api/v1/machines`
+Create a new machine.
 
 ```json
 {
-  "name": "my-sandbox",
+  "name": "my-machine",
   "resources": {
     "cpus": 2,
     "memoryMb": 1024,
@@ -43,26 +43,26 @@ Create a new sandbox.
 All fields except `name` are optional. `from_starter` pulls a pre-built image
 and applies its defaults (see Starters below).
 
-### `GET /api/v1/sandboxes`
-List all sandboxes.
+### `GET /api/v1/machines`
+List all machinees.
 
-### `GET /api/v1/sandboxes/:id`
-Get sandbox details (state, pid, mounts, ports, resources).
+### `GET /api/v1/machines/:id`
+Get machine details (state, pid, mounts, ports, resources).
 
-### `POST /api/v1/sandboxes/:id/start`
-Start a stopped sandbox.
+### `POST /api/v1/machines/:id/start`
+Start a stopped machine.
 
-### `POST /api/v1/sandboxes/:id/stop`
-Stop a running sandbox.
+### `POST /api/v1/machines/:id/stop`
+Stop a running machine.
 
-### `DELETE /api/v1/sandboxes/:id`
-Delete a sandbox. Query param `?force=true` to force-delete.
+### `DELETE /api/v1/machines/:id`
+Delete a machine. Query param `?force=true` to force-delete.
 
 ---
 
 ## Execution
 
-### `POST /api/v1/sandboxes/:id/exec`
+### `POST /api/v1/machines/:id/exec`
 Run a command synchronously.
 
 ```json
@@ -84,7 +84,7 @@ Response:
 }
 ```
 
-### `POST /api/v1/sandboxes/:id/run`
+### `POST /api/v1/machines/:id/run`
 Run a command in a temporary OCI container (one-shot).
 
 ```json
@@ -95,23 +95,23 @@ Run a command in a temporary OCI container (one-shot).
 }
 ```
 
-### `GET /api/v1/sandboxes/:id/logs?follow=true&tail=100`
-Stream sandbox logs (SSE). `follow=true` for tail-like behavior.
+### `GET /api/v1/machines/:id/logs?follow=true&tail=100`
+Stream machine logs (SSE). `follow=true` for tail-like behavior.
 
-### `GET /api/v1/sandboxes/:id/exec/stream`
+### `GET /api/v1/machines/:id/exec/stream`
 WebSocket streaming exec for long-running commands.
 
 ---
 
 ## Files
 
-### `GET /api/v1/sandboxes/:id/files?dir=/workspace`
+### `GET /api/v1/machines/:id/files?dir=/workspace`
 List files in a directory.
 
-### `GET /api/v1/sandboxes/:id/files/*path`
+### `GET /api/v1/machines/:id/files/*path`
 Read a file (returns base64-encoded content).
 
-### `PUT /api/v1/sandboxes/:id/files/*path`
+### `PUT /api/v1/machines/:id/files/*path`
 Write a file.
 
 ```json
@@ -121,33 +121,33 @@ Write a file.
 }
 ```
 
-### `DELETE /api/v1/sandboxes/:id/files/*path`
+### `DELETE /api/v1/machines/:id/files/*path`
 Delete a file.
 
-### `POST /api/v1/sandboxes/:id/upload/*path`
+### `POST /api/v1/machines/:id/upload/*path`
 Multipart file upload.
 
-### `POST /api/v1/sandboxes/:id/archive/upload`
+### `POST /api/v1/machines/:id/archive/upload`
 Upload a tar.gz archive and extract it.
 
-### `GET /api/v1/sandboxes/:id/archive`
-Download sandbox filesystem as tar.gz.
+### `GET /api/v1/machines/:id/archive`
+Download machine filesystem as tar.gz.
 
 ---
 
 ## Clone / Diff / Merge
 
-### `POST /api/v1/sandboxes/:id/clone`
-Fork a sandbox's filesystem.
+### `POST /api/v1/machines/:id/clone`
+Fork a machine's filesystem.
 
 ```json
-{ "name": "my-sandbox-fork" }
+{ "name": "my-machine-fork" }
 ```
 
-### `GET /api/v1/sandboxes/:id/diff/:other`
-Compare two sandboxes. Returns `{ differences: [...], identical: bool }`.
+### `GET /api/v1/machines/:id/diff/:other`
+Compare two machinees. Returns `{ differences: [...], identical: bool }`.
 
-### `POST /api/v1/sandboxes/:id/merge/:target`
+### `POST /api/v1/machines/:id/merge/:target`
 Merge files from source into target.
 
 ```json
@@ -163,17 +163,17 @@ Strategies: `theirs` (source wins, default), `ours` (skip existing).
 
 ## Snapshots (Push/Pull)
 
-### `POST /api/v1/sandboxes/:id/push`
-Export sandbox state as a snapshot archive.
+### `POST /api/v1/machines/:id/push`
+Export machine state as a snapshot archive.
 
 ### `GET /api/v1/snapshots`
 List available snapshots.
 
 ### `POST /api/v1/snapshots/:name/pull`
-Restore a snapshot into a new sandbox.
+Restore a snapshot into a new machine.
 
 ```json
-{ "name": "my-restored-sandbox" }
+{ "name": "my-restored-machine" }
 ```
 
 ### `DELETE /api/v1/snapshots/:name`
@@ -183,9 +183,9 @@ Delete a snapshot.
 
 ## Containers
 
-Run OCI containers inside a sandbox.
+Run OCI containers inside a machine.
 
-### `POST /api/v1/sandboxes/:id/containers`
+### `POST /api/v1/machines/:id/containers`
 ```json
 {
   "image": "alpine:latest",
@@ -194,22 +194,22 @@ Run OCI containers inside a sandbox.
 }
 ```
 
-Mount `source` is a virtiofs tag — check `GET /sandboxes/:id` for tag mappings.
+Mount `source` is a virtiofs tag — check `GET /machines/:id` for tag mappings.
 
-### `GET /api/v1/sandboxes/:id/containers`
-### `POST /api/v1/sandboxes/:id/containers/:cid/start`
-### `POST /api/v1/sandboxes/:id/containers/:cid/stop`
-### `DELETE /api/v1/sandboxes/:id/containers/:cid`
-### `POST /api/v1/sandboxes/:id/containers/:cid/exec`
+### `GET /api/v1/machines/:id/containers`
+### `POST /api/v1/machines/:id/containers/:cid/start`
+### `POST /api/v1/machines/:id/containers/:cid/stop`
+### `DELETE /api/v1/machines/:id/containers/:cid`
+### `POST /api/v1/machines/:id/containers/:cid/exec`
 
 ---
 
 ## Images
 
-### `GET /api/v1/sandboxes/:id/images`
-List pulled OCI images in a sandbox.
+### `GET /api/v1/machines/:id/images`
+List pulled OCI images in a machine.
 
-### `POST /api/v1/sandboxes/:id/images/pull`
+### `POST /api/v1/machines/:id/images/pull`
 ```json
 {
   "image": "python:3.12-alpine",
@@ -221,7 +221,7 @@ List pulled OCI images in a sandbox.
 
 ## MicroVMs
 
-Persistent VMs with more control (separate from sandboxes).
+Persistent VMs with more control (separate from machinees).
 
 ### `POST /api/v1/microvms`
 ```json
@@ -258,16 +258,16 @@ Built-in starters:
 | `python-ml` | Python 3, pip, numpy |
 | `universal` | Node.js, npm, Python 3, pip, git, curl, Go, Rust, Claude Code CLI |
 
-Use `from_starter` in sandbox creation to bootstrap from one.
+Use `from_starter` in machine creation to bootstrap from one.
 
 ---
 
 ## Debug
 
-### `GET /api/v1/sandboxes/:id/debug/mounts`
+### `GET /api/v1/machines/:id/debug/mounts`
 Diagnose volume mount issues (configured vs guest-visible mounts).
 
-### `GET /api/v1/sandboxes/:id/debug/network`
+### `GET /api/v1/machines/:id/debug/network`
 Diagnose networking (listening ports, interfaces, port mappings).
 
 ---
@@ -277,6 +277,6 @@ Diagnose networking (listening ports, interfaces, port mappings).
 - **Volume mounts**: Files written via virtiofs may not be visible inside the
   guest (alpha bug). Workaround: write via `exec`.
 - **Port mapping**: Connections refused from host side (alpha bug).
-- **Container-in-sandbox**: `crun` storage path error for nested containers.
+- **Container-in-machine**: `crun` storage path error for nested containers.
 - **macOS UID leak**: Host UID 501 leaks into guest. Workaround: use
   `default_user` to create a non-root user.

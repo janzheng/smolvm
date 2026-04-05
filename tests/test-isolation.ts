@@ -1,11 +1,11 @@
 /**
  * CX04 smolvm — Isolation & Security Tests
  *
- * Tests that sandboxes are properly isolated:
- * - Cross-sandbox filesystem isolation
+ * Tests that machinees are properly isolated:
+ * - Cross-machine filesystem isolation
  * - File API path traversal protection
  * - Network disabled by default
- * - Host filesystem not accessible from sandbox
+ * - Host filesystem not accessible from machine
  * - Resource limits enforced
  * - Exec as non-root by default behavior
  * - Env vars don't leak between exec calls
@@ -23,12 +23,12 @@ async function createAndStart(name: string, opts?: {
   resources?: Record<string, unknown>;
 }) {
   await cleanup(name);
-  const createResp = await apiPost("/sandboxes", {
+  const createResp = await apiPost("/machinees", {
     name,
     resources: { cpus: 1, memory_mb: 512, ...opts?.resources },
   });
   if (!createResp.ok) throw new Error(`create failed: ${await createResp.text()}`);
-  const startResp = await apiPost(`/sandboxes/${name}/start`);
+  const startResp = await apiPost(`/machinees/${name}/start`);
   if (!startResp.ok) throw new Error(`start failed: ${await startResp.text()}`);
   await sh(name, "echo ready");
 }
@@ -44,47 +44,47 @@ console.log("==========================================\n");
 // =====================================================
 // 1. CROSS-SANDBOX FILESYSTEM ISOLATION
 // =====================================================
-console.log("═══ 1. Cross-Sandbox Filesystem Isolation ═══\n");
+console.log("═══ 1. Cross-Machine Filesystem Isolation ═══\n");
 {
-  const nameA = "iso-sandbox-a";
-  const nameB = "iso-sandbox-b";
+  const nameA = "iso-machine-a";
+  const nameB = "iso-machine-b";
 
   await createAndStart(nameA);
   await createAndStart(nameB);
 
-  // Note: sandboxes within the same VM share a rootfs overlay — only microvms get full isolation.
-  // These tests verify /storage/workspace isolation (per-sandbox ext4 disk), not rootfs isolation.
+  // Note: machinees within the same VM share a rootfs overlay — only microvms get full isolation.
+  // These tests verify /storage/workspace isolation (per-machine ext4 disk), not rootfs isolation.
   await sh(nameA, "echo 'SECRET_A_DATA' > /tmp/secret.txt");
   await sh(nameA, "echo 'SECRET_A_DATA' > /root/secret.txt");
   await sh(nameA, "mkdir -p /workspace && echo 'SECRET_A_WORKSPACE' > /workspace/secret.txt");
 
   const readTmp = await sh(nameB, "cat /tmp/secret.txt 2>&1 || echo 'NOT_FOUND'");
   if (readTmp.stdout.includes("SECRET_A_DATA")) {
-    skip("Sandbox B cannot see A's /tmp", "KNOWN: sandboxes share rootfs overlay — use microvms for full isolation");
+    skip("Machine B cannot see A's /tmp", "KNOWN: machinees share rootfs overlay — use microvms for full isolation");
   } else {
-    test("Sandbox B cannot see A's /tmp", true);
+    test("Machine B cannot see A's /tmp", true);
   }
 
   const readRoot = await sh(nameB, "cat /root/secret.txt 2>&1 || echo 'NOT_FOUND'");
   if (readRoot.stdout.includes("SECRET_A_DATA")) {
-    skip("Sandbox B cannot see A's /root", "KNOWN: sandboxes share rootfs overlay");
+    skip("Machine B cannot see A's /root", "KNOWN: machinees share rootfs overlay");
   } else {
-    test("Sandbox B cannot see A's /root", true);
+    test("Machine B cannot see A's /root", true);
   }
 
   const readWorkspace = await sh(nameB, "cat /workspace/secret.txt 2>&1 || echo 'NOT_FOUND'");
   if (readWorkspace.stdout.includes("SECRET_A_WORKSPACE")) {
-    skip("Sandbox B cannot see A's /workspace", "KNOWN: /workspace symlink on shared rootfs — use /storage/workspace for isolation");
+    skip("Machine B cannot see A's /workspace", "KNOWN: /workspace symlink on shared rootfs — use /storage/workspace for isolation");
   } else {
-    test("Sandbox B cannot see A's /workspace", true);
+    test("Machine B cannot see A's /workspace", true);
   }
 
   await sh(nameB, "echo 'SECRET_B_DATA' > /tmp/b-marker.txt");
   const readFromA = await sh(nameA, "cat /tmp/b-marker.txt 2>&1 || echo 'NOT_FOUND'");
   if (readFromA.stdout.includes("SECRET_B_DATA")) {
-    skip("Sandbox A cannot see B's files", "KNOWN: sandboxes share rootfs overlay");
+    skip("Machine A cannot see B's files", "KNOWN: machinees share rootfs overlay");
   } else {
-    test("Sandbox A cannot see B's files", true);
+    test("Machine A cannot see B's files", true);
   }
 
   const pidA = await sh(nameA, "echo $$");
@@ -92,7 +92,7 @@ console.log("═══ 1. Cross-Sandbox Filesystem Isolation ═══\n");
   console.log(`     PID in A: ${pidA.stdout.trim()}, PID in B: ${pidB.stdout.trim()}`);
 
   const psA = await sh(nameA, "ps aux 2>/dev/null || ps 2>/dev/null || echo 'ps unavailable'");
-  test("Separate process namespaces", !psA.stdout.includes("iso-sandbox-b"));
+  test("Separate process namespaces", !psA.stdout.includes("iso-machine-b"));
 
   await cleanup(nameA);
   await cleanup(nameB);
@@ -138,16 +138,16 @@ console.log("\n═══ 3. Network Default Off ═══\n");
 {
   const name = "iso-no-net";
   await cleanup(name);
-  const createResp = await apiPost("/sandboxes", {
+  const createResp = await apiPost("/machinees", {
     name,
     resources: { cpus: 1, memory_mb: 512 },
   });
   if (!createResp.ok) throw new Error(`create failed: ${await createResp.text()}`);
-  const startResp = await apiPost(`/sandboxes/${name}/start`);
+  const startResp = await apiPost(`/machinees/${name}/start`);
   if (!startResp.ok) throw new Error(`start failed: ${await startResp.text()}`);
   await sh(name, "echo ready");
 
-  const infoResp = await apiGet(`/sandboxes/${name}`);
+  const infoResp = await apiGet(`/machinees/${name}`);
   const info = await infoResp.json();
   test("Network flag is false by default", info.network === false);
 
@@ -175,7 +175,7 @@ console.log("\nNetwork with explicit enable:");
   const name = "iso-yes-net";
   await createAndStart(name, { resources: { cpus: 1, memory_mb: 512, network: true } });
 
-  const infoResp = await apiGet(`/sandboxes/${name}`);
+  const infoResp = await apiGet(`/machinees/${name}`);
   const info = await infoResp.json();
   test("Network flag is true when requested", info.network === true);
 
@@ -193,7 +193,7 @@ console.log("\n═══ 4. File API Path Traversal ═══\n");
   const name = "iso-path-traversal";
   await createAndStart(name);
 
-  const probeResp = await apiPut(`/sandboxes/${name}/files/%2Ftmp%2Fprobe.txt`, {
+  const probeResp = await apiPut(`/machinees/${name}/files/%2Ftmp%2Fprobe.txt`, {
     content: btoa("probe"),
   });
 
@@ -202,29 +202,29 @@ console.log("\n═══ 4. File API Path Traversal ═══\n");
   } else {
     test("Legitimate file write works", probeResp.ok, `status=${probeResp.status}`);
 
-    const readResp = await apiGet(`/sandboxes/${name}/files/%2Ftmp%2Fprobe.txt`);
+    const readResp = await apiGet(`/machinees/${name}/files/%2Ftmp%2Fprobe.txt`);
     test("Legitimate file read works", readResp.ok, `status=${readResp.status}`);
 
-    const traversal1 = await apiGet(`/sandboxes/${name}/files/%2Ftmp%2F..%2Fetc%2Fpasswd`);
+    const traversal1 = await apiGet(`/machinees/${name}/files/%2Ftmp%2F..%2Fetc%2Fpasswd`);
     test("Path traversal ../etc/passwd blocked", traversal1.status === 400 || traversal1.status === 403,
       `got status ${traversal1.status}`);
 
-    const traversal2 = await apiGet(`/sandboxes/${name}/files/%2Ftmp%2F..%2F..%2Fetc%2Fshadow`);
+    const traversal2 = await apiGet(`/machinees/${name}/files/%2Ftmp%2F..%2F..%2Fetc%2Fshadow`);
     test("Path traversal ../../etc/shadow blocked", traversal2.status === 400 || traversal2.status === 403,
       `got status ${traversal2.status}`);
 
-    const traversal3 = await apiGet(`/sandboxes/${name}/files/%2Ftmp%2F..%252F..%252Fetc%252Fpasswd`);
+    const traversal3 = await apiGet(`/machinees/${name}/files/%2Ftmp%2F..%252F..%252Fetc%252Fpasswd`);
     test("URL-encoded traversal blocked", traversal3.status === 400 || traversal3.status === 404,
       `got status ${traversal3.status}`);
 
-    const writeOutside = await apiPut(`/sandboxes/${name}/files/%2Ftmp%2F..%2F..%2Fetc%2Fcrontab`, {
+    const writeOutside = await apiPut(`/machinees/${name}/files/%2Ftmp%2F..%2F..%2Fetc%2Fcrontab`, {
       content: btoa("* * * * * evil"),
     });
     test("Write to /etc/crontab via traversal blocked",
       writeOutside.status === 400 || writeOutside.status === 403,
       `got status ${writeOutside.status}`);
 
-    const nullByte = await apiGet(`/sandboxes/${name}/files/%2Ftmp%2Fprobe.txt%00.html`);
+    const nullByte = await apiGet(`/machinees/${name}/files/%2Ftmp%2Fprobe.txt%00.html`);
     test("Null byte injection handled", nullByte.status !== 200 || !nullByte.ok,
       `got status ${nullByte.status}`);
   }
@@ -348,37 +348,37 @@ console.log("\n═══ 7. Exec User Context ═══\n");
 // =====================================================
 console.log("\n═══ 8. API Input Validation ═══\n");
 {
-  const emptyName = await apiPost("/sandboxes", { name: "" });
-  test("Rejects empty sandbox name", emptyName.status === 400, `got ${emptyName.status}`);
+  const emptyName = await apiPost("/machinees", { name: "" });
+  test("Rejects empty machine name", emptyName.status === 400, `got ${emptyName.status}`);
   if (!emptyName.bodyUsed) await emptyName.text();
 
-  const specialName = await apiPost("/sandboxes", { name: "../../../etc" });
+  const specialName = await apiPost("/machinees", { name: "../../../etc" });
   test("Rejects path traversal in name", specialName.status === 400, `got ${specialName.status}`);
   if (!specialName.bodyUsed) await specialName.text();
 
-  const longName = await apiPost("/sandboxes", { name: "a".repeat(1000) });
+  const longName = await apiPost("/machinees", { name: "a".repeat(1000) });
   test("Rejects very long name", longName.status === 400, `got ${longName.status}`);
   if (!longName.bodyUsed) await longName.text();
 
   const name = "iso-duplicate";
   await cleanup(name);
-  await apiPost("/sandboxes", { name });
-  const dupe = await apiPost("/sandboxes", { name });
-  test("Rejects duplicate sandbox name", dupe.status === 409 || dupe.status === 400,
+  await apiPost("/machinees", { name });
+  const dupe = await apiPost("/machinees", { name });
+  test("Rejects duplicate machine name", dupe.status === 409 || dupe.status === 400,
     `got ${dupe.status}`);
   if (!dupe.bodyUsed) await dupe.text();
   await cleanup(name);
 
-  const noSandbox = await apiPost("/sandboxes/nonexistent-xyz/exec", {
+  const noMachine = await apiPost("/machinees/nonexistent-xyz/exec", {
     command: ["echo", "hello"],
   });
-  test("Exec on nonexistent sandbox returns 404", noSandbox.status === 404,
-    `got ${noSandbox.status}`);
-  if (!noSandbox.bodyUsed) await noSandbox.text();
+  test("Exec on nonexistent machine returns 404", noMachine.status === 404,
+    `got ${noMachine.status}`);
+  if (!noMachine.bodyUsed) await noMachine.text();
 
   const API_TOKEN = Deno.env.get("SMOLVM_API_TOKEN");
   const authHeader: Record<string, string> = API_TOKEN ? { "Authorization": `Bearer ${API_TOKEN}` } : {};
-  const malformed = await fetch(`${API}/sandboxes`, {
+  const malformed = await fetch(`${API}/machinees`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeader },
     body: "{not valid json",
@@ -387,7 +387,7 @@ console.log("\n═══ 8. API Input Validation ═══\n");
     `got ${malformed.status}`);
   if (!malformed.bodyUsed) await malformed.text();
 
-  const wrongType = await fetch(`${API}/sandboxes`, {
+  const wrongType = await fetch(`${API}/machinees`, {
     method: "POST",
     headers: { "Content-Type": "text/plain", ...authHeader },
     body: JSON.stringify({ name: "test" }),
@@ -400,7 +400,7 @@ console.log("\n═══ 8. API Input Validation ═══\n");
 // =====================================================
 // 9. SANDBOX CANNOT REACH HOST API
 // =====================================================
-console.log("\n═══ 9. Sandbox Cannot Reach Host Services ═══\n");
+console.log("\n═══ 9. Machine Cannot Reach Host Services ═══\n");
 {
   const name = "iso-no-host-access";
   await createAndStart(name, { resources: { cpus: 1, memory_mb: 512, network: true } });
@@ -411,23 +411,23 @@ console.log("\n═══ 9. Sandbox Cannot Reach Host Services ═══\n");
       { timeout_secs: 5 });
     const hostBlocked = apiFromInside.stdout.includes("UNREACHABLE") || !apiFromInside.stdout.includes('"status"');
     if (hostBlocked) {
-      test("Cannot reach host API from sandbox", true);
+      test("Cannot reach host API from machine", true);
     } else {
-      skip("Cannot reach host API from sandbox",
+      skip("Cannot reach host API from machine",
         "KNOWN: TSI allows VM→host via vsock proxy — needs iptables/pf rules (see docs/SECURITY.md)");
     }
   } catch {
-    test("Cannot reach host API from sandbox", true); // timeout = unreachable
+    test("Cannot reach host API from machine", true); // timeout = unreachable
   }
 
   try {
     const hostSSH = await sh(name,
       "wget -q -T 2 -O - http://127.0.0.1:22/ 2>&1 || echo 'UNREACHABLE'",
       { timeout_secs: 5 });
-    test("Cannot reach host SSH from sandbox",
+    test("Cannot reach host SSH from machine",
       hostSSH.stdout.includes("UNREACHABLE") || hostSSH.exit_code !== 0);
   } catch {
-    test("Cannot reach host SSH from sandbox", true); // timeout = unreachable
+    test("Cannot reach host SSH from machine", true); // timeout = unreachable
   }
 
   await cleanup(name);
@@ -439,10 +439,10 @@ console.log("\n═══ 9. Sandbox Cannot Reach Host Services ═══\n");
 console.log("\n═══ 10. Process Exhaustion Protection ═══\n");
 {
   // SKIPPED: Fork bomb test consistently makes the server unresponsive.
-  // This is itself a finding — no per-sandbox process limits are enforced.
-  // A sandbox can exhaust server resources, affecting all other sandboxes.
+  // This is itself a finding — no per-machine process limits are enforced.
+  // A machine can exhaust server resources, affecting all other machinees.
   skip("VM responsive after process spam",
-    "SKIPPED: fork bomb crashes server — no per-sandbox process limits (see TODO.md)");
+    "SKIPPED: fork bomb crashes server — no per-machine process limits (see TODO.md)");
 }
 
 // =====================================================

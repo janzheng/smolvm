@@ -14,25 +14,25 @@ import {
   createReporter,
 } from "./_helpers.ts";
 
-const SANDBOX_NAME = `cx04-container-debug-${Date.now()}`;
+const MACHINE_NAME = `cx04-container-debug-${Date.now()}`;
 const { test, skip, summary } = createReporter();
 
 // ============================================================================
-// Setup: create + start a sandbox
+// Setup: create + start a machine
 // ============================================================================
 
 console.log("\n==========================================");
 console.log("  CX04 smolvm — Containers + Debug Test");
 console.log("==========================================\n");
 
-await cleanup(SANDBOX_NAME);
+await cleanup(MACHINE_NAME);
 
 console.log("Setup:");
 try {
-  await createAndStart(SANDBOX_NAME);
-  test("Create + start sandbox", true);
+  await createAndStart(MACHINE_NAME);
+  test("Create + start machine", true);
 } catch (e) {
-  test("Create + start sandbox", false, `${e}`);
+  test("Create + start machine", false, `${e}`);
   summary();
   Deno.exit(1);
 }
@@ -48,7 +48,7 @@ let containerId = "";
 // --- Record baseline containers (may include stale from previous runs) ---
 let baselineContainerIds: string[] = [];
 {
-  const resp = await apiGet(`/sandboxes/${SANDBOX_NAME}/containers`);
+  const resp = await apiGet(`/machinees/${MACHINE_NAME}/containers`);
   if (resp.ok) {
     const data = await resp.json();
     baselineContainerIds = (data.containers ?? []).map((c: { id: string }) => c.id);
@@ -64,7 +64,7 @@ let baselineContainerIds: string[] = [];
 
 // --- Create container ---
 {
-  const resp = await apiPost(`/sandboxes/${SANDBOX_NAME}/containers`, {
+  const resp = await apiPost(`/machinees/${MACHINE_NAME}/containers`, {
     image: "alpine:latest",
     command: ["sleep", "300"],
   });
@@ -82,7 +82,7 @@ let baselineContainerIds: string[] = [];
 
 // --- List containers (has one) ---
 if (containerId) {
-  const resp = await apiGet(`/sandboxes/${SANDBOX_NAME}/containers`);
+  const resp = await apiGet(`/machinees/${MACHINE_NAME}/containers`);
   if (resp.ok) {
     const data = await resp.json();
     const newContainers = (data.containers ?? []).filter((c: { id: string }) => !baselineContainerIds.includes(c.id));
@@ -97,7 +97,7 @@ if (containerId) {
 
 // --- Start container ---
 if (containerId) {
-  const resp = await apiPost(`/sandboxes/${SANDBOX_NAME}/containers/${containerId}/start`);
+  const resp = await apiPost(`/machinees/${MACHINE_NAME}/containers/${containerId}/start`);
   if (resp.ok) {
     test("Start container", true);
   } else {
@@ -110,7 +110,7 @@ if (containerId) {
 
 // --- Exec in container ---
 if (containerId) {
-  const resp = await apiPost(`/sandboxes/${SANDBOX_NAME}/containers/${containerId}/exec`, {
+  const resp = await apiPost(`/machinees/${MACHINE_NAME}/containers/${containerId}/exec`, {
     command: ["echo", "hello-from-container"],
     timeout_secs: 15,
   });
@@ -128,7 +128,7 @@ if (containerId) {
 
 // --- Exec with env vars ---
 if (containerId) {
-  const resp = await apiPost(`/sandboxes/${SANDBOX_NAME}/containers/${containerId}/exec`, {
+  const resp = await apiPost(`/machinees/${MACHINE_NAME}/containers/${containerId}/exec`, {
     command: ["sh", "-c", "echo $TEST_VAR"],
     env: [{ name: "TEST_VAR", value: "container-env-test" }],
     timeout_secs: 15,
@@ -145,7 +145,7 @@ if (containerId) {
 
 // --- Stop container ---
 if (containerId) {
-  const resp = await apiPost(`/sandboxes/${SANDBOX_NAME}/containers/${containerId}/stop`, {
+  const resp = await apiPost(`/machinees/${MACHINE_NAME}/containers/${containerId}/stop`, {
     timeout_secs: 10,
   });
   if (resp.ok) {
@@ -158,7 +158,7 @@ if (containerId) {
 
 // --- Delete container ---
 if (containerId) {
-  const resp = await fetch(`${API}/sandboxes/${SANDBOX_NAME}/containers/${containerId}`, {
+  const resp = await fetch(`${API}/machinees/${MACHINE_NAME}/containers/${containerId}`, {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ force: true }),
@@ -174,7 +174,7 @@ if (containerId) {
 
 // --- Verify container is gone ---
 {
-  const resp = await apiGet(`/sandboxes/${SANDBOX_NAME}/containers`);
+  const resp = await apiGet(`/machinees/${MACHINE_NAME}/containers`);
   if (resp.ok) {
     const data = await resp.json();
     const found = data.containers.find((c: { id: string }) => c.id === containerId);
@@ -192,7 +192,7 @@ console.log("\nDebug Diagnostics:");
 
 // --- Debug mounts ---
 {
-  const resp = await apiGet(`/sandboxes/${SANDBOX_NAME}/debug/mounts`);
+  const resp = await apiGet(`/machinees/${MACHINE_NAME}/debug/mounts`);
   if (resp.ok) {
     const data = await resp.json();
     test("Debug mounts endpoint", true);
@@ -209,7 +209,7 @@ console.log("\nDebug Diagnostics:");
 
 // --- Debug network ---
 {
-  const resp = await apiGet(`/sandboxes/${SANDBOX_NAME}/debug/network`);
+  const resp = await apiGet(`/machinees/${MACHINE_NAME}/debug/network`);
   if (resp.ok) {
     const data = await resp.json();
     test("Debug network endpoint", true);
@@ -231,9 +231,9 @@ console.log("\nDebug Diagnostics:");
 
 console.log("\nCleanup:");
 {
-  await cleanup(SANDBOX_NAME);
-  const getResp = await apiGet(`/sandboxes/${SANDBOX_NAME}`);
-  test("Sandbox cleaned up (404)", getResp.status === 404);
+  await cleanup(MACHINE_NAME);
+  const getResp = await apiGet(`/machinees/${MACHINE_NAME}`);
+  test("Machine cleaned up (404)", getResp.status === 404);
 }
 
 summary();

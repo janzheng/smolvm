@@ -1,12 +1,12 @@
-# smolvm Roadmap: From Local Sandbox to Git-for-VMs
+# smolvm Roadmap: From Local Machine to Git-for-VMs
 
-A strategic analysis of what it takes to bring smolvm from a fast local sandbox
+A strategic analysis of what it takes to bring smolvm from a fast local machine
 to a full-featured VM platform with parity (and beyond) vs Fly Sprites and Deno
-Sandbox. Based on hands-on testing of all four platforms (CX01–CX04, Feb 2026).
+Machine. Based on hands-on testing of all four platforms (CX01–CX04, Feb 2026).
 
 ---
 
-## Part 1: What Sprites and Deno Sandbox Were Designed For
+## Part 1: What Sprites and Deno Machine Were Designed For
 
 ### 1.1 Fly Sprites — Production Agent Orchestration
 
@@ -36,10 +36,10 @@ env vars visible in shell), open-source (proprietary platform).
 
 ---
 
-### 1.2 Deno Sandbox — Secure Distributed Compute
+### 1.2 Deno Machine — Secure Distributed Compute
 
 **Philosophy:** Security-first distributed compute. Secrets should never be
-extractable, even by malicious code inside the sandbox.
+extractable, even by malicious code inside the machine.
 
 **Target users:** Multi-tenant platforms hosting untrusted code,
 security-sensitive workloads, Deno-native applications.
@@ -52,14 +52,14 @@ security-sensitive workloads, Deno-native applications.
 | Firecracker microVMs (not V8 isolates) | Real Linux, real process isolation — stronger than containers |
 | Volume snapshots (~13s create, ~2.5s boot) | State persistence without exposing the underlying disk |
 | `exposeHttp()` for instant public URLs | Inbound HTTP just works — one function call |
-| Clean JSR SDK (`@deno/sandbox`) | Idiomatic Deno API — `deno add`, write a script, done |
+| Clean JSR SDK (`@deno/machine`) | Idiomatic Deno API — `deno add`, write a script, done |
 | Pre-installed Deno + Node compat + Python | Because it's Deno's own product — they control the base image |
 
 **What it optimizes for:** Security posture. API keys cannot be exfiltrated
 even by malicious code. The strongest secret model of any platform tested.
 
 **What it trades away:** Git clone (HTTPS proxy breaks git auth),
-cross-sandbox parallelism (SDK stream ID errors), instance limits (5 per org
+cross-machine parallelism (SDK stream ID errors), instance limits (5 per org
 in pre-release), standalone Node.js (Deno compat layer only).
 
 ---
@@ -98,9 +98,9 @@ production speed or Deno for production security.
 | **Inbound HTTP** | Port 8080 public | Port mapping broken | MEDIUM |
 | **SDK** | `@fly/sprites` npm package | REST-only (claimed SDKs 404) | MEDIUM |
 | **Documentation** | 3/5 | 1/5 | HIGH |
-| **Fleet management** | 159ms/sprite, health API | 82ms/sandbox (faster!), no health API | LOW |
+| **Fleet management** | 159ms/sprite, health API | 82ms/machine (faster!), no health API | LOW |
 
-### 2.2 Gaps vs Deno Sandbox
+### 2.2 Gaps vs Deno Machine
 
 | Capability | Deno | smolvm | Severity |
 |---|---|---|---|
@@ -120,7 +120,7 @@ These are alpha issues that block existing features from working:
 | **Volume mounts invisible** | Files not visible across host/guest boundary | Write via `exec sh -c 'echo "..." > file'` |
 | **Port mapping broken** | Connection refused from host | None (can't expose services) |
 | **Overlay FS not auto-resized** | `overlay_gb: 4` creates 4GB disk but 487MB filesystem | Manual `resize2fs /dev/vdb` after boot |
-| **Container-in-sandbox 500** | crun storage path error on container start | Use OCI image `run` endpoint instead |
+| **Container-in-machine 500** | crun storage path error on container start | Use OCI image `run` endpoint instead |
 | **CLI/serve DB lock** | `smolvm microvm ls` fails when `smolvm serve` runs | Use REST API exclusively when serving |
 | **macOS UID leak** | Host UID 501 leaks into guest rootfs | Create non-root user explicitly |
 
@@ -190,7 +190,7 @@ What smolvm itself should add to support this:
 |---|---|---|---|
 | Local agent dev/test | **YES, today** | Already works | Best-in-class boot + free |
 | Production agent fleet | **YES, with work** | 3-6 months | Needs checkpoints, starters, file API |
-| CI/CD sandboxes | **YES, with work** | 2-3 months | Needs port mapping fix, file I/O |
+| CI/CD machinees | **YES, with work** | 2-3 months | Needs port mapping fix, file I/O |
 | Multi-tenant hosting | **YES** | Orchestration layer on top | smolvm provides VM isolation; orchestrator handles auth/billing/secrets |
 | Edge compute | **NO** | Separate product | Needs cloud hosting |
 | General-purpose local VMs | **YES, today** | Minor polish | Already the best local VM tool |
@@ -210,12 +210,12 @@ clone/merge, no push/pull, no fault tolerance for long agent runs.
 - [ ] **T01** Fix volume mounts (virtiofs visibility) — _alpha bug, smolvm core_
 - [ ] **T02** Fix port mapping (connection refused) — _alpha bug, smolvm core_
 - [x] **T03** Auto-resize overlay FS on creation — _PR ready: `resize_ext4_filesystem()` in storage.rs_
-- [ ] **T04** Fix container-in-sandbox 500 (crun storage path) — _alpha bug_
+- [ ] **T04** Fix container-in-machine 500 (crun storage path) — _alpha bug_
 - [x] **T05** Fix CLI/serve DB lock coexistence — _PR ready: `--no-persist` flag in serve.rs_
 - [ ] **T06** Fix macOS UID leak into guest rootfs — _alpha bug_
 - [x] **T07** **Checkpoint/Restore** — _PR ready: `checkpoints.rs` handler_
   - Cold checkpoint: stop VM, snapshot overlay disk + metadata
-  - API: `POST /sandboxes/{name}/checkpoint`, `GET /checkpoints`, `POST /checkpoints/{id}/restore`, `DELETE /checkpoints/{id}`
+  - API: `POST /machines/{name}/checkpoint`, `GET /checkpoints`, `POST /checkpoints/{id}/restore`, `DELETE /checkpoints/{id}`
   - SDK support in both TypeScript and Python SDKs
   - Rust implementation: ~460 lines, `src/api/handlers/checkpoints.rs`
 - [ ] **T08** Starter images — _depends on T07 (starters ARE checkpoints)_
@@ -237,12 +237,12 @@ clone/merge, no push/pull, no fault tolerance for long agent runs.
 #### Parallel Track A — File & Network (no dependency on checkpoint)
 
 - [x] **T12** File copy API — implemented in SDK via exec channel
-  - `sandbox.writeFile()`, `readFile()`, `writeFiles()`, `listFiles()`, `exists()`
+  - `machine.writeFile()`, `readFile()`, `writeFiles()`, `listFiles()`, `exists()`
   - Uses base64 encode/decode through existing exec channel (no Rust changes needed)
 - [ ] **T13** Egress filtering — domain allowlist per VM
   - Feature branch exists (`binbin-vmm-level-network-policy`)
   - API: `allowed_domains: ["api.anthropic.com", "npmjs.org"]`
-- [x] **T14** Resource monitoring — `GET /sandboxes/{name}/stats`
+- [x] **T14** Resource monitoring — `GET /machines/{name}/stats`
   - PR ready: `stats.rs` handler + `ResourceStatsResponse` type
   - Returns: cpus, memory_mb, state, overlay/storage disk sizes
 
@@ -253,12 +253,12 @@ clone/merge, no push/pull, no fault tolerance for long agent runs.
   - Link OpenAPI spec + Swagger UI from docs
   - Document `overlay_gb`, `storage_gb`, env vars, MicroVM API
 - [x] **T17** TypeScript SDK — `@smolvm/sdk` in `sdk-ts/`
-  - Matches just-bash/Vercel Sandbox API shape (Part 8)
-  - Sandbox, MicroVM, Fleet, File I/O via exec, Stats endpoint
+  - Matches just-bash/Vercel Machine API shape (Part 8)
+  - Machine, MicroVM, Fleet, File I/O via exec, Stats endpoint
   - `deno check mod.ts` passes clean
 - [x] **T18** Python SDK — async httpx wrapper in `sdk-py/`
   - Mirrors TypeScript SDK API surface exactly
-  - Sandbox, MicroVM, Fleet, File I/O via exec, Stats, Checkpoints
+  - Machine, MicroVM, Fleet, File I/O via exec, Stats, Checkpoints
   - 27/27 integration tests pass against live `smolvm serve`
 - [ ] **T19** Add tutorials from `docs-tutorials.md` to official docs
 
@@ -272,7 +272,7 @@ clone/merge, no push/pull, no fault tolerance for long agent runs.
   - Integrate just-bash for in-browser preview (Part 8)
   - xterm.js terminal connected to smolvm exec via WebSocket
 - [ ] **T25** Starter registry — browse/pull community starters
-- [ ] **T26** execd daemon — extend smolvm-agent with OpenSandbox-style API
+- [ ] **T26** execd daemon — extend smolvm-agent with OpenMachine-style API
   - File CRUD, SSE streaming, metrics, code interpreter (Part 7)
 
 #### Dependency Chain
@@ -317,13 +317,13 @@ Fix what's broken. These are alpha bugs, not missing features.
 | **Volume mounts** — virtiofs visibility | Unblocks natural file I/O (host ↔ guest) | Medium |
 | **Port mapping** — connection refused | Unblocks inbound HTTP, exposing services | Medium |
 | **Auto-resize overlay FS** on creation | Eliminates manual `resize2fs` step | Easy |
-| **Container-in-sandbox** — crun storage path | Unblocks nested container workflows | Medium |
+| **Container-in-machine** — crun storage path | Unblocks nested container workflows | Medium |
 | **CLI/serve DB lock** coexistence | Let CLI and daemon work side by side | Easy |
 | **macOS UID leak** into guest rootfs | Predictable non-root user setup | Easy |
 
 ### Tier 2 — Feature Parity (Months 2–4)
 
-Match cloud sandboxes on core capabilities.
+Match cloud machinees on core capabilities.
 
 #### 2a. Checkpoint/Restore (CRITICAL)
 
@@ -336,10 +336,10 @@ later. Like git commit + git checkout, but for the entire VM.
 **API design:**
 
 ```
-POST   /api/v1/sandboxes/{name}/checkpoint            → create checkpoint
-GET    /api/v1/sandboxes/{name}/checkpoints            → list checkpoints
-POST   /api/v1/sandboxes/{name}/restore/{checkpoint}   → restore
-DELETE /api/v1/sandboxes/{name}/checkpoints/{id}       → delete
+POST   /api/v1/machines/{name}/checkpoint            → create checkpoint
+GET    /api/v1/machines/{name}/checkpoints            → list checkpoints
+POST   /api/v1/machines/{name}/restore/{checkpoint}   → restore
+DELETE /api/v1/machines/{name}/checkpoints/{id}       → delete
 ```
 
 **CLI:**
@@ -366,9 +366,9 @@ much harder.
 Direct file read/write without exec piping.
 
 ```
-PUT  /api/v1/sandboxes/{name}/files?path=/workspace/file.txt   → write
-GET  /api/v1/sandboxes/{name}/files?path=/workspace/file.txt   → read
-GET  /api/v1/sandboxes/{name}/files?path=/workspace/&list=true → list dir
+PUT  /api/v1/machines/{name}/files?path=/workspace/file.txt   → write
+GET  /api/v1/machines/{name}/files?path=/workspace/file.txt   → read
+GET  /api/v1/machines/{name}/files?path=/workspace/&list=true → list dir
 ```
 
 Implementation via the exec channel (write: `echo $CONTENT | base64 -d > $PATH`,
@@ -393,7 +393,7 @@ smolvm-manager userspace proxy approach.
 #### 2d. Resource Monitoring
 
 ```
-GET /api/v1/sandboxes/{name}/stats → {cpu_percent, memory_mb, disk_used_mb, uptime_s}
+GET /api/v1/machines/{name}/stats → {cpu_percent, memory_mb, disk_used_mb, uptime_s}
 ```
 
 ### Tier 3 — Developer Experience (Months 3–5)
@@ -567,7 +567,7 @@ smolvm create my-agent --from claude-code
 | `node-fullstack` | Node 22 + npm + git + common tools | Web development |
 | `rust-dev` | Rust toolchain + cargo | Systems programming |
 | `browser` | Chromium + Playwright + Node | Browser automation |
-| `db-sandbox` | PostgreSQL + SQLite + Redis | Database testing |
+| `db-machine` | PostgreSQL + SQLite + Redis | Database testing |
 
 ### 5.4 Clone, Work, Merge
 
@@ -672,12 +672,12 @@ workload — it's a general-purpose local VM platform.
 | **ML experiments** | Small-scale training, model evaluation | Free GPU passthrough (future) |
 | **CI/CD** | Run tests in isolated environments | Fast boot, clean teardown |
 | **Browser automation** | Playwright/Puppeteer + headless Chromium | Proven on smolvm (smolvm-manager) |
-| **Database sandboxes** | Spin up PostgreSQL/SQLite for testing | Checkpoint before migration, restore on failure |
+| **Database machinees** | Spin up PostgreSQL/SQLite for testing | Checkpoint before migration, restore on failure |
 | **Security research** | Malware analysis in isolated VMs | Hardware-level isolation |
 | **Education** | Disposable learning environments | Free, no cloud account needed |
 | **API development** | Run mock servers, test integrations | Port mapping (once fixed) |
 
-**The key insight:** smolvm is not an "AI sandbox." It's a general-purpose
+**The key insight:** smolvm is not an "AI machine." It's a general-purpose
 local VM platform. AI agents are the highest-value initial use case because
 they benefit most from fast boot + isolation + checkpoints. But the platform
 serves any workload that needs an isolated, reproducible environment.
@@ -825,7 +825,7 @@ POST   /api/v1/auth/token                     → get API token
 POST   /api/v1/checkpoints/{id}/push          → upload to cloud storage
 POST   /api/v1/checkpoints/{id}/pull          → download from cloud
 GET    /api/v1/starters                       → list available starters
-POST   /api/v1/sandboxes --from starter       → boot from cloud starter
+POST   /api/v1/machines --from starter       → boot from cloud starter
 
 # Usage & billing
 GET    /api/v1/usage                          → current period usage
@@ -844,9 +844,9 @@ GET    /api/v1/usage/history                  → historical usage
 
 ---
 
-## Part 7: OpenSandbox's execd — A Model for smolvm's In-VM Agent
+## Part 7: OpenMachine's execd — A Model for smolvm's In-VM Agent
 
-OpenSandbox (CX05, Alibaba) takes a protocol-first approach that smolvm should
+OpenMachine (CX05, Alibaba) takes a protocol-first approach that smolvm should
 study. Their key insight: **inject a lightweight daemon (execd) into every
 container** that provides a rich API surface from inside the VM.
 
@@ -871,17 +871,17 @@ Today it only handles exec. Extending it with execd-like capabilities would:
 
 ### The protocol-first lesson
 
-OpenSandbox defined two OpenAPI specs first, then built SDKs + runtimes to
+OpenMachine defined two OpenAPI specs first, then built SDKs + runtimes to
 match. The runtime is swappable — Docker today, potentially smolvm microVMs
-tomorrow. If smolvm adopted OpenSandbox's execution spec (`execd-api.yaml`),
+tomorrow. If smolvm adopted OpenMachine's execution spec (`execd-api.yaml`),
 it would get:
 
-- Compatibility with OpenSandbox's multi-language SDKs (Python, TS, Java, C#)
+- Compatibility with OpenMachine's multi-language SDKs (Python, TS, Java, C#)
 - A proven API contract designed for AI agent workloads
-- The entire OpenSandbox example ecosystem (Claude Code, Gemini, browser, etc.)
+- The entire OpenMachine example ecosystem (Claude Code, Gemini, browser, etc.)
 
 **The dream integration:** smolvm's 300ms boot + hardware isolation +
-OpenSandbox's execd daemon + egress sidecar. MicroVM security with
+OpenMachine's execd daemon + egress sidecar. MicroVM security with
 container-grade DX.
 
 ---
@@ -922,7 +922,7 @@ A web frontend for smolvm could use just-bash as the lightweight tier:
 │  ┌──────────────┐    ┌────────────────────────┐ │
 │  │  just-bash   │    │  xterm.js terminal     │ │
 │  │  (in-browser │    │  (connected to smolvm  │ │
-│  │   sandbox)   │    │   via WebSocket/HTTP)  │ │
+│  │   machine)   │    │   via WebSocket/HTTP)  │ │
 │  └──────┬───────┘    └──────────┬─────────────┘ │
 │         │                       │               │
 │    Light tasks             Heavy tasks          │
@@ -933,7 +933,7 @@ A web frontend for smolvm could use just-bash as the lightweight tier:
 │                            - real isolation     │
 └─────────────────────────────────────────────────┘
                               │
-                    POST /api/v1/sandboxes/{id}/exec
+                    POST /api/v1/machines/{id}/exec
                               │
                     ┌─────────▼──────────┐
                     │  smolvm serve      │
@@ -962,7 +962,7 @@ async function exec(cmd: string): Promise<ExecResult> {
     return justBash.exec(cmd);
   }
   // Escalate to smolvm (real VM, real binaries)
-  return smolvmClient.exec(sandboxId, cmd);
+  return smolvmClient.exec(machineId, cmd);
 }
 ```
 
@@ -981,36 +981,36 @@ If smolvm goes cloud (Part 6), just-bash serves as the offline mode:
 
 A "Try smolvm" web experience where visitors can run commands in-browser
 without spinning up real VMs. Just-bash handles the demo; the "upgrade to
-real VM" button provisions an actual smolvm sandbox.
+real VM" button provisions an actual smolvm machine.
 
 **4. Preview before commit**
 
 In a git-for-VMs workflow (Part 5), just-bash could preview file changes
 before committing them to the real VM filesystem. Edit files in the virtual
-FS, preview the diff, then push to the smolvm sandbox.
+FS, preview the diff, then push to the smolvm machine.
 
 ### API compatibility layer
 
-just-bash's `Sandbox` class already matches Vercel's sandbox API shape:
+just-bash's `Machine` class already matches Vercel's machine API shape:
 
 ```typescript
 // just-bash API
-const sandbox = await Sandbox.create({ cwd: "/app" });
-await sandbox.writeFiles({ "/app/hello.sh": 'echo "hello"' });
-const cmd = await sandbox.runCommand("bash /app/hello.sh");
+const machine = await Machine.create({ cwd: "/app" });
+await machine.writeFiles({ "/app/hello.sh": 'echo "hello"' });
+const cmd = await machine.runCommand("bash /app/hello.sh");
 ```
 
 smolvm's TypeScript SDK (Tier 3 roadmap) should match this same interface:
 
 ```typescript
 // smolvm SDK (proposed — same shape)
-const sandbox = await SmolSandbox.create({ image: "alpine" });
-await sandbox.writeFiles({ "/app/hello.sh": 'echo "hello"' });
-const cmd = await sandbox.runCommand("bash /app/hello.sh");
+const machine = await SmolMachine.create({ image: "alpine" });
+await machine.writeFiles({ "/app/hello.sh": 'echo "hello"' });
+const cmd = await machine.runCommand("bash /app/hello.sh");
 ```
 
 Same interface, different backend. An agent or web app could swap between them
-with a one-line config change. This aligns with OpenSandbox's protocol-first
+with a one-line config change. This aligns with OpenMachine's protocol-first
 lesson (Part 7) — define the API shape, then let the runtime be swappable.
 
 ### What this means for the roadmap
@@ -1020,7 +1020,7 @@ layer on top** — specifically relevant to:
 
 | Roadmap Item | How just-bash helps |
 |---|---|
-| **Tier 3: TypeScript SDK** | Use just-bash's Sandbox API as the interface template |
+| **Tier 3: TypeScript SDK** | Use just-bash's Machine API as the interface template |
 | **Part 5: Git-for-VMs** | Preview/diff files in-browser before pushing to VM |
 | **Part 6: Cloud-hosted smolvm** | Offline fallback, web playground, quota overflow |
 | **Part 7: execd integration** | just-bash as the "light execd" for browser-side ops |
@@ -1090,7 +1090,7 @@ What was actually built for Track B (SDKs, Docs, and related contributions).
 | **T03** | Auto-resize overlay FS | `smolvm-repo/src/storage.rs` |
 | **T05** | `--no-persist` flag for serve | `smolvm-repo/src/cli/serve.rs` |
 | **T07** | Cold checkpoint/restore | `smolvm-repo/src/api/handlers/checkpoints.rs` |
-| **T12** | File copy via exec channel | `sdk-ts/sandbox.ts` (writeFile/readFile) |
+| **T12** | File copy via exec channel | `sdk-ts/machine.ts` (writeFile/readFile) |
 | **T14** | Resource stats endpoint | `smolvm-repo/src/api/handlers/stats.rs` |
 | **T17** | TypeScript SDK | `sdk-ts/` (11 files, 28/28 tests pass) |
 | **T18** | Python SDK | `sdk-py/` (10 files, 27/27 tests pass) |
@@ -1106,9 +1106,9 @@ What was actually built for Track B (SDKs, Docs, and related contributions).
 | `mod.ts` | Module entry point, all public exports |
 | `smolvm-client.ts` | `SmolvmClient` — top-level entry point |
 | `client.ts` | `SmolvmHttpClient` — low-level HTTP transport |
-| `sandbox.ts` | `Sandbox` class — exec, sh, file I/O, stats |
+| `machine.ts` | `Machine` class — exec, sh, file I/O, stats |
 | `microvm.ts` | `MicroVM` class — persistent VM variant |
-| `fleet.ts` | `SandboxFleet` — multi-VM orchestration |
+| `fleet.ts` | `MachineFleet` — multi-VM orchestration |
 | `types.ts` | All TypeScript interfaces (from OpenAPI spec) |
 | `test.ts` | Integration test suite (requires `smolvm serve`) |
 | `deno.json` | Package config (`@smolvm/sdk` v0.1.0) |
@@ -1121,26 +1121,26 @@ import { SmolvmClient } from "@smolvm/sdk";
 
 const client = new SmolvmClient();  // defaults to localhost:8080 or SMOLVM_URL
 
-// Sandbox lifecycle
-const sandbox = await client.createAndStart("my-vm", { network: true });
-await sandbox.sh("echo hello");
-await sandbox.exec(["node", "--version"]);
-await sandbox.runCommand("cat /etc/os-release");  // just-bash compat
+// Machine lifecycle
+const machine = await client.createAndStart("my-vm", { network: true });
+await machine.sh("echo hello");
+await machine.exec(["node", "--version"]);
+await machine.runCommand("cat /etc/os-release");  // just-bash compat
 
 // File I/O (via base64 exec channel — no Rust changes needed)
-await sandbox.writeFile("/app/main.ts", 'console.log("hi");');
-const content = await sandbox.readFile("/app/main.ts");
-await sandbox.writeFiles({ "/app/a.ts": "...", "/app/b.ts": "..." });
-const files = await sandbox.listFiles("/app");
-const exists = await sandbox.exists("/app/main.ts");
+await machine.writeFile("/app/main.ts", 'console.log("hi");');
+const content = await machine.readFile("/app/main.ts");
+await machine.writeFiles({ "/app/a.ts": "...", "/app/b.ts": "..." });
+const files = await machine.listFiles("/app");
+const exists = await machine.exists("/app/main.ts");
 
 // Stats (requires T14 Rust PR)
-const stats = await sandbox.stats();  // cpus, memory, disk sizes
+const stats = await machine.stats();  // cpus, memory, disk sizes
 
 // Fleet
 const fleet = await client.createFleet("worker", 3, { network: true });
 await fleet.execAll("echo hello");       // same command on all
-await fleet.execEach(["a", "b", "c"]);   // different per sandbox
+await fleet.execEach(["a", "b", "c"]);   // different per machine
 await fleet.cleanup();
 
 // MicroVMs
@@ -1162,9 +1162,9 @@ await vm.cleanup();
 | `smolvm/__init__.py` | Module entry point, all public exports |
 | `smolvm/smolvm_client.py` | `SmolvmClient` — top-level entry point |
 | `smolvm/client.py` | `SmolvmHttpClient` — low-level async HTTP transport |
-| `smolvm/sandbox.py` | `Sandbox` class — exec, sh, file I/O, stats, checkpoint |
+| `smolvm/machine.py` | `Machine` class — exec, sh, file I/O, stats, checkpoint |
 | `smolvm/microvm.py` | `MicroVM` class — persistent VM variant |
-| `smolvm/fleet.py` | `SandboxFleet` — multi-VM orchestration |
+| `smolvm/fleet.py` | `MachineFleet` — multi-VM orchestration |
 | `smolvm/types.py` | All dataclass types (from OpenAPI spec) |
 | `test_sdk.py` | Integration test suite (requires `smolvm serve`) |
 | `README.md` | SDK documentation with examples |
@@ -1178,18 +1178,18 @@ from smolvm import SmolvmClient
 async def main():
     client = SmolvmClient()
 
-    # Sandbox lifecycle
-    sandbox = await client.create_and_start("my-vm", network=True)
-    result = await sandbox.sh("echo hello")
+    # Machine lifecycle
+    machine = await client.create_and_start("my-vm", network=True)
+    result = await machine.sh("echo hello")
     print(result.stdout)  # "hello\n"
 
     # File I/O
-    await sandbox.write_file("/app/main.py", 'print("hi")')
-    content = await sandbox.read_file("/app/main.py")
+    await machine.write_file("/app/main.py", 'print("hi")')
+    content = await machine.read_file("/app/main.py")
 
     # Checkpoints
-    await sandbox.stop()
-    ckpt = await sandbox.checkpoint()
+    await machine.stop()
+    ckpt = await machine.checkpoint()
     restored = await client.restore_checkpoint(ckpt.id, "my-vm-v2")
 
     # Fleet
@@ -1197,7 +1197,7 @@ async def main():
     results = await fleet.exec_all("echo hello")
     await fleet.cleanup()
 
-    await sandbox.cleanup()
+    await machine.cleanup()
     await client.close()
 
 asyncio.run(main())
@@ -1217,14 +1217,14 @@ Added `resize_ext4_filesystem()` function (~55 lines). Called from
 
 **T14 — Resource stats endpoint** (`src/api/handlers/stats.rs`, `src/api/types.rs`, `src/api/mod.rs`)
 
-New `GET /api/v1/sandboxes/{id}/stats` endpoint (~80 lines).
+New `GET /api/v1/machines/{id}/stats` endpoint (~80 lines).
 
-Returns: sandbox name, state, pid, configured CPUs + memory, network flag,
+Returns: machine name, state, pid, configured CPUs + memory, network flag,
 overlay and storage disk file sizes (apparent/logical).
 
 - New types: `ResourceStatsResponse`, `DiskStats`
 - Registered in OpenAPI spec + Swagger UI
-- Also wired into TypeScript SDK as `sandbox.stats()`
+- Also wired into TypeScript SDK as `machine.stats()`
 
 **T05 — DB lock fix** (`src/cli/serve.rs`)
 
@@ -1234,27 +1234,27 @@ When set, creates a temporary database in `/tmp/smolvm-ephemeral-{pid}/`
 instead of the shared default path. All DB operations work normally but
 don't conflict with CLI commands running in another terminal.
 
-- **Fixes:** "Database already open" error when running `smolvm sandbox ls`
+- **Fixes:** "Database already open" error when running `smolvm machine ls`
   while `smolvm serve` is running
 
 **T07 — Cold checkpoint/restore** (`src/api/handlers/checkpoints.rs`, `src/api/mod.rs`)
 
 New checkpoint system (~460 lines). Four endpoints:
 
-- `POST /api/v1/sandboxes/{id}/checkpoint` — create a cold checkpoint (VM must be stopped)
+- `POST /api/v1/machines/{id}/checkpoint` — create a cold checkpoint (VM must be stopped)
 - `GET /api/v1/checkpoints` — list all checkpoints (newest first)
-- `POST /api/v1/checkpoints/{id}/restore` — restore into a new sandbox
+- `POST /api/v1/checkpoints/{id}/restore` — restore into a new machine
 - `DELETE /api/v1/checkpoints/{id}` — delete a checkpoint
 
 Implementation details:
 - Checkpoints stored at `~/.cache/smolvm/checkpoints/{id}/`
 - Each checkpoint contains: `metadata.json`, `overlay.raw`, `storage.raw`
 - Uses `tokio::task::spawn_blocking` for all filesystem I/O
-- Restore uses `ReservationGuard` RAII pattern for atomic sandbox name reservation
+- Restore uses `ReservationGuard` RAII pattern for atomic machine name reservation
 - Creates `AgentManager` via `for_vm_with_sizes` to handle custom disk sizes
 - All 4 endpoints registered in OpenAPI spec + Swagger UI
-- SDK support in both TypeScript (`sandbox.checkpoint()`, `client.restoreCheckpoint()`)
-  and Python (`sandbox.checkpoint()`, `client.restore_checkpoint()`)
+- SDK support in both TypeScript (`machine.checkpoint()`, `client.restoreCheckpoint()`)
+  and Python (`machine.checkpoint()`, `client.restore_checkpoint()`)
 - **Unblocks:** T08 (starters), T09 (clone/diff), T11 (push/pull)
 
 ### Not Yet Done
@@ -1289,10 +1289,10 @@ cd container-experiments/CX04-smolvm/smolvm-repo
 cargo check                          # compile check (clean)
 cargo test                           # 131 tests, all pass
 
-# T03: create sandbox with overlay_gb:4, exec df -h → should show ~3.9GB
-# T05: smolvm serve --no-persist → in another terminal, smolvm sandbox ls works
-# T07: POST /api/v1/sandboxes/test/checkpoint → creates checkpoint dir
+# T03: create machine with overlay_gb:4, exec df -h → should show ~3.9GB
+# T05: smolvm serve --no-persist → in another terminal, smolvm machine ls works
+# T07: POST /api/v1/machines/test/checkpoint → creates checkpoint dir
 #      GET /api/v1/checkpoints → lists checkpoints
-#      POST /api/v1/checkpoints/{id}/restore → restores into new sandbox
-# T14: curl http://localhost:8080/api/v1/sandboxes/test/stats → JSON response
+#      POST /api/v1/checkpoints/{id}/restore → restores into new machine
+# T14: curl http://localhost:8080/api/v1/machines/test/stats → JSON response
 ```

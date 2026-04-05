@@ -1,6 +1,6 @@
-//! DNS-based egress filtering for sandboxes.
+//! DNS-based egress filtering for machinees.
 //!
-//! When `allowed_domains` is set on a sandbox, this module generates shell
+//! When `allowed_domains` is set on a machine, this module generates shell
 //! commands that configure application-layer DNS filtering inside the VM.
 //!
 //! Strategy:
@@ -12,10 +12,10 @@
 //! This is not a network-layer firewall — it is defence-in-depth that prevents
 //! casual/accidental egress to non-allowed domains.
 
-/// Generate shell commands to set up DNS-based egress filtering in a sandbox.
+/// Generate shell commands to set up DNS-based egress filtering in a machine.
 ///
 /// Returns a list of commands, each represented as `Vec<String>` (argv).
-/// These should be executed inside the sandbox **before** any user init commands.
+/// These should be executed inside the machine **before** any user init commands.
 pub fn dns_filter_init_commands(allowed_domains: &[String]) -> Vec<Vec<String>> {
     if allowed_domains.is_empty() {
         return Vec::new();

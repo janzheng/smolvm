@@ -1,7 +1,7 @@
 //! Snapshot push/pull handlers.
 //!
-//! Provides endpoints for exporting sandbox state as compressed archives
-//! (push) and importing them into new sandboxes (pull).
+//! Provides endpoints for exporting machine state as compressed archives
+//! (push) and importing them into new machinees (pull).
 
 use axum::{
     body::Body,
@@ -296,14 +296,14 @@ fn chain_depth(snap_dir: &std::path::Path, archive_path: &std::path::Path) -> us
     depth
 }
 
-/// Helper to exec a command in a running sandbox and return trimmed stdout.
-/// Returns None if the sandbox is not running or the command fails.
-async fn try_exec_in_sandbox(
+/// Helper to exec a command in a running machine and return trimmed stdout.
+/// Returns None if the machine is not running or the command fails.
+async fn try_exec_in_machine(
     entry: &Arc<parking_lot::Mutex<crate::api::state::MachineEntry>>,
     command: Vec<String>,
 ) -> Option<String> {
-    use crate::api::state::with_sandbox_client;
-    let result = with_sandbox_client(entry, move |c| {
+    use crate::api::state::with_machine_client;
+    let result = with_machine_client(entry, move |c| {
         c.vm_exec_as(command, vec![], None, Some(std::time::Duration::from_secs(5)), None)
     })
     .await;
@@ -313,7 +313,7 @@ async fn try_exec_in_sandbox(
     }
 }
 
-/// Push (export) a sandbox as a snapshot archive.
+/// Push (export) a machine as a snapshot archive.
 #[utoipa::path(
     post,
     path = "/api/v1/machines/{id}/push",
@@ -328,14 +328,14 @@ async fn try_exec_in_sandbox(
         (status = 500, description = "Export failed", body = ApiErrorResponse)
     )
 )]
-pub async fn push_sandbox(
+pub async fn push_machine(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<String>,
     body: Option<Json<PushSnapshotRequest>>,
 ) -> Result<Json<PushSnapshotResponse>, ApiError> {
     let req = body.map(|b| b.0).unwrap_or_default();
 
-    // Verify sandbox exists
+    // Verify machine exists
     let entry = state.get_machine(&id)?;
 
     let network = {
@@ -350,18 +350,18 @@ pub async fn push_sandbox(
 
     if !overlay_path.exists() && !storage_path.exists() {
         return Err(ApiError::BadRequest(
-            "sandbox has no disk state to export".into(),
+            "machine has no disk state to export".into(),
         ));
     }
 
     // Flush filesystem caches so disk images are consistent for snapshot.
     // 1. Guest-side sync: flush FS caches to guest block device
-    let _ = try_exec_in_sandbox(
+    let _ = try_exec_in_machine(
         &entry,
         vec!["sync".into()],
     ).await;
     // 2. Guest-side: explicitly flush the storage block device
-    let _ = try_exec_in_sandbox(
+    let _ = try_exec_in_machine(
         &entry,
         vec!["sh".into(), "-c".into(), "blockdev --flushbufs /dev/vda 2>/dev/null; sync".into()],
     ).await;
@@ -378,16 +378,16 @@ pub async fn push_sandbox(
         }
     }
 
-    // Capture git info (best-effort — works only if sandbox is running with git workspace)
-    let git_branch = try_exec_in_sandbox(
+    // Capture git info (best-effort — works only if machine is running with git workspace)
+    let git_branch = try_exec_in_machine(
         &entry,
         vec!["sh".into(), "-c".into(), "git -C /storage/workspace rev-parse --abbrev-ref HEAD 2>/dev/null || git -C /workspace rev-parse --abbrev-ref HEAD 2>/dev/null".into()],
     ).await;
-    let git_commit = try_exec_in_sandbox(
+    let git_commit = try_exec_in_machine(
         &entry,
         vec!["sh".into(), "-c".into(), "git -C /storage/workspace rev-parse HEAD 2>/dev/null || git -C /workspace rev-parse HEAD 2>/dev/null".into()],
     ).await;
-    let git_dirty = try_exec_in_sandbox(
+    let git_dirty = try_exec_in_machine(
         &entry,
         vec!["sh".into(), "-c".into(), "git -C /storage/workspace status --porcelain 2>/dev/null || git -C /workspace status --porcelain 2>/dev/null".into()],
     ).await.map(|s| !s.is_empty());
@@ -943,7 +943,7 @@ fn apply_delta_in_place(
     Ok(())
 }
 
-/// Pull (import) a snapshot into a new sandbox.
+/// Pull (import) a snapshot into a new machine.
 #[utoipa::path(
     post,
     path = "/api/v1/snapshots/{name}/pull",
@@ -972,13 +972,13 @@ pub async fn pull_snapshot(
         )));
     }
 
-    // Reserve the sandbox name (RAII guard auto-releases on error)
+    // Reserve the machine name (RAII guard auto-releases on error)
     let guard = ReservationGuard::new(&state, req.name.clone())?;
 
-    // Extract disks to new sandbox directory
+    // Extract disks to new machine directory
     let target_dir = vm_data_dir(&req.name);
     std::fs::create_dir_all(&target_dir)
-        .map_err(|e| ApiError::Internal(format!("failed to create sandbox dir: {}", e)))?;
+        .map_err(|e| ApiError::Internal(format!("failed to create machine dir: {}", e)))?;
 
     let target_dir_clone = target_dir.clone();
     let snap_dir = snapshots_dir();
@@ -1010,11 +1010,11 @@ pub async fn pull_snapshot(
     }
 
     // Create AgentManager from the extracted disks (open_or_create_at opens existing files)
-    let sandbox_name = req.name.clone();
+    let machine_name = req.name.clone();
     let overlay_size = manifest.overlay_size_bytes;
     let storage_size = manifest.storage_size_bytes;
     let manager_result = tokio::task::spawn_blocking(move || {
-        let data_dir = vm_data_dir(&sandbox_name);
+        let data_dir = vm_data_dir(&machine_name);
         let storage_path = data_dir.join(STORAGE_DISK_FILENAME);
         let overlay_path = data_dir.join(OVERLAY_DISK_FILENAME);
 
@@ -1032,7 +1032,7 @@ pub async fn pull_snapshot(
         let overlay_disk = OverlayDisk::open_or_create_at(&overlay_path, overlay_gb)?;
 
         let rootfs_path = AgentManager::default_rootfs_path()?;
-        AgentManager::new_named(&sandbox_name, rootfs_path, storage_disk, overlay_disk)
+        AgentManager::new_named(&machine_name, rootfs_path, storage_disk, overlay_disk)
     })
     .await;
 
@@ -1046,7 +1046,7 @@ pub async fn pull_snapshot(
     let pid = manager.child_pid();
     let network = manifest.network;
 
-    // Register the sandbox with the server
+    // Register the machine with the server
     let resources = ResourceSpec::default();
     guard.complete(MachineRegistration {
         manager,
@@ -1345,7 +1345,7 @@ pub async fn snapshot_history(
     }))
 }
 
-/// Rollback a sandbox to a specific snapshot version.
+/// Rollback a machine to a specific snapshot version.
 #[utoipa::path(
     post,
     path = "/api/v1/snapshots/{name}/rollback",
@@ -1356,7 +1356,7 @@ pub async fn snapshot_history(
     request_body = RollbackRequest,
     responses(
         (status = 200, description = "Machine rolled back", body = RollbackResponse),
-        (status = 404, description = "Snapshot or sandbox not found", body = ApiErrorResponse),
+        (status = 404, description = "Snapshot or machine not found", body = ApiErrorResponse),
         (status = 500, description = "Rollback failed", body = ApiErrorResponse)
     )
 )]
@@ -1390,9 +1390,9 @@ pub async fn snapshot_rollback(
     .await
     .map_err(|e| ApiError::Internal(format!("spawn_blocking failed: {}", e)))??;
 
-    // Stop sandbox if running
-    let sandbox_name = req.sandbox_name.clone();
-    let entry = state.get_machine(&sandbox_name)?;
+    // Stop machine if running
+    let machine_name = req.machine_name.clone();
+    let entry = state.get_machine(&machine_name)?;
     {
         let lock = entry.lock();
         if lock.manager.state().to_string() == "running" {
@@ -1401,7 +1401,7 @@ pub async fn snapshot_rollback(
     }
 
     // Replace disk images
-    let target_dir = vm_data_dir(&sandbox_name);
+    let target_dir = vm_data_dir(&machine_name);
     let snap_dir_for_chain = snap_dir.clone();
     tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
         // Remove existing disks
@@ -1430,7 +1430,7 @@ pub async fn snapshot_rollback(
     .map_err(|e| ApiError::Internal(format!("spawn_blocking failed: {}", e)))??;
 
     Ok(Json(RollbackResponse {
-        sandbox_name: req.sandbox_name,
+        machine_name: req.machine_name,
         restored_version: response_manifest.sequence.unwrap_or(1),
         manifest: response_manifest,
     }))

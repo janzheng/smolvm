@@ -15,10 +15,10 @@ use std::sync::Arc;
 
 /// Shared API server state.
 pub struct ApiState {
-    /// Registry of sandbox managers by name.
-    sandboxes: RwLock<HashMap<String, Arc<parking_lot::Mutex<MachineEntry>>>>,
-    /// Reserved sandbox names (creation in progress).
-    /// This prevents race conditions during sandbox creation.
+    /// Registry of machine managers by name.
+    machinees: RwLock<HashMap<String, Arc<parking_lot::Mutex<MachineEntry>>>>,
+    /// Reserved machine names (creation in progress).
+    /// This prevents race conditions during machine creation.
     reserved_names: RwLock<HashSet<String>>,
     /// Database for persistent state.
     db: SmolvmDb,
@@ -28,45 +28,45 @@ pub struct ApiState {
     /// Wrapped in RwLock to allow hot-reloading secrets at runtime.
     pub proxy_config: RwLock<Option<ProxyConfig>>,
     /// Registry of all known service definitions (built-in + custom).
-    /// Used when building per-sandbox proxy configs and for the services API.
+    /// Used when building per-machine proxy configs and for the services API.
     service_registry: RwLock<HashMap<String, SecretService>>,
     /// In-memory work queue for job dispatch.
     jobs: RwLock<Vec<JobInfo>>,
 }
 
-/// Internal sandbox entry with manager and configuration.
+/// Internal machine entry with manager and configuration.
 pub struct MachineEntry {
-    /// The agent manager for this sandbox.
+    /// The agent manager for this machine.
     /// Wrapped in Arc so it can be used without holding the MachineEntry lock
     /// (AgentManager has its own internal locking via Arc<Mutex<AgentInner>>).
     pub manager: Arc<AgentManager>,
-    /// Host mounts configured for this sandbox.
+    /// Host mounts configured for this machine.
     pub mounts: Vec<MountSpec>,
-    /// Port mappings configured for this sandbox.
+    /// Port mappings configured for this machine.
     pub ports: Vec<PortSpec>,
-    /// VM resources configured for this sandbox.
+    /// VM resources configured for this machine.
     pub resources: ResourceSpec,
-    /// Restart configuration for this sandbox.
+    /// Restart configuration for this machine.
     pub restart: RestartConfig,
     /// Whether outbound network access is enabled.
     pub network: bool,
     /// Allowed domains for egress filtering (None = no filtering).
     pub allowed_domains: Option<Vec<String>>,
-    /// Secret names enabled for this sandbox (e.g., ["anthropic", "openai"]).
+    /// Secret names enabled for this machine (e.g., ["anthropic", "openai"]).
     pub secrets: Vec<String>,
     /// Default env vars to inject into every exec call (e.g., BASE_URL overrides).
     pub default_env: Vec<(String, String)>,
-    /// Hash of the token that created this sandbox (Owner).
+    /// Hash of the token that created this machine (Owner).
     pub owner_token_hash: Option<String>,
-    /// Additional permission grants for this sandbox.
+    /// Additional permission grants for this machine.
     pub permissions: Vec<MachinePermission>,
-    /// MCP server configurations for this sandbox.
+    /// MCP server configurations for this machine.
     pub mcp_servers: Vec<McpServerConfig>,
 }
 
-/// Parameters for registering a new sandbox.
+/// Parameters for registering a new machine.
 pub struct MachineRegistration {
-    /// The agent manager for this sandbox.
+    /// The agent manager for this machine.
     pub manager: AgentManager,
     /// Host mounts to configure.
     pub mounts: Vec<MountSpec>,
@@ -80,17 +80,17 @@ pub struct MachineRegistration {
     pub network: bool,
     /// Allowed domains for egress filtering (None = no filtering).
     pub allowed_domains: Option<Vec<String>>,
-    /// Secret names enabled for this sandbox.
+    /// Secret names enabled for this machine.
     pub secrets: Vec<String>,
     /// Default env vars to inject into every exec call.
     pub default_env: Vec<(String, String)>,
-    /// Hash of the token that created this sandbox (Owner).
+    /// Hash of the token that created this machine (Owner).
     pub owner_token_hash: Option<String>,
-    /// MCP server configurations for this sandbox.
+    /// MCP server configurations for this machine.
     pub mcp_servers: Vec<McpServerConfig>,
 }
 
-/// RAII guard for sandbox name reservation.
+/// RAII guard for machine name reservation.
 ///
 /// Automatically releases reservation on drop unless consumed by `complete()`.
 /// This ensures reservations are always cleaned up, even on panic.
@@ -98,9 +98,9 @@ pub struct MachineRegistration {
 /// # Example
 ///
 /// ```ignore
-/// let guard = ReservationGuard::new(&state, "my-sandbox".to_string())?;
+/// let guard = ReservationGuard::new(&state, "my-machine".to_string())?;
 ///
-/// // Create the sandbox manager...
+/// // Create the machine manager...
 /// let manager = AgentManager::for_vm(guard.name())?;
 ///
 /// // Complete registration, consuming the guard
@@ -113,9 +113,9 @@ pub struct ReservationGuard<'a> {
 }
 
 impl<'a> ReservationGuard<'a> {
-    /// Reserve a sandbox name. Returns a guard that auto-releases on drop.
+    /// Reserve a machine name. Returns a guard that auto-releases on drop.
     pub fn new(state: &'a ApiState, name: String) -> Result<Self, ApiError> {
-        state.reserve_sandbox_name(&name)?;
+        state.reserve_machine_name(&name)?;
         Ok(Self {
             state,
             name,
@@ -130,21 +130,21 @@ impl<'a> ReservationGuard<'a> {
 
     /// Complete registration, consuming the guard without releasing.
     ///
-    /// This transfers ownership of the name to the sandbox registry.
+    /// This transfers ownership of the name to the machine registry.
     pub fn complete(mut self, registration: MachineRegistration) -> Result<(), ApiError> {
-        // Mark as completed before calling complete_sandbox_registration
+        // Mark as completed before calling complete_machine_registration
         // (which will remove from reservations internally)
         self.completed = true;
         self.state
-            .complete_sandbox_registration(self.name.clone(), registration)
+            .complete_machine_registration(self.name.clone(), registration)
     }
 }
 
 impl Drop for ReservationGuard<'_> {
     fn drop(&mut self) {
         if !self.completed {
-            self.state.release_sandbox_reservation(&self.name);
-            tracing::debug!(sandbox = %self.name, "reservation guard released on drop");
+            self.state.release_machine_reservation(&self.name);
+            tracing::debug!(machine = %self.name, "reservation guard released on drop");
         }
     }
 }
@@ -162,7 +162,7 @@ impl ApiState {
         })?;
         let metrics_handle = crate::api::metrics::init();
         Ok(Self {
-            sandboxes: RwLock::new(HashMap::new()),
+            machinees: RwLock::new(HashMap::new()),
             reserved_names: RwLock::new(HashSet::new()),
             db,
             metrics_handle,
@@ -178,7 +178,7 @@ impl ApiState {
     pub fn with_db(db: SmolvmDb) -> Self {
         let metrics_handle = crate::api::metrics::init();
         Self {
-            sandboxes: RwLock::new(HashMap::new()),
+            machinees: RwLock::new(HashMap::new()),
             reserved_names: RwLock::new(HashSet::new()),
             db,
             metrics_handle,
@@ -222,7 +222,7 @@ impl ApiState {
         registry.insert(service.name.clone(), service);
     }
 
-    /// Get the current service registry (for building per-sandbox proxy configs).
+    /// Get the current service registry (for building per-machine proxy configs).
     pub fn get_service_registry(&self) -> HashMap<String, SecretService> {
         self.service_registry.read().clone()
     }
@@ -261,9 +261,9 @@ impl ApiState {
         Some((secrets, services))
     }
 
-    /// Load existing sandboxes from persistent database.
+    /// Load existing machinees from persistent database.
     /// Call this on server startup to reconnect to running VMs.
-    pub fn load_persisted_sandboxes(&self) -> Vec<String> {
+    pub fn load_persisted_machinees(&self) -> Vec<String> {
         let vms = match self.db.list_vms() {
             Ok(vms) => vms,
             Err(e) => {
@@ -277,9 +277,9 @@ impl ApiState {
         for (name, record) in vms {
             // Check if VM process is still alive
             if !record.is_process_alive() {
-                tracing::info!(sandbox = %name, "cleaning up dead sandbox from database");
+                tracing::info!(machine = %name, "cleaning up dead machine from database");
                 if let Err(e) = self.db.remove_vm(&name) {
-                    tracing::warn!(sandbox = %name, error = %e, "failed to remove dead sandbox from database");
+                    tracing::warn!(machine = %name, error = %e, "failed to remove dead machine from database");
                 }
                 continue;
             }
@@ -325,17 +325,17 @@ impl ApiState {
                         .is_some();
 
                     if reconnected {
-                        tracing::info!(sandbox = %name, pid = ?record.pid, "reconnected to sandbox");
+                        tracing::info!(machine = %name, pid = ?record.pid, "reconnected to machine");
                     } else {
                         // Process is alive but agent isn't reachable yet (transient
-                        // boot/socket timing). Register the sandbox anyway so it's
+                        // boot/socket timing). Register the machine anyway so it's
                         // visible via APIs and the supervisor can manage it. Keep
                         // the DB record for future reconnect attempts.
-                        tracing::info!(sandbox = %name, pid = ?record.pid, "sandbox alive but not yet reachable, registering for later reconnect");
+                        tracing::info!(machine = %name, pid = ?record.pid, "machine alive but not yet reachable, registering for later reconnect");
                     }
 
-                    let mut sandboxes = self.sandboxes.write();
-                    sandboxes.insert(
+                    let mut machinees = self.machinees.write();
+                    machinees.insert(
                         name.clone(),
                         Arc::new(parking_lot::Mutex::new(MachineEntry {
                             manager: Arc::new(manager),
@@ -347,7 +347,7 @@ impl ApiState {
                             allowed_domains: None, // Not persisted in DB yet
                             secrets: Vec::new(),
                             default_env: Vec::new(),
-                            owner_token_hash: None, // Legacy sandboxes have no RBAC
+                            owner_token_hash: None, // Legacy machinees have no RBAC
                             permissions: Vec::new(),
                             mcp_servers: Vec::new(),
                         })),
@@ -358,7 +358,7 @@ impl ApiState {
                     // Process is alive but manager creation failed (transient
                     // filesystem/env issue). Preserve the DB record so the VM
                     // isn't orphaned — next server restart can retry.
-                    tracing::warn!(sandbox = %name, error = %e, "failed to create manager for alive sandbox, preserving DB record");
+                    tracing::warn!(machine = %name, error = %e, "failed to create manager for alive machine, preserving DB record");
                 }
             }
         }
@@ -366,26 +366,26 @@ impl ApiState {
         loaded
     }
 
-    /// Get a sandbox entry by name.
+    /// Get a machine entry by name.
     pub fn get_machine(
         &self,
         name: &str,
     ) -> Result<Arc<parking_lot::Mutex<MachineEntry>>, ApiError> {
-        let sandboxes = self.sandboxes.read();
-        sandboxes
+        let machinees = self.machinees.read();
+        machinees
             .get(name)
             .cloned()
-            .ok_or_else(|| ApiError::NotFound(format!("sandbox '{}' not found", name)))
+            .ok_or_else(|| ApiError::NotFound(format!("machine '{}' not found", name)))
     }
 
-    /// Remove a sandbox from the registry (also removes from database).
-    pub fn remove_sandbox(
+    /// Remove a machine from the registry (also removes from database).
+    pub fn remove_machine(
         &self,
         name: &str,
     ) -> Result<Arc<parking_lot::Mutex<MachineEntry>>, ApiError> {
         // Quick existence check with read lock (fast path for 404).
-        if !self.sandboxes.read().contains_key(name) {
-            return Err(ApiError::NotFound(format!("sandbox '{}' not found", name)));
+        if !self.machinees.read().contains_key(name) {
+            return Err(ApiError::NotFound(format!("machine '{}' not found", name)));
         }
 
         // Remove from database BEFORE taking the write lock.
@@ -395,32 +395,32 @@ impl ApiState {
             Ok(Some(_)) => {} // expected: row existed and was deleted
             Ok(None) => {
                 tracing::warn!(
-                    sandbox = name,
-                    "sandbox not found in database during remove (already deleted?)"
+                    machine = name,
+                    "machine not found in database during remove (already deleted?)"
                 );
             }
             Err(e) => {
-                tracing::error!(error = %e, sandbox = name, "failed to remove sandbox from database");
+                tracing::error!(error = %e, machine = name, "failed to remove machine from database");
                 return Err(ApiError::Internal(format!("database error: {}", e)));
             }
         }
 
         // Brief write lock for in-memory removal only.
-        let mut sandboxes = self.sandboxes.write();
-        match sandboxes.remove(name) {
+        let mut machinees = self.machinees.write();
+        match machinees.remove(name) {
             Some(entry) => Ok(entry),
             None => {
                 // Concurrent delete already removed it
-                Err(ApiError::NotFound(format!("sandbox '{}' not found", name)))
+                Err(ApiError::NotFound(format!("machine '{}' not found", name)))
             }
         }
     }
 
-    /// Update sandbox state in database (call after start/stop).
+    /// Update machine state in database (call after start/stop).
     ///
     /// Returns an error if the database write fails. Callers in API handlers
     /// should propagate this error; the supervisor can log and continue.
-    pub fn update_sandbox_state(
+    pub fn update_machine_state(
         &self,
         name: &str,
         state: RecordState,
@@ -435,16 +435,16 @@ impl ApiState {
         match result {
             Some(_) => Ok(()),
             None => Err(crate::Error::database(
-                "update sandbox state",
-                format!("sandbox '{}' not found in database", name),
+                "update machine state",
+                format!("machine '{}' not found in database", name),
             )),
         }
     }
 
-    /// List all sandboxes.
+    /// List all machinees.
     pub fn list_machines(&self) -> Vec<MachineInfo> {
-        let sandboxes = self.sandboxes.read();
-        sandboxes
+        let machinees = self.machinees.read();
+        machinees
             .iter()
             .map(|(name, entry)| {
                 let entry = entry.lock();
@@ -453,35 +453,35 @@ impl ApiState {
             .collect()
     }
 
-    /// Check if a sandbox exists.
-    pub fn sandbox_exists(&self, name: &str) -> bool {
-        self.sandboxes.read().contains_key(name)
+    /// Check if a machine exists.
+    pub fn machine_exists(&self, name: &str) -> bool {
+        self.machinees.read().contains_key(name)
     }
 
     // ========================================================================
-    // Atomic Sandbox Creation (Reservation Pattern)
+    // Atomic Machine Creation (Reservation Pattern)
     // ========================================================================
 
-    /// Reserve a sandbox name atomically.
+    /// Reserve a machine name atomically.
     ///
     /// This prevents race conditions where two concurrent requests try to create
-    /// a sandbox with the same name. The name is reserved until either:
-    /// - `complete_sandbox_registration()` is called (success)
-    /// - `release_sandbox_reservation()` is called (failure/cleanup)
+    /// a machine with the same name. The name is reserved until either:
+    /// - `complete_machine_registration()` is called (success)
+    /// - `release_machine_reservation()` is called (failure/cleanup)
     ///
     /// Returns `Err(Conflict)` if the name is already taken or reserved.
-    pub fn reserve_sandbox_name(&self, name: &str) -> Result<(), ApiError> {
+    pub fn reserve_machine_name(&self, name: &str) -> Result<(), ApiError> {
         // Fast-path checks without holding the write lock.
-        if self.sandboxes.read().contains_key(name) {
+        if self.machinees.read().contains_key(name) {
             return Err(ApiError::Conflict(format!(
-                "sandbox '{}' already exists",
+                "machine '{}' already exists",
                 name
             )));
         }
 
         if self.reserved_names.read().contains(name) {
             return Err(ApiError::Conflict(format!(
-                "sandbox '{}' is being created by another request",
+                "machine '{}' is being created by another request",
                 name
             )));
         }
@@ -489,7 +489,7 @@ impl ApiState {
         // Check database without holding any locks.
         if let Ok(Some(_)) = self.db.get_vm(name) {
             return Err(ApiError::Conflict(format!(
-                "sandbox '{}' already exists in database",
+                "machine '{}' already exists in database",
                 name
             )));
         }
@@ -498,37 +498,37 @@ impl ApiState {
         let mut reserved = self.reserved_names.write();
         if reserved.contains(name) {
             return Err(ApiError::Conflict(format!(
-                "sandbox '{}' is being created by another request",
+                "machine '{}' is being created by another request",
                 name
             )));
         }
-        if self.sandboxes.read().contains_key(name) {
+        if self.machinees.read().contains_key(name) {
             return Err(ApiError::Conflict(format!(
-                "sandbox '{}' already exists",
+                "machine '{}' already exists",
                 name
             )));
         }
 
         reserved.insert(name.to_string());
-        tracing::debug!(sandbox = %name, "reserved sandbox name");
+        tracing::debug!(machine = %name, "reserved machine name");
         Ok(())
     }
 
-    /// Release a sandbox name reservation.
+    /// Release a machine name reservation.
     ///
-    /// Call this if sandbox creation fails after `reserve_sandbox_name()`.
-    pub fn release_sandbox_reservation(&self, name: &str) {
+    /// Call this if machine creation fails after `reserve_machine_name()`.
+    pub fn release_machine_reservation(&self, name: &str) {
         let mut reserved = self.reserved_names.write();
         if reserved.remove(name) {
-            tracing::debug!(sandbox = %name, "released sandbox name reservation");
+            tracing::debug!(machine = %name, "released machine name reservation");
         }
     }
 
-    /// Complete sandbox registration after successful creation.
+    /// Complete machine registration after successful creation.
     ///
-    /// This converts a reserved name into a fully registered sandbox.
-    /// The reservation is released and the sandbox entry is added.
-    pub fn complete_sandbox_registration(
+    /// This converts a reserved name into a fully registered machine.
+    /// The reservation is released and the machine entry is added.
+    pub fn complete_machine_registration(
         &self,
         name: String,
         reg: MachineRegistration,
@@ -538,7 +538,7 @@ impl ApiState {
             let mut reserved = self.reserved_names.write();
             if !reserved.remove(&name) {
                 // Name wasn't reserved - this is a programming error
-                tracing::warn!(sandbox = %name, "completing registration for non-reserved name");
+                tracing::warn!(machine = %name, "completing registration for non-reserved name");
             }
         }
 
@@ -564,8 +564,8 @@ impl ApiState {
         match self.db.insert_vm_if_not_exists(&name, &record) {
             Ok(true) => {
                 // Successfully inserted, now add to in-memory registry
-                let mut sandboxes = self.sandboxes.write();
-                sandboxes.insert(
+                let mut machinees = self.machinees.write();
+                machinees.insert(
                     name,
                     Arc::new(parking_lot::Mutex::new(MachineEntry {
                         manager: Arc::new(reg.manager),
@@ -592,12 +592,12 @@ impl ApiState {
             Ok(false) => {
                 // Name already exists in database (shouldn't happen with reservation)
                 Err(ApiError::Conflict(format!(
-                    "sandbox '{}' already exists in database",
+                    "machine '{}' already exists in database",
                     name
                 )))
             }
             Err(e) => {
-                tracing::error!(error = %e, sandbox = %name, "database error during registration");
+                tracing::error!(error = %e, machine = %name, "database error during registration");
                 Err(ApiError::database(e))
             }
         }
@@ -612,15 +612,15 @@ impl ApiState {
     // Restart Management Methods
     // ========================================================================
 
-    /// List all sandbox names.
-    pub fn list_sandbox_names(&self) -> Vec<String> {
-        self.sandboxes.read().keys().cloned().collect()
+    /// List all machine names.
+    pub fn list_machine_names(&self) -> Vec<String> {
+        self.machinees.read().keys().cloned().collect()
     }
 
-    /// Get restart config for a sandbox from the in-memory registry.
+    /// Get restart config for a machine from the in-memory registry.
     pub fn get_restart_config(&self, name: &str) -> Option<RestartConfig> {
-        let sandboxes = self.sandboxes.read();
-        sandboxes.get(name).map(|entry| {
+        let machinees = self.machinees.read();
+        machinees.get(name).map(|entry| {
             let entry = entry.lock();
             entry.restart.clone()
         })
@@ -632,17 +632,17 @@ impl ApiState {
         match self.db.update_vm(name, f) {
             Ok(Some(_)) => {}
             Ok(None) => {
-                tracing::warn!(sandbox = %name, op = op_label, "sandbox not found in database");
+                tracing::warn!(machine = %name, op = op_label, "machine not found in database");
             }
             Err(e) => {
-                tracing::warn!(error = %e, sandbox = %name, op = op_label, "failed to persist update");
+                tracing::warn!(error = %e, machine = %name, op = op_label, "failed to persist update");
             }
         }
     }
 
-    /// Increment restart count for a sandbox.
+    /// Increment restart count for a machine.
     pub fn increment_restart_count(&self, name: &str) {
-        if let Some(entry) = self.sandboxes.read().get(name) {
+        if let Some(entry) = self.machinees.read().get(name) {
             entry.lock().restart.restart_count += 1;
         }
         self.update_vm_best_effort(name, "increment_restart_count", |r| {
@@ -650,9 +650,9 @@ impl ApiState {
         });
     }
 
-    /// Mark sandbox as user-stopped.
+    /// Mark machine as user-stopped.
     pub fn mark_user_stopped(&self, name: &str, stopped: bool) {
-        if let Some(entry) = self.sandboxes.read().get(name) {
+        if let Some(entry) = self.machinees.read().get(name) {
             entry.lock().restart.user_stopped = stopped;
         }
         self.update_vm_best_effort(name, "mark_user_stopped", |r| {
@@ -662,7 +662,7 @@ impl ApiState {
 
     /// Reset restart count (on successful start).
     pub fn reset_restart_count(&self, name: &str) {
-        if let Some(entry) = self.sandboxes.read().get(name) {
+        if let Some(entry) = self.machinees.read().get(name) {
             entry.lock().restart.restart_count = 0;
         }
         self.update_vm_best_effort(name, "reset_restart_count", |r| {
@@ -670,14 +670,14 @@ impl ApiState {
         });
     }
 
-    /// Update last exit code for a sandbox.
+    /// Update last exit code for a machine.
     pub fn set_last_exit_code(&self, name: &str, exit_code: Option<i32>) {
         self.update_vm_best_effort(name, "set_last_exit_code", |r| {
             r.last_exit_code = exit_code;
         });
     }
 
-    /// Get last exit code for a sandbox.
+    /// Get last exit code for a machine.
     pub fn get_last_exit_code(&self, name: &str) -> Option<i32> {
         self.db
             .get_vm(name)
@@ -686,14 +686,14 @@ impl ApiState {
             .and_then(|r| r.last_exit_code)
     }
 
-    /// Check if a sandbox process is alive.
+    /// Check if a machine process is alive.
     ///
     /// Delegates to `AgentManager::is_process_alive()` which checks the
     /// in-memory child handle (with stored start time) and falls back to the
     /// PID file. This is start-time-aware to avoid false positives from PID
     /// reuse, and covers orphan processes not tracked in-memory.
-    pub fn is_sandbox_alive(&self, name: &str) -> bool {
-        if let Some(entry) = self.sandboxes.read().get(name) {
+    pub fn is_machine_alive(&self, name: &str) -> bool {
+        if let Some(entry) = self.machinees.read().get(name) {
             let entry = entry.lock();
             entry.manager.is_process_alive()
         } else {
@@ -712,7 +712,7 @@ impl ApiState {
     pub fn list_jobs(
         &self,
         status: Option<&str>,
-        sandbox: Option<&str>,
+        machine: Option<&str>,
         limit: Option<usize>,
     ) -> Vec<JobInfo> {
         let jobs = self.jobs.read();
@@ -723,8 +723,8 @@ impl ApiState {
                     return false;
                 }
             }
-            if let Some(sb) = sandbox {
-                if j.sandbox != sb {
+            if let Some(sb) = machine {
+                if j.machine != sb {
                     return false;
                 }
             }
@@ -816,10 +816,10 @@ impl ApiState {
     }
 }
 
-/// Run a blocking operation against a sandbox's agent client.
+/// Run a blocking operation against a machine's agent client.
 ///
 /// Handles the common pattern: clone entry → spawn_blocking → lock → connect → op → map errors.
-pub async fn with_sandbox_client<T, F>(
+pub async fn with_machine_client<T, F>(
     entry: &Arc<parking_lot::Mutex<MachineEntry>>,
     op: F,
 ) -> Result<T, ApiError>
@@ -843,15 +843,15 @@ where
 }
 
 // ============================================================================
-// Shared Sandbox Helpers
+// Shared Machine Helpers
 // ============================================================================
 
-/// Ensure a sandbox is running, starting it if needed.
+/// Ensure a machine is running, starting it if needed.
 ///
 /// This is the shared preflight check used by exec, container, and image handlers.
-/// It converts the sandbox's mount/port/resource config and calls
+/// It converts the machine's mount/port/resource config and calls
 /// `ensure_running_with_full_config` in a blocking task.
-pub async fn ensure_sandbox_running(
+pub async fn ensure_machine_running(
     entry: &Arc<parking_lot::Mutex<MachineEntry>>,
 ) -> crate::Result<()> {
     // Snapshot config and clone manager reference, then release entry lock.
@@ -875,7 +875,7 @@ pub async fn ensure_sandbox_running(
     .map_err(|e| crate::Error::agent("ensure running", e.to_string()))?
 }
 
-/// Start the secret proxy for a sandbox if it has secrets configured.
+/// Start the secret proxy for a machine if it has secrets configured.
 ///
 /// Called after the VM is started. Spawns a host-side proxy thread that
 /// listens on a Unix socket (mapped to vsock port 6100 in the VM).
@@ -894,24 +894,24 @@ pub fn start_secret_proxy_if_needed(
         None => return,
     };
 
-    let sandbox_name = entry.manager.name().unwrap_or("unnamed").to_string();
-    let proxy_socket = crate::agent::vm_data_dir(&sandbox_name).join("proxy.sock");
+    let machine_name = entry.manager.name().unwrap_or("unnamed").to_string();
+    let proxy_socket = crate::agent::vm_data_dir(&machine_name).join("proxy.sock");
 
-    // Filter the proxy config to only include secrets this sandbox requested
-    let mut sandbox_secrets = std::collections::HashMap::new();
+    // Filter the proxy config to only include secrets this machine requested
+    let mut machine_secrets = std::collections::HashMap::new();
     for name in &entry.secrets {
         if let Some(key) = proxy_config.secrets.get(name) {
-            sandbox_secrets.insert(name.clone(), key.clone());
+            machine_secrets.insert(name.clone(), key.clone());
         }
     }
     // Use the full service registry (built-in + custom) so user-defined services work
     let all_services = service_registry.read().clone();
-    let sandbox_proxy_config = crate::proxy::ProxyConfig::with_services(sandbox_secrets, all_services);
+    let machine_proxy_config = crate::proxy::ProxyConfig::with_services(machine_secrets, all_services);
 
-    match crate::proxy::start_proxy_listener(&proxy_socket, sandbox_proxy_config, sandbox_name) {
+    match crate::proxy::start_proxy_listener(&proxy_socket, machine_proxy_config, machine_name) {
         Ok(_handle) => {
             // Thread is detached — it will stop when the socket is closed
-            tracing::info!("secret proxy started for sandbox");
+            tracing::info!("secret proxy started for machine");
         }
         Err(e) => {
             tracing::error!(error = %e, "failed to start secret proxy");
@@ -919,7 +919,7 @@ pub fn start_secret_proxy_if_needed(
     }
 }
 
-/// Ensure a sandbox is running and persist the Running state to the database.
+/// Ensure a machine is running and persist the Running state to the database.
 ///
 /// Used by handlers that implicitly start VMs (containers, exec, images).
 /// State persistence is best-effort — a DB write failure is logged but does
@@ -929,14 +929,14 @@ pub async fn ensure_running_and_persist(
     name: &str,
     entry: &Arc<parking_lot::Mutex<MachineEntry>>,
 ) -> crate::Result<()> {
-    ensure_sandbox_running(entry).await?;
+    ensure_machine_running(entry).await?;
 
     let pid = {
         let entry = entry.lock();
         entry.manager.child_pid()
     };
-    if let Err(e) = state.update_sandbox_state(name, RecordState::Running, pid) {
-        tracing::warn!(sandbox = %name, error = %e, "failed to persist Running state after implicit start");
+    if let Err(e) = state.update_machine_state(name, RecordState::Running, pid) {
+        tracing::warn!(machine = %name, error = %e, "failed to persist Running state after implicit start");
     }
 
     Ok(())
@@ -1097,14 +1097,14 @@ mod tests {
     }
 
     #[test]
-    fn test_sandbox_not_found() {
+    fn test_machine_not_found() {
         let (_dir, state) = temp_api_state();
         assert!(matches!(
             state.get_machine("nope"),
             Err(ApiError::NotFound(_))
         ));
         assert!(matches!(
-            state.remove_sandbox("nope"),
+            state.remove_machine("nope"),
             Err(ApiError::NotFound(_))
         ));
     }
@@ -1114,34 +1114,34 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_load_persisted_sandboxes_removes_dead_records() {
+    fn test_load_persisted_machinees_removes_dead_records() {
         let (_dir, state) = temp_api_state();
 
         // Insert a record with a PID that doesn't exist (dead process)
-        let mut record = VmRecord::new("dead-sandbox".into(), 1, 512, vec![], vec![], false);
+        let mut record = VmRecord::new("dead-machine".into(), 1, 512, vec![], vec![], false);
         record.pid = Some(i32::MAX); // PID that certainly doesn't exist
         record.state = RecordState::Running;
-        state.db.insert_vm("dead-sandbox", &record).unwrap();
+        state.db.insert_vm("dead-machine", &record).unwrap();
 
         // Verify record exists before load
-        assert!(state.db.get_vm("dead-sandbox").unwrap().is_some());
+        assert!(state.db.get_vm("dead-machine").unwrap().is_some());
 
         // Load should detect dead process and clean up DB record
-        let loaded = state.load_persisted_sandboxes();
-        assert!(loaded.is_empty(), "dead sandbox should not be loaded");
+        let loaded = state.load_persisted_machinees();
+        assert!(loaded.is_empty(), "dead machine should not be loaded");
 
         // DB record should be cleaned up
         assert!(
-            state.db.get_vm("dead-sandbox").unwrap().is_none(),
-            "dead sandbox DB record should be removed"
+            state.db.get_vm("dead-machine").unwrap().is_none(),
+            "dead machine DB record should be removed"
         );
 
         // Name should be available for reuse
-        assert!(state.reserve_sandbox_name("dead-sandbox").is_ok());
+        assert!(state.reserve_machine_name("dead-machine").is_ok());
     }
 
     #[test]
-    fn test_load_persisted_sandboxes_dead_record_does_not_block_name() {
+    fn test_load_persisted_machinees_dead_record_does_not_block_name() {
         let (_dir, state) = temp_api_state();
 
         // Insert a dead record with no PID (definitely dead)
@@ -1149,18 +1149,18 @@ mod tests {
         state.db.insert_vm("ghost", &record).unwrap();
 
         // Load should remove it (no PID = dead)
-        let loaded = state.load_persisted_sandboxes();
+        let loaded = state.load_persisted_machinees();
         assert!(loaded.is_empty());
 
         // Name should not be blocked
         assert!(
-            state.reserve_sandbox_name("ghost").is_ok(),
+            state.reserve_machine_name("ghost").is_ok(),
             "cleaned-up name should be available for reuse"
         );
     }
 
     #[test]
-    fn test_load_persisted_sandboxes_preserves_alive_unreachable_records() {
+    fn test_load_persisted_machinees_preserves_alive_unreachable_records() {
         let (_dir, state) = temp_api_state();
 
         // Use our own PID (always alive and owned by us, so kill(pid,0)==0).
@@ -1175,12 +1175,12 @@ mod tests {
 
         // Load — reconnect will fail (no agent socket), but record should
         // be preserved in DB since process is alive
-        let _loaded = state.load_persisted_sandboxes();
+        let _loaded = state.load_persisted_machinees();
 
         // DB record should still exist (not deleted)
         assert!(
             state.db.get_vm("alive-vm").unwrap().is_some(),
-            "alive sandbox DB record should be preserved when reconnect fails"
+            "alive machine DB record should be preserved when reconnect fails"
         );
     }
 }

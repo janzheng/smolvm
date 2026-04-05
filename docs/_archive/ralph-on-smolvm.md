@@ -20,7 +20,7 @@ mounts are buggy but exec-based file I/O works.
 | `curl` | Downloading tools | `apk add curl` |
 | `bash` | Harness scripts | `apk add bash` (Alpine default is busybox sh) |
 | `ANTHROPIC_API_KEY` | Claude auth | Env var via REST API or CLI `-e` |
-| Network access | npm, Anthropic API, GitHub | `network: true` in sandbox config |
+| Network access | npm, Anthropic API, GitHub | `network: true` in machine config |
 
 **Total bootstrap time:** ~7s via `apk add` on Alpine base.
 
@@ -36,8 +36,8 @@ everything via HTTP.
 ```typescript
 const API = "http://127.0.0.1:8080/api/v1";
 
-// Create + start sandbox
-await fetch(`${API}/sandboxes`, {
+// Create + start machine
+await fetch(`${API}/machinees`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
@@ -45,10 +45,10 @@ await fetch(`${API}/sandboxes`, {
     resources: { cpus: 2, memory_mb: 2048, network: true },
   }),
 });
-await fetch(`${API}/sandboxes/agent-001/start`, { method: "POST" });
+await fetch(`${API}/machines/agent-001/start`, { method: "POST" });
 
 // Bootstrap (install tools)
-await fetch(`${API}/sandboxes/agent-001/exec`, {
+await fetch(`${API}/machines/agent-001/exec`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
@@ -58,7 +58,7 @@ await fetch(`${API}/sandboxes/agent-001/exec`, {
 });
 
 // Run agent with env vars
-const result = await fetch(`${API}/sandboxes/agent-001/exec`, {
+const result = await fetch(`${API}/machines/agent-001/exec`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
@@ -79,7 +79,7 @@ const { exit_code, stdout, stderr } = await result.json();
 Good for manual testing. Slower (~5.5s per invocation).
 
 ```bash
-smolvm sandbox run \
+smolvm machine run \
   --net \
   --cpus 2 \
   --mem 2048 \
@@ -119,8 +119,8 @@ lifecycle drops from 10.1s to ~3s.
 | File persistence across exec | Works | Files written in one exec visible in next |
 | File persistence across stop/start | Works | Packages and files survive reboot |
 | OCI image pull + run | Works | `node:22-alpine`, `python:3.13-alpine` tested |
-| Multiple sandboxes | Works | REST API manages them independently |
-| Cross-sandbox parallelism | Works | Truly parallel exec across sandboxes |
+| Multiple machinees | Works | REST API manages them independently |
+| Cross-machine parallelism | Works | Truly parallel exec across machinees |
 | OpenAPI spec | Works | `/api-docs/openapi.json` |
 | Swagger UI | Works | `/swagger-ui/` |
 
@@ -132,8 +132,8 @@ lifecycle drops from 10.1s to ~3s.
 |---------|-------|-----------|
 | Volume mounts | Files not visible inside VM | Use `exec cat` or `exec sh -c 'echo data > file'` |
 | Port mapping | Connection refused | Run server inside VM, curl via exec |
-| Container-in-sandbox | 500 error from crun | Use sandbox exec directly |
-| Within-sandbox parallelism | Exec is serial per sandbox | Use multiple sandboxes for parallelism |
+| Container-in-machine | 500 error from crun | Use machine exec directly |
+| Within-machine parallelism | Exec is serial per machine | Use multiple machinees for parallelism |
 | Checkpoint/restore | Not implemented | Stop/start preserves state but can't snapshot |
 | File copy API | No endpoint | Pipe via exec: `exec sh -c 'cat /path/to/file'` |
 
@@ -148,7 +148,7 @@ lifecycle drops from 10.1s to ~3s.
 │          Control Plane (Deno/TypeScript)                │
 │                                                        │
 │  ┌───────────┐  ┌───────────┐  ┌──────────────────┐  │
-│  │ Task       │  │ Sandbox    │  │ Results           │  │
+│  │ Task       │  │ Machine    │  │ Results           │  │
 │  │ Queue      │  │ Pool       │  │ Collector         │  │
 │  │            │  │            │  │                    │  │
 │  │ task-0.md  │  │ max: 8     │  │ /results/          │  │
@@ -159,12 +159,12 @@ lifecycle drops from 10.1s to ~3s.
 │        ▼              ▼                ▼               │
 │  ┌─────────────────────────────────────────────────┐  │
 │  │        REST API Client (fetch-based)             │  │
-│  │  POST /sandboxes → create/start/exec/stop/delete │  │
+│  │  POST /machinees → create/start/exec/stop/delete │  │
 │  └─────────────────────────────────────────────────┘  │
 │       │         │         │         │                  │
 │       ▼         ▼         ▼         ▼                  │
 │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐        │
-│  │Sandbox │ │Sandbox │ │Sandbox │ │Sandbox │        │
+│  │Machine │ │Machine │ │Machine │ │Machine │        │
 │  │  001   │ │  002   │ │  003   │ │  00N   │        │
 │  │ agent  │ │ agent  │ │ agent  │ │ agent  │        │
 │  └────────┘ └────────┘ └────────┘ └────────┘        │
@@ -188,7 +188,7 @@ async function apiPost(path: string, body?: unknown) {
 }
 
 async function exec(name: string, cmd: string, opts?: { env?: {name: string, value: string}[], timeout?: number }) {
-  const resp = await apiPost(`/sandboxes/${name}/exec`, {
+  const resp = await apiPost(`/machines/${name}/exec`, {
     command: ["sh", "-c", cmd],
     env: opts?.env,
     timeout_secs: opts?.timeout ?? 300,
@@ -198,7 +198,7 @@ async function exec(name: string, cmd: string, opts?: { env?: {name: string, val
 
 // Create fleet
 for (let i = 0; i < FLEET_SIZE; i++) {
-  await apiPost("/sandboxes", {
+  await apiPost("/machinees", {
     name: `agent-${i}`,
     resources: { cpus: 2, memory_mb: 2048, network: true },
   });
@@ -207,7 +207,7 @@ for (let i = 0; i < FLEET_SIZE; i++) {
 // Start all (parallel)
 await Promise.all(
   Array.from({ length: FLEET_SIZE }, (_, i) =>
-    apiPost(`/sandboxes/agent-${i}/start`)
+    apiPost(`/machines/agent-${i}/start`)
   )
 );
 
@@ -218,7 +218,7 @@ await Promise.all(
   )
 );
 
-// Run tasks (parallel — cross-sandbox exec is truly parallel)
+// Run tasks (parallel — cross-machine exec is truly parallel)
 const results = await Promise.all(
   TASKS.map((task, i) =>
     exec(`agent-${i}`, `echo "Working on: ${task}" && node agent.js`, {
@@ -239,8 +239,8 @@ for (let i = 0; i < FLEET_SIZE; i++) {
 
 // Cleanup
 for (let i = 0; i < FLEET_SIZE; i++) {
-  await apiPost(`/sandboxes/agent-${i}/stop`);
-  await fetch(`${API}/sandboxes/agent-${i}`, { method: "DELETE" });
+  await apiPost(`/machines/agent-${i}/stop`);
+  await fetch(`${API}/machines/agent-${i}`, { method: "DELETE" });
 }
 ```
 
@@ -250,7 +250,7 @@ This is ~60 lines of TypeScript using just `fetch()` — no SDK needed.
 
 ## 6. Resource Planning
 
-### Per-Agent Sandbox
+### Per-Agent Machine
 
 | Resource | Allocation | Notes |
 |----------|-----------|-------|
@@ -284,13 +284,13 @@ MacBook Pro M3 Max (16 CPU, 128 GB): ~7 concurrent agents.
 3. **Exec format** — use `["sh", "-c", "complex command"]` for shell syntax
    (pipes, &&, $VAR). Use `["echo", "hello"]` for simple commands.
 
-4. **Within-sandbox exec is serial** — if you need parallel work, use
-   multiple sandboxes.
+4. **Within-machine exec is serial** — if you need parallel work, use
+   multiple machinees.
 
 5. **Alpine has nothing** — no node, python, git, curl. Budget 7s for
    bootstrap or use a pre-built OCI image.
 
-6. **Stop is slow** — ~2.2s to stop a sandbox. Factor this into lifecycle
+6. **Stop is slow** — ~2.2s to stop a machine. Factor this into lifecycle
    calculations.
 
 7. **Volume mounts are buggy** — don't rely on them. Use exec-based file

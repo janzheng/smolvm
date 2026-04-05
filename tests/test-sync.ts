@@ -1,7 +1,7 @@
 /**
  * CX04 smolvm — Sync Push/Pull Test
  *
- * Tests: sync push (local → sandbox), sync pull (sandbox → local),
+ * Tests: sync push (local → machine), sync pull (machine → local),
  * --exclude filtering, and round-trip integrity.
  *
  * Requires a running smolvm server: deno task serve
@@ -14,7 +14,7 @@ import {
   createReporter,
 } from "./_helpers.ts";
 
-const SANDBOX_NAME = "cx04-sync-test";
+const MACHINE_NAME = "cx04-sync-test";
 const { test, skip, summary } = createReporter();
 
 // ============================================================================
@@ -25,14 +25,14 @@ console.log("\n==========================================");
 console.log("  CX04 smolvm — Sync Push/Pull Test");
 console.log("==========================================\n");
 
-await cleanup(SANDBOX_NAME);
+await cleanup(MACHINE_NAME);
 
 console.log("Setup:");
 try {
-  await createAndStart(SANDBOX_NAME);
-  test("Create + start sandbox", true);
+  await createAndStart(MACHINE_NAME);
+  test("Create + start machine", true);
 } catch (e) {
-  test("Create + start sandbox", false, `${e}`);
+  test("Create + start machine", false, `${e}`);
   summary();
   Deno.exit(1);
 }
@@ -54,7 +54,7 @@ await Deno.writeTextFile(`${tmpDir}/.gitignore`, "node_modules/\n");
 test("Created temp test files", true);
 
 // ============================================================================
-// Sync Push (local → sandbox)
+// Sync Push (local → machine)
 // ============================================================================
 
 console.log("\nSync Push:");
@@ -62,7 +62,7 @@ console.log("\nSync Push:");
 // --- Basic push ---
 {
   const proc = new Deno.Command("deno", {
-    args: ["task", "ctl", "sync", "push", SANDBOX_NAME, tmpDir, "--to", "/workspace/sync-test"],
+    args: ["task", "ctl", "sync", "push", MACHINE_NAME, tmpDir, "--to", "/workspace/sync-test"],
     stdout: "piped",
     stderr: "piped",
     cwd: Deno.cwd(),
@@ -75,19 +75,19 @@ console.log("\nSync Push:");
 
 // --- Verify files landed ---
 {
-  const result = await exec(SANDBOX_NAME, ["cat", "/workspace/sync-test/hello.txt"]);
+  const result = await exec(MACHINE_NAME, ["cat", "/workspace/sync-test/hello.txt"]);
   test("Push: hello.txt content", result.exit_code === 0 && result.stdout.trim() === "hello from sync test",
     `got: "${result.stdout.trim()}"`);
 }
 
 {
-  const result = await exec(SANDBOX_NAME, ["cat", "/workspace/sync-test/data.json"]);
+  const result = await exec(MACHINE_NAME, ["cat", "/workspace/sync-test/data.json"]);
   test("Push: data.json content", result.exit_code === 0 && result.stdout.includes('"key"'),
     `got: "${result.stdout.trim()}"`);
 }
 
 {
-  const result = await exec(SANDBOX_NAME, ["cat", "/workspace/sync-test/subdir/nested.txt"]);
+  const result = await exec(MACHINE_NAME, ["cat", "/workspace/sync-test/subdir/nested.txt"]);
   test("Push: nested file content", result.exit_code === 0 && result.stdout.trim() === "nested file content",
     `got: "${result.stdout.trim()}"`);
 }
@@ -96,7 +96,7 @@ console.log("\nSync Push:");
 console.log("\nSync Push with Exclude:");
 {
   const proc = new Deno.Command("deno", {
-    args: ["task", "ctl", "sync", "push", SANDBOX_NAME, tmpDir, "--to", "/workspace/sync-exclude", "--exclude", "node_modules"],
+    args: ["task", "ctl", "sync", "push", MACHINE_NAME, tmpDir, "--to", "/workspace/sync-exclude", "--exclude", "node_modules"],
     stdout: "piped",
     stderr: "piped",
     cwd: Deno.cwd(),
@@ -107,35 +107,35 @@ console.log("\nSync Push with Exclude:");
 
 {
   // hello.txt should exist
-  const result = await exec(SANDBOX_NAME, ["cat", "/workspace/sync-exclude/hello.txt"]);
+  const result = await exec(MACHINE_NAME, ["cat", "/workspace/sync-exclude/hello.txt"]);
   test("Exclude: hello.txt present", result.exit_code === 0 && result.stdout.trim() === "hello from sync test");
 }
 
 {
   // node_modules should NOT exist
-  const result = await exec(SANDBOX_NAME, ["ls", "/workspace/sync-exclude/node_modules"]);
+  const result = await exec(MACHINE_NAME, ["ls", "/workspace/sync-exclude/node_modules"]);
   test("Exclude: node_modules excluded", result.exit_code !== 0,
     `exit_code=${result.exit_code} (expected non-zero)`);
 }
 
 // ============================================================================
-// Sync Pull (sandbox → local)
+// Sync Pull (machine → local)
 // ============================================================================
 
 console.log("\nSync Pull:");
 
-// --- Create files in sandbox to pull ---
+// --- Create files in machine to pull ---
 {
-  await exec(SANDBOX_NAME, ["sh", "-c", "mkdir -p /workspace/pull-test && echo 'sandbox-data' > /workspace/pull-test/result.txt"]);
-  await exec(SANDBOX_NAME, ["sh", "-c", "mkdir -p /workspace/pull-test/logs && echo 'log-entry' > /workspace/pull-test/logs/app.log"]);
-  test("Created sandbox files for pull", true);
+  await exec(MACHINE_NAME, ["sh", "-c", "mkdir -p /workspace/pull-test && echo 'machine-data' > /workspace/pull-test/result.txt"]);
+  await exec(MACHINE_NAME, ["sh", "-c", "mkdir -p /workspace/pull-test/logs && echo 'log-entry' > /workspace/pull-test/logs/app.log"]);
+  test("Created machine files for pull", true);
 }
 
 // --- Basic pull ---
 {
   const pullTarget = `${pullDir}/basic`;
   const proc = new Deno.Command("deno", {
-    args: ["task", "ctl", "sync", "pull", SANDBOX_NAME, pullTarget, "--from", "/workspace/pull-test"],
+    args: ["task", "ctl", "sync", "pull", MACHINE_NAME, pullTarget, "--from", "/workspace/pull-test"],
     stdout: "piped",
     stderr: "piped",
     cwd: Deno.cwd(),
@@ -147,7 +147,7 @@ console.log("\nSync Pull:");
   // Verify pulled content
   try {
     const content = await Deno.readTextFile(`${pullTarget}/result.txt`);
-    test("Pull: result.txt content", content.trim() === "sandbox-data", `got: "${content.trim()}"`);
+    test("Pull: result.txt content", content.trim() === "machine-data", `got: "${content.trim()}"`);
   } catch (e) {
     test("Pull: result.txt content", false, `${e}`);
   }
@@ -167,12 +167,12 @@ console.log("\nSync Pull:");
 console.log("\nRound-trip:");
 
 {
-  // Push tmpDir → sandbox, pull back to new dir, compare
+  // Push tmpDir → machine, pull back to new dir, compare
   const roundTripDir = `${pullDir}/roundtrip`;
 
   // Push
   const pushProc = new Deno.Command("deno", {
-    args: ["task", "ctl", "sync", "push", SANDBOX_NAME, tmpDir, "--to", "/workspace/roundtrip", "--exclude", "node_modules"],
+    args: ["task", "ctl", "sync", "push", MACHINE_NAME, tmpDir, "--to", "/workspace/roundtrip", "--exclude", "node_modules"],
     stdout: "piped",
     stderr: "piped",
     cwd: Deno.cwd(),
@@ -181,7 +181,7 @@ console.log("\nRound-trip:");
 
   // Pull
   const pullProc = new Deno.Command("deno", {
-    args: ["task", "ctl", "sync", "pull", SANDBOX_NAME, roundTripDir, "--from", "/workspace/roundtrip"],
+    args: ["task", "ctl", "sync", "pull", MACHINE_NAME, roundTripDir, "--from", "/workspace/roundtrip"],
     stdout: "piped",
     stderr: "piped",
     cwd: Deno.cwd(),
@@ -222,7 +222,7 @@ console.log("\nDry-run:");
 
 {
   const proc = new Deno.Command("deno", {
-    args: ["task", "ctl", "sync", "push", SANDBOX_NAME, tmpDir, "--to", "/workspace/dry", "--dry-run"],
+    args: ["task", "ctl", "sync", "push", MACHINE_NAME, tmpDir, "--to", "/workspace/dry", "--dry-run"],
     stdout: "piped",
     stderr: "piped",
     cwd: Deno.cwd(),
@@ -231,13 +231,13 @@ console.log("\nDry-run:");
   const stdout = new TextDecoder().decode(output.stdout);
   test("Dry-run push prints listing", output.success && stdout.includes("[dry-run]"));
   // Verify nothing was actually uploaded
-  const result = await exec(SANDBOX_NAME, ["ls", "/workspace/dry"]);
+  const result = await exec(MACHINE_NAME, ["ls", "/workspace/dry"]);
   test("Dry-run: no files uploaded", result.exit_code !== 0);
 }
 
 {
   const proc = new Deno.Command("deno", {
-    args: ["task", "ctl", "sync", "pull", SANDBOX_NAME, `${pullDir}/dryrun`, "--from", "/workspace/sync-test", "--dry-run"],
+    args: ["task", "ctl", "sync", "pull", MACHINE_NAME, `${pullDir}/dryrun`, "--from", "/workspace/sync-test", "--dry-run"],
     stdout: "piped",
     stderr: "piped",
     cwd: Deno.cwd(),
@@ -260,9 +260,9 @@ console.log("\nDry-run:");
 
 console.log("\nCleanup:");
 {
-  await cleanup(SANDBOX_NAME);
-  const getResp = await apiGet(`/sandboxes/${SANDBOX_NAME}`);
-  test("Sandbox cleaned up (404)", getResp.status === 404);
+  await cleanup(MACHINE_NAME);
+  const getResp = await apiGet(`/machinees/${MACHINE_NAME}`);
+  test("Machine cleaned up (404)", getResp.status === 404);
 
   // Clean temp dirs
   await Deno.remove(tmpDir, { recursive: true }).catch(() => {});

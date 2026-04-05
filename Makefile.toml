@@ -35,7 +35,7 @@ fi
 echo ""
 echo "Binary ready! Run it with:"
 echo "  cargo make smolvm --version"
-echo "  cargo make smolvm sandbox run --net alpine:latest -- echo hello"
+echo "  cargo make smolvm machine run --net alpine:latest -- echo hello"
 '''
 ]
 
@@ -156,13 +156,13 @@ script = [
 '''
 ]
 
-[tasks.test-sandbox]
-description = "Run sandbox tests only"
+[tasks.test-machine]
+description = "Run machine tests only"
 category = "Test"
 script_runner = "bash"
 script = [
 '''
-./tests/run_all.sh sandbox
+./tests/run_all.sh machine
 '''
 ]
 

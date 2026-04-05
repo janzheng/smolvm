@@ -14,13 +14,13 @@ Open `http://localhost:3000` (or whatever port). Just start clicking.
 ## Things to explore
 
 - What do you see first? Is the purpose of the app obvious?
-- Can you create a sandbox? Is the form intuitive? What fields are required?
+- Can you create a machine? Is the form intuitive? What fields are required?
 - Can you pick a starter image? Is it obvious what they provide?
 - Run a command. Is there a terminal/console? Is the UX good or clunky?
 - Run a command that fails. How is the error displayed?
 - Run a slow command. Is there any loading state or does it feel frozen?
-- Navigate between multiple sandboxes. Is the list/detail flow natural?
-- Stop, start, delete a sandbox. Are the buttons where you'd expect?
+- Navigate between multiple machinees. Is the list/detail flow natural?
+- Stop, start, delete a machine. Are the buttons where you'd expect?
 - Try the file browser (if it exists). Can you browse, read, create files?
 - Resize the browser window. Does it work on narrow screens?
 - Open dev tools. Any JS errors? Any failed requests? Slow loads?

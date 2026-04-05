@@ -99,7 +99,7 @@ check_contains_or_skip_404() {
   fi
 }
 
-# Helper: cleanup sandbox silently
+# Helper: cleanup machine silently
 cleanup() {
   $SMOLCTL rm "$1" 2>/dev/null || true
 }
@@ -136,19 +136,19 @@ echo ""
 
 # ──────────────────────────────────────────────────────────
 hr
-log "PT-2: Sandbox Lifecycle (CRUD)"
+log "PT-2: Machine Lifecycle (CRUD)"
 hr
 
 cleanup pt-lifecycle
 
 # 2.1 Create
-check_contains "Create sandbox" "pt-lifecycle" $SMOLCTL create pt-lifecycle
+check_contains "Create machine" "pt-lifecycle" $SMOLCTL create pt-lifecycle
 
 # 2.2 List shows it
-check_contains "List shows sandbox" "pt-lifecycle" $SMOLCTL ls
+check_contains "List shows machine" "pt-lifecycle" $SMOLCTL ls
 
 # 2.3 Start
-check "Start sandbox" $SMOLCTL start pt-lifecycle
+check "Start machine" $SMOLCTL start pt-lifecycle
 
 # 2.4 Info
 check_contains "Info shows running" "running" $SMOLCTL info pt-lifecycle
@@ -166,17 +166,17 @@ fi
 check_contains "Exec uname works" "Linux" $SMOLCTL exec pt-lifecycle -- uname -a
 
 # 2.7 Stop
-check "Stop sandbox" $SMOLCTL stop pt-lifecycle
+check "Stop machine" $SMOLCTL stop pt-lifecycle
 
 # 2.8 Delete
-check "Delete sandbox" $SMOLCTL rm pt-lifecycle
+check "Delete machine" $SMOLCTL rm pt-lifecycle
 
 # 2.9 List is clean
 LS_OUT=$($SMOLCTL ls 2>&1) || true
 if echo "$LS_OUT" | grep -q "pt-lifecycle"; then
-  fail "Sandbox still appears after delete"
+  fail "Machine still appears after delete"
 else
-  pass "Sandbox removed from list"
+  pass "Machine removed from list"
 fi
 
 echo ""
@@ -245,7 +245,7 @@ echo "nested" > "$SYNC_DIR/sub/c.txt"
 # 4.1 Push
 check "Sync push" $SMOLCTL sync push pt-sync "$SYNC_DIR"
 
-# 4.2 Verify files exist in sandbox
+# 4.2 Verify files exist in machine
 check_contains "Pushed files visible" "a.txt" $SMOLCTL exec pt-sync -- ls /workspace/
 
 # 4.3 Pull
@@ -279,10 +279,10 @@ SMOLVM_SECRET_ANTHROPIC_API_KEY=test-secret-key-123 \
 # 5.2 Check env doesn't leak real key
 ENV_OUT=$($SMOLCTL exec pt-secrets -- env 2>&1) || true
 if echo "$ENV_OUT" | grep -q "test-secret-key-123"; then
-  fail "Secret key leaked into sandbox env!"
-  note "SECURITY: Real API key visible inside sandbox"
+  fail "Secret key leaked into machine env!"
+  note "SECURITY: Real API key visible inside machine"
 else
-  pass "Secret key NOT visible in sandbox env"
+  pass "Secret key NOT visible in machine env"
 fi
 
 # 5.3 Check proxy placeholder exists
@@ -306,15 +306,15 @@ hr
 for i in 1 2 3; do cleanup "pt-fleet-$i"; done
 
 # 6.1 Fleet up
-check "Fleet up (3 sandboxes)" $SMOLCTL fleet up pt-fleet 3
+check "Fleet up (3 machinees)" $SMOLCTL fleet up pt-fleet 3
 
 # 6.2 Fleet list
 FLEET_OUT=$($SMOLCTL fleet ls pt-fleet 2>&1) || true
 COUNT=$(echo "$FLEET_OUT" | grep -c "pt-fleet" || true)
 if [ "$COUNT" -ge 3 ]; then
-  pass "Fleet ls shows 3 sandboxes"
+  pass "Fleet ls shows 3 machinees"
 else
-  fail "Fleet ls shows $COUNT sandboxes (expected 3)"
+  fail "Fleet ls shows $COUNT machinees (expected 3)"
 fi
 
 # 6.3 Fleet exec
@@ -371,7 +371,7 @@ hr
 log "PT-8: Work Queue"
 hr
 
-# Create a temporary sandbox for job testing
+# Create a temporary machine for job testing
 cleanup pt-job-worker
 $SMOLCTL create pt-job-worker >/dev/null 2>&1 || true
 $SMOLCTL start pt-job-worker >/dev/null 2>&1 || true
@@ -399,7 +399,7 @@ else
   echo "  Got: $JOB_LS_OUT"
 fi
 
-# Clean up job test sandbox
+# Clean up job test machine
 $SMOLCTL stop pt-job-worker >/dev/null 2>&1 || true
 $SMOLCTL rm pt-job-worker >/dev/null 2>&1 || true
 
@@ -498,7 +498,7 @@ $SMOLCTL up pt-meta --label env=staging --label team=infra --owner "playtester" 
 check_contains "Meta shows owner" "playtester" $SMOLCTL meta pt-meta
 
 # 11.2 Events
-check "Events command works" $SMOLCTL events --sandbox pt-meta --limit 3
+check "Events command works" $SMOLCTL events --machine pt-meta --limit 3
 
 # Cleanup
 $SMOLCTL down pt-meta --force >/dev/null 2>&1 || true
@@ -661,8 +661,8 @@ hr
 log "PT-16b: Snapshot Lifecycle (push/pull/describe/rm)"
 hr
 
-# Self-contained snapshot round-trip: create sandbox, write data, push snapshot,
-# pull into new sandbox, verify data survived, clean up.
+# Self-contained snapshot round-trip: create machine, write data, push snapshot,
+# pull into new machine, verify data survived, clean up.
 SNAP_SB="pt-snap-src"
 cleanup "$SNAP_SB"
 $SMOLCTL snapshot rm "$SNAP_SB" 2>/dev/null || true
@@ -672,7 +672,7 @@ $SMOLCTL up "$SNAP_SB" >/dev/null 2>&1 || true
 # Write a marker file
 $SMOLCTL exec "$SNAP_SB" -- sh -c "echo 'snapshot-round-trip-ok' > /workspace/snap-marker.txt" >/dev/null 2>&1 || true
 
-# 16b.1 Push snapshot (snapshot name = sandbox name)
+# 16b.1 Push snapshot (snapshot name = machine name)
 check "Snapshot push" $SMOLCTL snapshot push "$SNAP_SB"
 
 # 16b.2 Snapshot appears in list
@@ -681,14 +681,14 @@ check_contains "Snapshot in list" "$SNAP_SB" $SMOLCTL snapshot ls
 # 16b.3 Describe snapshot
 check "Snapshot describe" $SMOLCTL snapshot describe "$SNAP_SB"
 
-# 16b.4 Pull into new sandbox
+# 16b.4 Pull into new machine
 SNAP_DST="pt-snap-dst"
 cleanup "$SNAP_DST"
 PULL_OUT=$($SMOLCTL snapshot pull "$SNAP_SB" "$SNAP_DST" 2>&1) || true
 if echo "$PULL_OUT" | grep -qi "error\|failed"; then
   fail "Snapshot pull — $PULL_OUT"
 else
-  pass "Snapshot pull into new sandbox"
+  pass "Snapshot pull into new machine"
 fi
 
 # 16b.5 Verify data survived round-trip
@@ -780,15 +780,15 @@ hr
 log "PT-18: Workspace Export/Import"
 hr
 
-# Need a running sandbox with a git workspace
+# Need a running machine with a git workspace
 WS_SB="pt18-ws-test"
 WS_EXPORT_PATH="/tmp/pt18-workspace.tar.gz"
 rm -f "$WS_EXPORT_PATH"
 
-# Create sandbox with git init
+# Create machine with git init
 WS_UP_OUT=$($SMOLCTL up "$WS_SB" --network 2>&1)
 if echo "$WS_UP_OUT" | grep -qi "up and running"; then
-  pass "Create sandbox for workspace test"
+  pass "Create machine for workspace test"
 
   # Initialize git workspace
   $SMOLCTL git init "$WS_SB" >/dev/null 2>&1
@@ -817,7 +817,7 @@ if echo "$WS_UP_OUT" | grep -qi "up and running"; then
     fail "Exported workspace file not found"
   fi
 
-  # 18.3 Import workspace into a fresh sandbox
+  # 18.3 Import workspace into a fresh machine
   WS_SB2="pt18-ws-import"
   $SMOLCTL up "$WS_SB2" --network >/dev/null 2>&1
   sleep 1
@@ -849,7 +849,7 @@ if echo "$WS_UP_OUT" | grep -qi "up and running"; then
   $SMOLCTL down "$WS_SB2" --force >/dev/null 2>&1
   rm -f "$WS_EXPORT_PATH"
 else
-  fail "Create sandbox for workspace test — $WS_UP_OUT"
+  fail "Create machine for workspace test — $WS_UP_OUT"
 fi
 
 echo ""
@@ -859,14 +859,14 @@ hr
 log "PT-19: Docker Interop (to-docker)"
 hr
 
-# Need a running sandbox — create one
+# Need a running machine — create one
 DOCKER_SB="pt19-docker-test"
 DOCKER_OUT_DIR="/tmp/pt19-docker-ctx"
 rm -rf "$DOCKER_OUT_DIR"
 
 DOCKER_UP_OUT=$($SMOLCTL up "$DOCKER_SB" --network 2>&1)
 if echo "$DOCKER_UP_OUT" | grep -qi "up and running"; then
-  pass "Create sandbox for docker test"
+  pass "Create machine for docker test"
 
   # Init git workspace + write a file
   $SMOLCTL git init "$DOCKER_SB" >/dev/null 2>&1
@@ -906,7 +906,7 @@ if echo "$DOCKER_UP_OUT" | grep -qi "up and running"; then
   $SMOLCTL down "$DOCKER_SB" --force >/dev/null 2>&1
   rm -rf "$DOCKER_OUT_DIR"
 else
-  fail "Create sandbox for docker test — $DOCKER_UP_OUT"
+  fail "Create machine for docker test — $DOCKER_UP_OUT"
 fi
 
 echo ""

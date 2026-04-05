@@ -3,7 +3,7 @@
 # Smolfile tests for smolvm.
 #
 # Tests the `--smolfile` and `--init` functionality for both
-# microvm and sandbox create commands.
+# microvm and machine create commands.
 #
 # Usage:
 #   ./tests/test_smolfile.sh

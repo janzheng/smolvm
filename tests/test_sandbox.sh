@@ -1,12 +1,12 @@
 #!/bin/bash
 #
-# Sandbox tests for smolvm.
+# Machine tests for smolvm.
 #
-# Tests the `smolvm sandbox run` command functionality.
+# Tests the `smolvm machine run` command functionality.
 # Requires VM environment.
 #
 # Usage:
-#   ./tests/test_sandbox.sh
+#   ./tests/test_machine.sh
 
 source "$(dirname "$0")/common.sh"
 init_smolvm
@@ -17,7 +17,7 @@ kill_orphan_smolvm_processes
 
 echo ""
 echo "=========================================="
-echo "  smolvm Sandbox Tests"
+echo "  smolvm Machine Tests"
 echo "=========================================="
 echo ""
 
@@ -25,15 +25,15 @@ echo ""
 # Basic Execution
 # =============================================================================
 
-test_sandbox_run_echo() {
+test_machine_run_echo() {
     local output
-    output=$($SMOLVM sandbox run --net alpine:latest -- echo "integration-test-marker" 2>&1)
+    output=$($SMOLVM machine run --net alpine:latest -- echo "integration-test-marker" 2>&1)
     [[ "$output" == *"integration-test-marker"* ]]
 }
 
-test_sandbox_run_cat() {
+test_machine_run_cat() {
     local output
-    output=$($SMOLVM sandbox run --net alpine:latest -- cat /etc/os-release 2>&1)
+    output=$($SMOLVM machine run --net alpine:latest -- cat /etc/os-release 2>&1)
     [[ "$output" == *"Alpine"* ]]
 }
 
@@ -41,13 +41,13 @@ test_sandbox_run_cat() {
 # Exit Codes
 # =============================================================================
 
-test_sandbox_exit_code_zero() {
-    $SMOLVM sandbox run --net alpine:latest -- sh -c "exit 0" 2>&1
+test_machine_exit_code_zero() {
+    $SMOLVM machine run --net alpine:latest -- sh -c "exit 0" 2>&1
 }
 
-test_sandbox_exit_code_nonzero() {
+test_machine_exit_code_nonzero() {
     local exit_code=0
-    $SMOLVM sandbox run --net alpine:latest -- sh -c "exit 42" 2>&1 || exit_code=$?
+    $SMOLVM machine run --net alpine:latest -- sh -c "exit 42" 2>&1 || exit_code=$?
     [[ $exit_code -eq 42 ]]
 }
 
@@ -55,15 +55,15 @@ test_sandbox_exit_code_nonzero() {
 # Environment Variables
 # =============================================================================
 
-test_sandbox_env_variable() {
+test_machine_env_variable() {
     local output
-    output=$($SMOLVM sandbox run --net -e TEST_VAR=hello_world alpine:latest -- sh -c 'echo $TEST_VAR' 2>&1)
+    output=$($SMOLVM machine run --net -e TEST_VAR=hello_world alpine:latest -- sh -c 'echo $TEST_VAR' 2>&1)
     [[ "$output" == *"hello_world"* ]]
 }
 
-test_sandbox_multiple_env_variables() {
+test_machine_multiple_env_variables() {
     local output
-    output=$($SMOLVM sandbox run --net -e VAR1=one -e VAR2=two alpine:latest -- sh -c 'echo $VAR1 $VAR2' 2>&1)
+    output=$($SMOLVM machine run --net -e VAR1=one -e VAR2=two alpine:latest -- sh -c 'echo $VAR1 $VAR2' 2>&1)
     [[ "$output" == *"one"* ]] && [[ "$output" == *"two"* ]]
 }
 
@@ -71,11 +71,11 @@ test_sandbox_multiple_env_variables() {
 # Timeout
 # =============================================================================
 
-test_sandbox_timeout() {
+test_machine_timeout() {
     local start_time end_time elapsed output
     start_time=$(date +%s)
 
-    output=$($SMOLVM sandbox run --net --timeout 5s alpine:latest -- sleep 60 2>&1 || true)
+    output=$($SMOLVM machine run --net --timeout 5s alpine:latest -- sleep 60 2>&1 || true)
 
     end_time=$(date +%s)
     elapsed=$((end_time - start_time))
@@ -95,9 +95,9 @@ test_sandbox_timeout() {
 # Working Directory
 # =============================================================================
 
-test_sandbox_workdir() {
+test_machine_workdir() {
     local output
-    output=$($SMOLVM sandbox run --net -w /tmp alpine:latest -- pwd 2>&1)
+    output=$($SMOLVM machine run --net -w /tmp alpine:latest -- pwd 2>&1)
     [[ "$output" == *"/tmp"* ]]
 }
 
@@ -105,24 +105,24 @@ test_sandbox_workdir() {
 # Volume Mounts
 # =============================================================================
 
-test_sandbox_volume_mount_read() {
+test_machine_volume_mount_read() {
     local tmpdir
     tmpdir=$(mktemp -d)
     echo "mount-test-content-12345" > "$tmpdir/testfile.txt"
 
     local output
-    output=$($SMOLVM sandbox run --net -v "$tmpdir:/hostmnt" alpine:latest -- cat /hostmnt/testfile.txt 2>&1)
+    output=$($SMOLVM machine run --net -v "$tmpdir:/hostmnt" alpine:latest -- cat /hostmnt/testfile.txt 2>&1)
 
     rm -rf "$tmpdir"
     [[ "$output" == *"mount-test-content-12345"* ]]
 }
 
-test_sandbox_volume_mount_write() {
+test_machine_volume_mount_write() {
     local tmpdir
     tmpdir=$(mktemp -d)
 
     local output
-    output=$($SMOLVM sandbox run --net -v "$tmpdir:/workspace" alpine:latest -- sh -c "echo 'written-from-vm' > /workspace/output.txt" 2>&1)
+    output=$($SMOLVM machine run --net -v "$tmpdir:/workspace" alpine:latest -- sh -c "echo 'written-from-vm' > /workspace/output.txt" 2>&1)
 
     # Verify on host
     local content
@@ -132,37 +132,37 @@ test_sandbox_volume_mount_write() {
     [[ "$content" == *"written-from-vm"* ]]
 }
 
-test_sandbox_volume_mount_readonly() {
+test_machine_volume_mount_readonly() {
     local tmpdir
     tmpdir=$(mktemp -d)
     echo "readonly-content" > "$tmpdir/readonly.txt"
 
     # Read should work
     local output
-    output=$($SMOLVM sandbox run --net -v "$tmpdir:/hostmnt:ro" alpine:latest -- cat /hostmnt/readonly.txt 2>&1)
+    output=$($SMOLVM machine run --net -v "$tmpdir:/hostmnt:ro" alpine:latest -- cat /hostmnt/readonly.txt 2>&1)
 
     # Write should fail
     local write_exit=0
-    $SMOLVM sandbox run --net -v "$tmpdir:/hostmnt:ro" alpine:latest -- sh -c "echo 'fail' > /hostmnt/newfile.txt" 2>&1 || write_exit=$?
+    $SMOLVM machine run --net -v "$tmpdir:/hostmnt:ro" alpine:latest -- sh -c "echo 'fail' > /hostmnt/newfile.txt" 2>&1 || write_exit=$?
 
     rm -rf "$tmpdir"
     [[ "$output" == *"readonly-content"* ]] && [[ $write_exit -ne 0 ]]
 }
 
-test_sandbox_volume_mount_subdirectory() {
+test_machine_volume_mount_subdirectory() {
     local tmpdir
     tmpdir=$(mktemp -d)
     mkdir -p "$tmpdir/subdir/nested"
     echo "nested-file-content" > "$tmpdir/subdir/nested/deep.txt"
 
     local output
-    output=$($SMOLVM sandbox run --net -v "$tmpdir:/hostmnt" alpine:latest -- cat /hostmnt/subdir/nested/deep.txt 2>&1)
+    output=$($SMOLVM machine run --net -v "$tmpdir:/hostmnt" alpine:latest -- cat /hostmnt/subdir/nested/deep.txt 2>&1)
 
     rm -rf "$tmpdir"
     [[ "$output" == *"nested-file-content"* ]]
 }
 
-test_sandbox_volume_mount_multiple() {
+test_machine_volume_mount_multiple() {
     local tmpdir1 tmpdir2
     tmpdir1=$(mktemp -d)
     tmpdir2=$(mktemp -d)
@@ -170,7 +170,7 @@ test_sandbox_volume_mount_multiple() {
     echo "content-two" > "$tmpdir2/file2.txt"
 
     local output
-    output=$($SMOLVM sandbox run --net -v "$tmpdir1:/data1" -v "$tmpdir2:/data2" alpine:latest -- sh -c "cat /data1/file1.txt && cat /data2/file2.txt" 2>&1)
+    output=$($SMOLVM machine run --net -v "$tmpdir1:/data1" -v "$tmpdir2:/data2" alpine:latest -- sh -c "cat /data1/file1.txt && cat /data2/file2.txt" 2>&1)
 
     rm -rf "$tmpdir1" "$tmpdir2"
     [[ "$output" == *"content-one"* ]] && [[ "$output" == *"content-two"* ]]
@@ -185,7 +185,7 @@ test_sandbox_volume_mount_multiple() {
 test_tsi_overlayfs_rootfs_write_works() {
     # Writing to container rootfs (overlayfs) should work
     local output exit_code=0
-    output=$($SMOLVM sandbox run --net alpine:latest -- sh -c "echo 'test' > /tmp/rootfs-test.txt && cat /tmp/rootfs-test.txt" 2>&1) || exit_code=$?
+    output=$($SMOLVM machine run --net alpine:latest -- sh -c "echo 'test' > /tmp/rootfs-test.txt && cat /tmp/rootfs-test.txt" 2>&1) || exit_code=$?
 
     # Should succeed and contain the written content
     [[ $exit_code -eq 0 ]] && [[ "$output" == *"test"* ]]
@@ -197,7 +197,7 @@ test_tsi_virtiofs_mount_write_works() {
     tmpdir=$(mktemp -d)
 
     local output exit_code=0
-    output=$($SMOLVM sandbox run --net -v "$tmpdir:/workspace" alpine:latest -- sh -c "echo 'virtiofs-write-test' > /workspace/test.txt" 2>&1) || exit_code=$?
+    output=$($SMOLVM machine run --net -v "$tmpdir:/workspace" alpine:latest -- sh -c "echo 'virtiofs-write-test' > /workspace/test.txt" 2>&1) || exit_code=$?
 
     # Verify file was written
     local content
@@ -222,7 +222,7 @@ test_tsi_coding_agent_workflow() {
 
     # Run "agent" that reads input, processes, and writes output
     local output exit_code=0
-    output=$($SMOLVM sandbox run --net -v "$tmpdir:/workspace" alpine:latest -- sh -c "
+    output=$($SMOLVM machine run --net -v "$tmpdir:/workspace" alpine:latest -- sh -c "
         # Read input
         INPUT=\$(cat /workspace/input.txt)
         # Process (uppercase)
@@ -250,14 +250,14 @@ test_tsi_coding_agent_workflow() {
 # Command Execution
 # =============================================================================
 
-test_sandbox_shell_pipeline() {
+test_machine_shell_pipeline() {
     local output
-    output=$($SMOLVM sandbox run --net alpine:latest -- sh -c "echo 'hello world' | wc -w" 2>&1)
+    output=$($SMOLVM machine run --net alpine:latest -- sh -c "echo 'hello world' | wc -w" 2>&1)
     [[ "$output" == *"2"* ]]
 }
 
-test_sandbox_command_not_found() {
-    ! $SMOLVM sandbox run --net alpine:latest -- nonexistent_command_12345 2>/dev/null
+test_machine_command_not_found() {
+    ! $SMOLVM machine run --net alpine:latest -- nonexistent_command_12345 2>/dev/null
 }
 
 # =============================================================================
@@ -270,11 +270,11 @@ test_sandbox_command_not_found() {
 test_network_disabled_by_default() {
     # Without --net, network should be disabled
     # First, ensure the image is cached by pulling with --net
-    $SMOLVM sandbox run --net alpine:latest -- true 2>&1 >/dev/null || true
+    $SMOLVM machine run --net alpine:latest -- true 2>&1 >/dev/null || true
 
     # Now test without --net - DNS resolution should fail when network is disabled
     local exit_code=0
-    $SMOLVM sandbox run alpine:latest -- nslookup cloudflare.com 2>&1 || exit_code=$?
+    $SMOLVM machine run alpine:latest -- nslookup cloudflare.com 2>&1 || exit_code=$?
 
     # Should fail (non-zero exit code) because network is disabled
     [[ $exit_code -ne 0 ]]
@@ -283,7 +283,7 @@ test_network_disabled_by_default() {
 test_network_dns_resolution() {
     # With --net, DNS resolution should work
     local output exit_code=0
-    output=$($SMOLVM sandbox run --net alpine:latest -- nslookup cloudflare.com 2>&1) || exit_code=$?
+    output=$($SMOLVM machine run --net alpine:latest -- nslookup cloudflare.com 2>&1) || exit_code=$?
 
     # Should succeed and contain resolved address info
     [[ $exit_code -eq 0 ]] && [[ "$output" == *"Address"* ]]
@@ -292,7 +292,7 @@ test_network_dns_resolution() {
 test_network_multiple_dns_lookups() {
     # With --net, multiple DNS lookups should work
     local output exit_code=0
-    output=$($SMOLVM sandbox run --net alpine:latest -- sh -c "nslookup google.com && nslookup github.com" 2>&1) || exit_code=$?
+    output=$($SMOLVM machine run --net alpine:latest -- sh -c "nslookup google.com && nslookup github.com" 2>&1) || exit_code=$?
 
     # Should succeed and contain addresses for both
     [[ $exit_code -eq 0 ]] && [[ "$output" == *"Address"* ]]
@@ -302,25 +302,25 @@ test_network_multiple_dns_lookups() {
 # Detached Mode + DB Persistence
 # =============================================================================
 
-test_sandbox_run_detached_appears_in_list() {
-    # Clean up any existing default sandbox
+test_machine_run_detached_appears_in_list() {
+    # Clean up any existing default machine
     $SMOLVM microvm stop 2>/dev/null || true
     $SMOLVM microvm delete default -f 2>/dev/null || true
 
     # Run in detached mode (defaults to sleep infinity)
     local run_output exit_code=0
-    run_output=$($SMOLVM sandbox run -d --net alpine:latest 2>&1) || exit_code=$?
+    run_output=$($SMOLVM machine run -d --net alpine:latest 2>&1) || exit_code=$?
 
     if [[ $exit_code -ne 0 ]]; then
         $SMOLVM microvm stop 2>/dev/null || true
         $SMOLVM microvm delete default -f 2>/dev/null || true
-        echo "Setup failed: sandbox run -d returned $exit_code: $run_output"
+        echo "Setup failed: machine run -d returned $exit_code: $run_output"
         return 1
     fi
 
-    # Verify it appears in sandbox ls --json as running
+    # Verify it appears in machine ls --json as running
     local list_output
-    list_output=$($SMOLVM sandbox ls --json 2>&1)
+    list_output=$($SMOLVM machine ls --json 2>&1)
 
     # Clean up
     $SMOLVM microvm stop 2>/dev/null || true
@@ -331,33 +331,33 @@ test_sandbox_run_detached_appears_in_list() {
 }
 
 # =============================================================================
-# Smolfile with sandbox run
+# Smolfile with machine run
 # =============================================================================
 
 SMOLFILE_TMPDIR=$(mktemp -d)
 
-test_sandbox_run_smolfile_workdir_env() {
+test_machine_run_smolfile_workdir_env() {
     cat > "$SMOLFILE_TMPDIR/Smolfile.wdenv" <<'EOF'
 workdir = "/tmp"
 env = ["SMOL_TEST=from_smolfile"]
 EOF
 
     local output
-    output=$($SMOLVM sandbox run -s "$SMOLFILE_TMPDIR/Smolfile.wdenv" --net alpine:latest -- sh -c 'pwd && echo $SMOL_TEST' 2>&1)
+    output=$($SMOLVM machine run -s "$SMOLFILE_TMPDIR/Smolfile.wdenv" --net alpine:latest -- sh -c 'pwd && echo $SMOL_TEST' 2>&1)
     [[ "$output" == *"/tmp"* ]] && [[ "$output" == *"from_smolfile"* ]]
 }
 
-test_sandbox_run_smolfile_cli_overrides() {
+test_machine_run_smolfile_cli_overrides() {
     cat > "$SMOLFILE_TMPDIR/Smolfile.override" <<'EOF'
 workdir = "/tmp"
 EOF
 
     local output
-    output=$($SMOLVM sandbox run -s "$SMOLFILE_TMPDIR/Smolfile.override" -w /root --net alpine:latest -- pwd 2>&1)
+    output=$($SMOLVM machine run -s "$SMOLFILE_TMPDIR/Smolfile.override" -w /root --net alpine:latest -- pwd 2>&1)
     [[ "$output" == *"/root"* ]]
 }
 
-test_sandbox_run_smolfile_init() {
+test_machine_run_smolfile_init() {
     # Init runs on the VM (vm_exec), not inside the container, so we can't
     # read init's files from the container. Instead verify:
     # 1. A successful init doesn't block the run command
@@ -367,23 +367,23 @@ init = ["true"]
 EOF
 
     local output
-    output=$($SMOLVM sandbox run -s "$SMOLFILE_TMPDIR/Smolfile.init" --net alpine:latest -- echo "after-init-ok" 2>&1)
+    output=$($SMOLVM machine run -s "$SMOLFILE_TMPDIR/Smolfile.init" --net alpine:latest -- echo "after-init-ok" 2>&1)
     [[ "$output" == *"after-init-ok"* ]]
 }
 
-test_sandbox_run_smolfile_init_failure_reported() {
+test_machine_run_smolfile_init_failure_reported() {
     cat > "$SMOLFILE_TMPDIR/Smolfile.initfail" <<'EOF'
 init = ["exit 1"]
 EOF
 
     # Init failure should be reported but not block the run command
     local output
-    output=$($SMOLVM sandbox run -s "$SMOLFILE_TMPDIR/Smolfile.initfail" --net alpine:latest -- echo "still-runs" 2>&1)
+    output=$($SMOLVM machine run -s "$SMOLFILE_TMPDIR/Smolfile.initfail" --net alpine:latest -- echo "still-runs" 2>&1)
     [[ "$output" == *"init[0] failed"* ]] && [[ "$output" == *"still-runs"* ]]
 }
 
-test_sandbox_run_smolfile_init_not_rerun() {
-    # Start a detached sandbox with init that writes a unique marker file.
+test_machine_run_smolfile_init_not_rerun() {
+    # Start a detached machine with init that writes a unique marker file.
     # Use a unique filename per test run to avoid overlay persistence contamination.
     $SMOLVM microvm stop 2>/dev/null || true
     $SMOLVM microvm delete default -f 2>/dev/null || true
@@ -396,12 +396,12 @@ EOF
 
     # First run: detached, starts fresh VM, init should run
     local run_output exit_code=0
-    run_output=$($SMOLVM sandbox run -d -s "$SMOLFILE_TMPDIR/Smolfile.norerun" --net alpine:latest 2>&1) || exit_code=$?
+    run_output=$($SMOLVM machine run -d -s "$SMOLFILE_TMPDIR/Smolfile.norerun" --net alpine:latest 2>&1) || exit_code=$?
 
     if [[ $exit_code -ne 0 ]]; then
         $SMOLVM microvm stop 2>/dev/null || true
         $SMOLVM microvm delete default -f 2>/dev/null || true
-        echo "Setup failed: sandbox run -d returned $exit_code: $run_output"
+        echo "Setup failed: machine run -d returned $exit_code: $run_output"
         return 1
     fi
 
@@ -420,12 +420,12 @@ EOF
     # Second run: also detached against already-running VM, init should NOT re-run.
     # Using -d keeps the VM alive so we can verify afterwards.
     local run2_output run2_exit=0
-    run2_output=$($SMOLVM sandbox run -d -s "$SMOLFILE_TMPDIR/Smolfile.norerun" --net alpine:latest 2>&1) || run2_exit=$?
+    run2_output=$($SMOLVM machine run -d -s "$SMOLFILE_TMPDIR/Smolfile.norerun" --net alpine:latest 2>&1) || run2_exit=$?
 
     if [[ $run2_exit -ne 0 ]]; then
         $SMOLVM microvm stop 2>/dev/null || true
         $SMOLVM microvm delete default -f 2>/dev/null || true
-        echo "Second sandbox run -d failed ($run2_exit): $run2_output"
+        echo "Second machine run -d failed ($run2_exit): $run2_output"
         return 1
     fi
 
@@ -442,8 +442,8 @@ EOF
     [[ "$lines2" -eq 1 ]]
 }
 
-test_sandbox_run_smolfile_detached_persists() {
-    # Clean up any existing default sandbox
+test_machine_run_smolfile_detached_persists() {
+    # Clean up any existing default machine
     $SMOLVM microvm stop 2>/dev/null || true
     $SMOLVM microvm delete default -f 2>/dev/null || true
 
@@ -457,18 +457,18 @@ workdir = "/tmp"
 EOF
 
     local run_output exit_code=0
-    run_output=$($SMOLVM sandbox run -d -s "$SMOLFILE_TMPDIR/Smolfile.detach" --net alpine:latest 2>&1) || exit_code=$?
+    run_output=$($SMOLVM machine run -d -s "$SMOLFILE_TMPDIR/Smolfile.detach" --net alpine:latest 2>&1) || exit_code=$?
 
     if [[ $exit_code -ne 0 ]]; then
         $SMOLVM microvm stop 2>/dev/null || true
         $SMOLVM microvm delete default -f 2>/dev/null || true
-        echo "Setup failed: sandbox run -d returned $exit_code: $run_output"
+        echo "Setup failed: machine run -d returned $exit_code: $run_output"
         return 1
     fi
 
-    # Verify config was persisted in sandbox ls --json (cpus, init, env, workdir)
+    # Verify config was persisted in machine ls --json (cpus, init, env, workdir)
     local list_output
-    list_output=$($SMOLVM sandbox ls --json 2>&1)
+    list_output=$($SMOLVM machine ls --json 2>&1)
 
     if [[ "$list_output" != *'"cpus": 2'* ]]; then
         echo "cpus not persisted"
@@ -492,10 +492,10 @@ EOF
     $SMOLVM microvm exec -- rm -f /tmp/setup-marker.txt 2>&1 || true
 
     # Stop and restart — init should re-run on restart
-    $SMOLVM sandbox stop 2>&1 || true
-    $SMOLVM sandbox start 2>&1 || {
+    $SMOLVM machine stop 2>&1 || true
+    $SMOLVM machine start 2>&1 || {
         $SMOLVM microvm delete default -f 2>/dev/null || true
-        echo "Setup failed: sandbox start after stop failed"
+        echo "Setup failed: machine start after stop failed"
         return 1
     }
 
@@ -511,7 +511,7 @@ EOF
     [[ "$setup_output" == *"setup-production"* ]]
 }
 
-test_sandbox_run_smolfile_config_change_restarts() {
+test_machine_run_smolfile_config_change_restarts() {
     # Start a detached VM with --net and an init marker.
     # Then run again without --net — config differs, VM should restart,
     # and init should re-run (proving the restart happened).
@@ -527,12 +527,12 @@ EOF
 
     # First run: detached with net=true
     local run_output exit_code=0
-    run_output=$($SMOLVM sandbox run -d -s "$SMOLFILE_TMPDIR/Smolfile.cfgchange" --net alpine:latest 2>&1) || exit_code=$?
+    run_output=$($SMOLVM machine run -d -s "$SMOLFILE_TMPDIR/Smolfile.cfgchange" --net alpine:latest 2>&1) || exit_code=$?
 
     if [[ $exit_code -ne 0 ]]; then
         $SMOLVM microvm stop 2>/dev/null || true
         $SMOLVM microvm delete default -f 2>/dev/null || true
-        echo "Setup failed: first sandbox run -d returned $exit_code: $run_output"
+        echo "Setup failed: first machine run -d returned $exit_code: $run_output"
         return 1
     fi
 
@@ -554,12 +554,12 @@ init = ["echo boot >> $marker"]
 EOF
 
     local run2_output run2_exit=0
-    run2_output=$($SMOLVM sandbox run -d -s "$SMOLFILE_TMPDIR/Smolfile.cfgchange2" alpine:latest 2>&1) || run2_exit=$?
+    run2_output=$($SMOLVM machine run -d -s "$SMOLFILE_TMPDIR/Smolfile.cfgchange2" alpine:latest 2>&1) || run2_exit=$?
 
     if [[ $run2_exit -ne 0 ]]; then
         $SMOLVM microvm stop 2>/dev/null || true
         $SMOLVM microvm delete default -f 2>/dev/null || true
-        echo "Second sandbox run -d (no --net) failed ($run2_exit): $run2_output"
+        echo "Second machine run -d (no --net) failed ($run2_exit): $run2_output"
         return 1
     fi
 
@@ -579,7 +579,7 @@ EOF
     fi
 }
 
-test_sandbox_run_missing_config_restarts() {
+test_machine_run_missing_config_restarts() {
     # Start a detached VM with --net and init marker.
     # Delete agent.config.json. Run again with default config.
     # Since config is unknown (fail-closed), VM should restart and init re-runs.
@@ -595,11 +595,11 @@ EOF
 
     # First run: detached with net=true
     local run_output exit_code=0
-    run_output=$($SMOLVM sandbox run -d -s "$SMOLFILE_TMPDIR/Smolfile.misscfg" --net alpine:latest 2>&1) || exit_code=$?
+    run_output=$($SMOLVM machine run -d -s "$SMOLFILE_TMPDIR/Smolfile.misscfg" --net alpine:latest 2>&1) || exit_code=$?
     if [[ $exit_code -ne 0 ]]; then
         $SMOLVM microvm stop 2>/dev/null || true
         $SMOLVM microvm delete default -f 2>/dev/null || true
-        echo "Setup failed: sandbox run -d returned $exit_code: $run_output"
+        echo "Setup failed: machine run -d returned $exit_code: $run_output"
         return 1
     fi
 
@@ -627,7 +627,7 @@ EOF
     # Second run: same config. But config file is gone, so manager
     # cannot verify running config matches — should force restart.
     local run2_output run2_exit=0
-    run2_output=$($SMOLVM sandbox run -d -s "$SMOLFILE_TMPDIR/Smolfile.misscfg" --net alpine:latest 2>&1) || run2_exit=$?
+    run2_output=$($SMOLVM machine run -d -s "$SMOLFILE_TMPDIR/Smolfile.misscfg" --net alpine:latest 2>&1) || run2_exit=$?
     if [[ $run2_exit -ne 0 ]]; then
         $SMOLVM microvm stop 2>/dev/null || true
         $SMOLVM microvm delete default -f 2>/dev/null || true
@@ -651,7 +651,7 @@ EOF
     fi
 }
 
-test_sandbox_run_corrupt_config_restarts() {
+test_machine_run_corrupt_config_restarts() {
     # Start a detached VM with --net and init marker.
     # Write invalid JSON to agent.config.json. Run again.
     # Since config is corrupt (fail-closed), VM should restart.
@@ -667,11 +667,11 @@ EOF
 
     # First run: detached with net=true
     local run_output exit_code=0
-    run_output=$($SMOLVM sandbox run -d -s "$SMOLFILE_TMPDIR/Smolfile.corruptcfg" --net alpine:latest 2>&1) || exit_code=$?
+    run_output=$($SMOLVM machine run -d -s "$SMOLFILE_TMPDIR/Smolfile.corruptcfg" --net alpine:latest 2>&1) || exit_code=$?
     if [[ $exit_code -ne 0 ]]; then
         $SMOLVM microvm stop 2>/dev/null || true
         $SMOLVM microvm delete default -f 2>/dev/null || true
-        echo "Setup failed: sandbox run -d returned $exit_code: $run_output"
+        echo "Setup failed: machine run -d returned $exit_code: $run_output"
         return 1
     fi
 
@@ -699,7 +699,7 @@ EOF
     # Second run: same config. But config file is corrupt, so manager
     # cannot verify running config matches — should force restart.
     local run2_output run2_exit=0
-    run2_output=$($SMOLVM sandbox run -d -s "$SMOLFILE_TMPDIR/Smolfile.corruptcfg" --net alpine:latest 2>&1) || run2_exit=$?
+    run2_output=$($SMOLVM machine run -d -s "$SMOLFILE_TMPDIR/Smolfile.corruptcfg" --net alpine:latest 2>&1) || run2_exit=$?
     if [[ $run2_exit -ne 0 ]]; then
         $SMOLVM microvm stop 2>/dev/null || true
         $SMOLVM microvm delete default -f 2>/dev/null || true
@@ -727,38 +727,38 @@ EOF
 # Run Tests
 # =============================================================================
 
-run_test "Sandbox run detached appears in list" test_sandbox_run_detached_appears_in_list || true
-run_test "Sandbox run echo" test_sandbox_run_echo || true
-run_test "Sandbox run cat /etc/os-release" test_sandbox_run_cat || true
-run_test "Exit code 0" test_sandbox_exit_code_zero || true
-run_test "Exit code 42" test_sandbox_exit_code_nonzero || true
-run_test "Environment variable" test_sandbox_env_variable || true
-run_test "Multiple environment variables" test_sandbox_multiple_env_variables || true
-run_test "Timeout" test_sandbox_timeout || true
-run_test "Working directory" test_sandbox_workdir || true
-run_test "Volume mount read" test_sandbox_volume_mount_read || true
-run_test "Volume mount write" test_sandbox_volume_mount_write || true
-run_test "Volume mount readonly" test_sandbox_volume_mount_readonly || true
-run_test "Volume mount subdirectory" test_sandbox_volume_mount_subdirectory || true
-run_test "Volume mount multiple" test_sandbox_volume_mount_multiple || true
-run_test "Shell pipeline" test_sandbox_shell_pipeline || true
-run_test "Command not found fails" test_sandbox_command_not_found || true
+run_test "Machine run detached appears in list" test_machine_run_detached_appears_in_list || true
+run_test "Machine run echo" test_machine_run_echo || true
+run_test "Machine run cat /etc/os-release" test_machine_run_cat || true
+run_test "Exit code 0" test_machine_exit_code_zero || true
+run_test "Exit code 42" test_machine_exit_code_nonzero || true
+run_test "Environment variable" test_machine_env_variable || true
+run_test "Multiple environment variables" test_machine_multiple_env_variables || true
+run_test "Timeout" test_machine_timeout || true
+run_test "Working directory" test_machine_workdir || true
+run_test "Volume mount read" test_machine_volume_mount_read || true
+run_test "Volume mount write" test_machine_volume_mount_write || true
+run_test "Volume mount readonly" test_machine_volume_mount_readonly || true
+run_test "Volume mount subdirectory" test_machine_volume_mount_subdirectory || true
+run_test "Volume mount multiple" test_machine_volume_mount_multiple || true
+run_test "Shell pipeline" test_machine_shell_pipeline || true
+run_test "Command not found fails" test_machine_command_not_found || true
 run_test "TSI: overlayfs rootfs write works" test_tsi_overlayfs_rootfs_write_works || true
 run_test "TSI: virtiofs mount write works" test_tsi_virtiofs_mount_write_works || true
 run_test "TSI: coding agent workflow" test_tsi_coding_agent_workflow || true
 run_test "Network: disabled by default" test_network_disabled_by_default || true
 run_test "Network: DNS resolution" test_network_dns_resolution || true
 run_test "Network: multiple DNS lookups" test_network_multiple_dns_lookups || true
-run_test "Smolfile: workdir + env" test_sandbox_run_smolfile_workdir_env || true
-run_test "Smolfile: CLI overrides workdir" test_sandbox_run_smolfile_cli_overrides || true
-run_test "Smolfile: init commands run" test_sandbox_run_smolfile_init || true
-run_test "Smolfile: init failure reported" test_sandbox_run_smolfile_init_failure_reported || true
-run_test "Smolfile: init not rerun on reuse" test_sandbox_run_smolfile_init_not_rerun || true
-run_test "Smolfile: detached persists + restart" test_sandbox_run_smolfile_detached_persists || true
-run_test "Smolfile: config change triggers restart" test_sandbox_run_smolfile_config_change_restarts || true
-run_test "Smolfile: missing config forces restart" test_sandbox_run_missing_config_restarts || true
-run_test "Smolfile: corrupt config forces restart" test_sandbox_run_corrupt_config_restarts || true
+run_test "Smolfile: workdir + env" test_machine_run_smolfile_workdir_env || true
+run_test "Smolfile: CLI overrides workdir" test_machine_run_smolfile_cli_overrides || true
+run_test "Smolfile: init commands run" test_machine_run_smolfile_init || true
+run_test "Smolfile: init failure reported" test_machine_run_smolfile_init_failure_reported || true
+run_test "Smolfile: init not rerun on reuse" test_machine_run_smolfile_init_not_rerun || true
+run_test "Smolfile: detached persists + restart" test_machine_run_smolfile_detached_persists || true
+run_test "Smolfile: config change triggers restart" test_machine_run_smolfile_config_change_restarts || true
+run_test "Smolfile: missing config forces restart" test_machine_run_missing_config_restarts || true
+run_test "Smolfile: corrupt config forces restart" test_machine_run_corrupt_config_restarts || true
 
 rm -rf "$SMOLFILE_TMPDIR"
 
-print_summary "Sandbox Tests"
+print_summary "Machine Tests"

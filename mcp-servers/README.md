@@ -1,6 +1,6 @@
 # Built-in MCP Servers
 
-Lightweight MCP servers that run inside smolvm sandboxes, exposing tools via JSON-RPC 2.0 over stdio.
+Lightweight MCP servers that run inside smolvm machinees, exposing tools via JSON-RPC 2.0 over stdio.
 
 ## filesystem.ts
 

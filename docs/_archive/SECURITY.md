@@ -2,26 +2,26 @@
 
 ## TL;DR
 
-smolvm provides **strong compute isolation** (hardware VM boundary) and **secret isolation via a vsock reverse proxy**. When using `--secret`, real API keys never enter the VM — the sandbox gets placeholder keys and a local proxy URL. There is no outbound network filtering beyond this.
+smolvm provides **strong compute isolation** (hardware VM boundary) and **secret isolation via a vsock reverse proxy**. When using `--secret`, real API keys never enter the VM — the machine gets placeholder keys and a local proxy URL. There is no outbound network filtering beyond this.
 
-**Safe pattern:** Use `--secret` for API keys (keys stay on host). Use `network: false` when possible. Don't pass real keys via `--env` to sandboxes running untrusted code.
+**Safe pattern:** Use `--secret` for API keys (keys stay on host). Use `network: false` when possible. Don't pass real keys via `--env` to machinees running untrusted code.
 
 ---
 
 ## What's protected
 
-Each sandbox is a **libkrun micro VM** — a real virtual machine with its own kernel, not a container. This provides hardware-level isolation via Hypervisor.framework (macOS) or KVM (Linux).
+Each machine is a **libkrun micro VM** — a real virtual machine with its own kernel, not a container. This provides hardware-level isolation via Hypervisor.framework (macOS) or KVM (Linux).
 
 | Property | Status | Verified |
 |---|---|---|
 | Host filesystem invisible | Protected | `/Users`, `/System`, `.env` not accessible |
-| Cross-sandbox filesystem | Isolated | Sandboxes can't see each other's files |
+| Cross-machine filesystem | Isolated | Machinees can't see each other's files |
 | Separate kernel | Yes | Each VM runs its own Linux kernel |
 | Separate process namespace | Yes | `ps` only shows VM processes |
 | Cloud metadata blocked | Yes | 169.254.169.254 unreachable |
 | Network off by default | Yes | No connectivity unless `network: true` |
 | Env vars between exec calls | Isolated | Don't persist between calls |
-| Resource limits (CPU/memory) | Enforced | Configurable per sandbox |
+| Resource limits (CPU/memory) | Enforced | Configurable per machine |
 | Fork bomb protection | Enforced | RLIMIT_NPROC 256 soft / 512 hard |
 | API authentication | Available | Bearer token on all `/api/v1/*` routes |
 | Non-root exec | Available | setuid/setgid via `--user` flag |
@@ -32,7 +32,7 @@ Each sandbox is a **libkrun micro VM** — a real virtual machine with its own k
 
 ### 1. Secrets via --env are visible (use --secret instead)
 
-When you pass env vars via `--env KEY=VALUE`, the code inside the sandbox sees the real value. **Use `--secret` instead** — the secret proxy keeps real keys on the host.
+When you pass env vars via `--env KEY=VALUE`, the code inside the machine sees the real value. **Use `--secret` instead** — the secret proxy keeps real keys on the host.
 
 ```bash
 # UNSAFE: --env passes real key into VM
@@ -52,7 +52,7 @@ See "Secret Proxy Architecture" below for how this works.
 
 ### 2. No outbound network filtering
 
-When `network: true`, the sandbox has **unrestricted internet access**. There is no:
+When `network: true`, the machine has **unrestricted internet access**. There is no:
 - Domain allowlist enforcement (config exists, not enforced — TSI bypasses netfilter)
 - HTTP request inspection or secret scrubbing
 - DNS filtering
@@ -62,7 +62,7 @@ Code can `curl`, `wget`, or open sockets to any address.
 
 ### 3. VM can reach host services via TSI
 
-libkrun's TSI (Transparent Socket Impersonation) proxies socket syscalls through the host network stack. When `network: true`, the sandbox can reach:
+libkrun's TSI (Transparent Socket Impersonation) proxies socket syscalls through the host network stack. When `network: true`, the machine can reach:
 
 - **smolvm API on port 8080** — mitigated by bearer token auth (if enabled)
 - **Any host service** — databases, dev servers, other APIs on localhost
@@ -73,16 +73,16 @@ TSI operates below netfilter, so iptables rules inside the VM have no effect.
 ### 4. No secret lifecycle management
 
 There is no mechanism to:
-- Rotate secrets without restarting sandboxes
-- Audit which sandboxes have which secrets
-- Revoke a secret after it's been passed to a sandbox
+- Rotate secrets without restarting machinees
+- Audit which machinees have which secrets
+- Revoke a secret after it's been passed to a machine
 - Scope secrets to specific outbound hosts
 
 ---
 
 ## How other platforms compare
 
-| | smolvm | Deno Sandbox | Fly Sprites | Cloudflare | OpenSandbox |
+| | smolvm | Deno Machine | Fly Sprites | Cloudflare | OpenMachine |
 |---|---|---|---|---|---|
 | **Isolation** | Micro VM (hardware) | Micro VM | Micro VM | Container | Container |
 | **Secret visibility** | Placeholder only (--secret) | Placeholder only | Real keys in env | Proxy-injected | Real keys in env |
@@ -92,11 +92,11 @@ There is no mechanism to:
 | **Host access** | Via TSI (mitigated by auth) | No | No | No | No |
 | **Exfiltration risk** | Low (--secret) / High (--env) | Lowest | High | Medium | Medium |
 
-**Deno Sandbox** has the strongest secret model: placeholder tokens that resolve only at the network proxy level.
+**Deno Machine** has the strongest secret model: placeholder tokens that resolve only at the network proxy level.
 
 **smolvm** now matches Deno's model via vsock reverse proxy. Real keys never enter the VM when using `--secret`. The `--env` path still passes raw values — use `--secret` for untrusted code.
 
-**OpenSandbox** (Alibaba) has the strongest egress model: FQDN-based DNS proxy + nftables enforcement.
+**OpenMachine** (Alibaba) has the strongest egress model: FQDN-based DNS proxy + nftables enforcement.
 
 ---
 
@@ -135,7 +135,7 @@ SDK receives response
 smolvm serve start --secret anthropic=test-ant-xxx --secret openai=test-proj-yyy
 # Or via env: SMOLVM_SECRET_ANTHROPIC=test-ant-xxx
 
-# Per-sandbox: opt in to which secrets are available
+# Per-machine: opt in to which secrets are available
 smolctl up agent-1 --secret anthropic --secret openai
 
 # Inside the VM, these env vars are auto-set:
@@ -148,9 +148,9 @@ smolctl up agent-1 --secret anthropic --secret openai
 ### Security properties
 
 - Real keys never enter the VM (only placeholder + localhost URL)
-- Each sandbox gets its own proxy socket (can't talk to other sandboxes' proxies)
+- Each machine gets its own proxy socket (can't talk to other machinees' proxies)
 - Proxy only forwards to registered service base URLs (not arbitrary destinations)
-- Secret names validated at sandbox creation (can't request unconfigured secrets)
+- Secret names validated at machine creation (can't request unconfigured secrets)
 - Env vars matching protected names (e.g. `ANTHROPIC_API_KEY`) are auto-stripped from exec calls when secrets are active
 - Built-in services: Anthropic (`x-api-key`), OpenAI (`Authorization: Bearer`), Google (`x-goog-api-key`)
 
@@ -175,7 +175,7 @@ smolctl cp worker:/workspace/code/results ./results
 smolctl down worker
 ```
 
-No secrets ever enter the sandbox. No network means code can't phone home. Results are pulled back via the API (which runs outside the sandbox).
+No secrets ever enter the machine. No network means code can't phone home. Results are pulled back via the API (which runs outside the machine).
 
 ### Running untrusted code that needs API access (RECOMMENDED)
 
@@ -198,7 +198,7 @@ smolctl up agent-1
 smolctl sh agent-1 "npm test" --env API_KEY=sk-xxx
 ```
 
-The key is visible inside the sandbox, but you trust the code not to exfiltrate it.
+The key is visible inside the machine, but you trust the code not to exfiltrate it.
 
 ### Running untrusted code that needs network
 
@@ -233,7 +233,7 @@ These are architectural improvements, roughly ordered by impact:
 
 Built-in services: Anthropic, OpenAI, Google/Gemini. Env vars matching protected key names are auto-stripped from exec calls.
 
-### 2. DNS-based egress filtering (like OpenSandbox)
+### 2. DNS-based egress filtering (like OpenMachine)
 
 Run a DNS proxy inside the VM that only resolves allowlisted domains. Block direct IP connections via iptables (if TSI ever switches to virtio-net) or via the DNS proxy refusing resolution.
 
@@ -263,9 +263,9 @@ Instead of env vars, mount secrets as read-only files that are only accessible t
 
 For running AI-generated code in smolvm today:
 
-- [x] Use `--no-network` for sandboxes that don't need internet
+- [x] Use `--no-network` for machinees that don't need internet
 - [x] Enable `--api-token` or `--generate-token` to protect the host API
-- [x] Don't pass real API keys to sandboxes running untrusted code
+- [x] Don't pass real API keys to machinees running untrusted code
 - [x] Use `--user agent` for non-root execution
 - [x] Keep the API on `127.0.0.1`, not `0.0.0.0`
 - [x] Use `smolctl cp` to move files in/out instead of mounting host dirs

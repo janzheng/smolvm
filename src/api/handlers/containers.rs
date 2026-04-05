@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::api::error::{classify_ensure_running_error, ApiError};
-use crate::api::state::{ensure_running_and_persist, with_sandbox_client, ApiState};
+use crate::api::state::{ensure_running_and_persist, with_machine_client, ApiState};
 use crate::api::types::{
     ApiErrorResponse, ContainerExecRequest, ContainerInfo, CreateContainerRequest,
     DeleteContainerRequest, DeleteResponse, EnvVar, ExecResponse, ListContainersResponse,
@@ -17,7 +17,7 @@ use crate::api::types::{
 use crate::api::validation::validate_command;
 use crate::DEFAULT_IDLE_CMD;
 
-/// Create a container in a sandbox.
+/// Create a container in a machine.
 #[utoipa::path(
     post,
     path = "/api/v1/machines/{id}/containers",
@@ -34,13 +34,13 @@ use crate::DEFAULT_IDLE_CMD;
 )]
 pub async fn create_container(
     State(state): State<Arc<ApiState>>,
-    Path(sandbox_id): Path<String>,
+    Path(machine_id): Path<String>,
     Json(req): Json<CreateContainerRequest>,
 ) -> Result<Json<ContainerInfo>, ApiError> {
-    let entry = state.get_machine(&sandbox_id)?;
+    let entry = state.get_machine(&machine_id)?;
 
-    // Ensure sandbox is running and persist state to DB
-    ensure_running_and_persist(&state, &sandbox_id, &entry)
+    // Ensure machine is running and persist state to DB
+    ensure_running_and_persist(&state, &machine_id, &entry)
         .await
         .map_err(classify_ensure_running_error)?;
 
@@ -59,7 +59,7 @@ pub async fn create_container(
         .map(|m| (m.source.clone(), m.target.clone(), m.readonly))
         .collect();
 
-    let container_info = with_sandbox_client(&entry, move |c| {
+    let container_info = with_machine_client(&entry, move |c| {
         c.create_container(&image, command, env, workdir, mounts)
     })
     .await?;
@@ -73,7 +73,7 @@ pub async fn create_container(
     }))
 }
 
-/// List containers in a sandbox.
+/// List containers in a machine.
 #[utoipa::path(
     get,
     path = "/api/v1/machines/{id}/containers",
@@ -88,11 +88,11 @@ pub async fn create_container(
 )]
 pub async fn list_containers(
     State(state): State<Arc<ApiState>>,
-    Path(sandbox_id): Path<String>,
+    Path(machine_id): Path<String>,
 ) -> Result<Json<ListContainersResponse>, ApiError> {
-    let entry = state.get_machine(&sandbox_id)?;
+    let entry = state.get_machine(&machine_id)?;
 
-    // Check if sandbox VM is actually alive, return empty list if not
+    // Check if machine VM is actually alive, return empty list if not
     {
         let entry = entry.lock();
         if !entry.manager.is_process_alive() {
@@ -102,7 +102,7 @@ pub async fn list_containers(
         }
     }
 
-    let containers = with_sandbox_client(&entry, |c| c.list_containers()).await?;
+    let containers = with_machine_client(&entry, |c| c.list_containers()).await?;
 
     let containers = containers
         .into_iter()
@@ -135,12 +135,12 @@ pub async fn list_containers(
 )]
 pub async fn start_container(
     State(state): State<Arc<ApiState>>,
-    Path((sandbox_id, container_id)): Path<(String, String)>,
+    Path((machine_id, container_id)): Path<(String, String)>,
 ) -> Result<Json<StartResponse>, ApiError> {
-    let entry = state.get_machine(&sandbox_id)?;
+    let entry = state.get_machine(&machine_id)?;
 
     let container_id_response = container_id.clone();
-    with_sandbox_client(&entry, move |c| c.start_container(&container_id)).await?;
+    with_machine_client(&entry, move |c| c.start_container(&container_id)).await?;
     Ok(Json(StartResponse {
         started: container_id_response,
     }))
@@ -164,15 +164,15 @@ pub async fn start_container(
 )]
 pub async fn stop_container(
     State(state): State<Arc<ApiState>>,
-    Path((sandbox_id, container_id)): Path<(String, String)>,
+    Path((machine_id, container_id)): Path<(String, String)>,
     Json(req): Json<StopContainerRequest>,
 ) -> Result<Json<StopResponse>, ApiError> {
-    let entry = state.get_machine(&sandbox_id)?;
+    let entry = state.get_machine(&machine_id)?;
 
     let timeout_secs = req.timeout_secs;
 
     let container_id_response = container_id.clone();
-    with_sandbox_client(&entry, move |c| {
+    with_machine_client(&entry, move |c| {
         c.stop_container(&container_id, timeout_secs)
     })
     .await?;
@@ -199,15 +199,15 @@ pub async fn stop_container(
 )]
 pub async fn delete_container(
     State(state): State<Arc<ApiState>>,
-    Path((sandbox_id, container_id)): Path<(String, String)>,
+    Path((machine_id, container_id)): Path<(String, String)>,
     Json(req): Json<DeleteContainerRequest>,
 ) -> Result<Json<DeleteResponse>, ApiError> {
-    let entry = state.get_machine(&sandbox_id)?;
+    let entry = state.get_machine(&machine_id)?;
 
     let force = req.force;
 
     let container_id_response = container_id.clone();
-    with_sandbox_client(&entry, move |c| c.delete_container(&container_id, force)).await?;
+    with_machine_client(&entry, move |c| c.delete_container(&container_id, force)).await?;
     Ok(Json(DeleteResponse {
         deleted: container_id_response,
     }))
@@ -232,12 +232,12 @@ pub async fn delete_container(
 )]
 pub async fn exec_in_container(
     State(state): State<Arc<ApiState>>,
-    Path((sandbox_id, container_id)): Path<(String, String)>,
+    Path((machine_id, container_id)): Path<(String, String)>,
     Json(req): Json<ContainerExecRequest>,
 ) -> Result<Json<ExecResponse>, ApiError> {
     validate_command(&req.command)?;
 
-    let entry = state.get_machine(&sandbox_id)?;
+    let entry = state.get_machine(&machine_id)?;
 
     // Prepare parameters
     let command = req.command.clone();
@@ -245,7 +245,7 @@ pub async fn exec_in_container(
     let workdir = req.workdir.clone();
     let timeout = req.timeout_secs.map(Duration::from_secs);
 
-    let (exit_code, stdout, stderr) = with_sandbox_client(&entry, move |c| {
+    let (exit_code, stdout, stderr) = with_machine_client(&entry, move |c| {
         c.exec(&container_id, command, env, workdir, timeout)
     })
     .await?;

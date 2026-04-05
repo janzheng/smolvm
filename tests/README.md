@@ -7,7 +7,7 @@ Integration tests and performance benchmarks for smolvm.
 | File | Description | Requires VM |
 |------|-------------|-------------|
 | `test_cli.sh` | Basic CLI tests (--version, --help, flags) | No |
-| `test_sandbox.sh` | Sandbox run tests (exec, env, volumes, TSI) | Yes |
+| `test_machine.sh` | Machine run tests (exec, env, volumes, TSI) | Yes |
 | `test_microvm.sh` | MicroVM lifecycle tests (start, stop, exec, DB) | Yes |
 | `test_container.sh` | Container lifecycle tests (create, exec, stop) | Yes |
 | `test_api.sh` | HTTP API tests (`smolvm serve start`) | Yes |
@@ -34,7 +34,7 @@ Integration tests and performance benchmarks for smolvm.
 
 ```bash
 ./tests/run_all.sh cli        # CLI tests only
-./tests/run_all.sh sandbox    # Sandbox tests only
+./tests/run_all.sh machine    # Machine tests only
 ./tests/run_all.sh microvm    # MicroVM tests only
 ./tests/run_all.sh container  # Container tests only
 ./tests/run_all.sh api        # HTTP API tests only
@@ -54,7 +54,7 @@ Integration tests and performance benchmarks for smolvm.
 
 ```bash
 ./tests/test_cli.sh
-./tests/test_sandbox.sh
+./tests/test_machine.sh
 ```
 
 ### Use Specific Binary
@@ -110,7 +110,7 @@ The `common.sh` file provides shared test utilities:
 | Suite | Tests |
 |-------|-------|
 | CLI | 13 |
-| Sandbox | 31 |
+| Machine | 31 |
 | MicroVM | 24 |
 | Container | 10 |
 | API | 13 |

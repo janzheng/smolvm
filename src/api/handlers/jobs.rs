@@ -40,11 +40,11 @@ pub async fn submit_job(
     State(state): State<Arc<ApiState>>,
     Json(req): Json<SubmitJobRequest>,
 ) -> Result<(axum::http::StatusCode, Json<SubmitJobResponse>), ApiError> {
-    // Validate sandbox exists
-    if !state.sandbox_exists(&req.sandbox) {
+    // Validate machine exists
+    if !state.machine_exists(&req.machine) {
         return Err(ApiError::NotFound(format!(
-            "sandbox '{}' not found",
-            req.sandbox
+            "machine '{}' not found",
+            req.machine
         )));
     }
 
@@ -55,7 +55,7 @@ pub async fn submit_job(
     let id = uuid::Uuid::new_v4().to_string();
     let job = JobInfo {
         id: id.clone(),
-        sandbox: req.sandbox,
+        machine: req.machine,
         command: req.command,
         env: req.env,
         workdir: req.workdir,
@@ -98,7 +98,7 @@ pub async fn list_jobs(
     State(state): State<Arc<ApiState>>,
     Query(query): Query<JobsQuery>,
 ) -> Json<ListJobsResponse> {
-    let jobs = state.list_jobs(query.status.as_deref(), query.sandbox.as_deref(), query.limit);
+    let jobs = state.list_jobs(query.status.as_deref(), query.machine.as_deref(), query.limit);
     Json(ListJobsResponse { jobs })
 }
 
@@ -141,7 +141,7 @@ pub async fn poll_job(
 ) -> Result<Json<JobInfo>, axum::http::StatusCode> {
     match state.poll_next_job() {
         Some(job) => {
-            tracing::info!(job_id = %job.id, sandbox = %job.sandbox, "job claimed");
+            tracing::info!(job_id = %job.id, machine = %job.machine, "job claimed");
             Ok(Json(job))
         }
         None => Err(axum::http::StatusCode::NO_CONTENT),

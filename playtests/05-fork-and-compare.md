@@ -8,7 +8,7 @@ Does this actually work as a useful workflow?
 
 ## Entry point
 
-Create a sandbox called "main" with a small project in it (a few files in
+Create a machine called "main" with a small project in it (a few files in
 /workspace). This is your "main branch."
 
 ## Scenario: parallel experiments
@@ -26,12 +26,12 @@ Create a sandbox called "main" with a small project in it (a few files in
 
 ## Things to explore
 
-- Clone a sandbox that has installed packages (node_modules, venv). Does the
+- Clone a machine that has installed packages (node_modules, venv). Does the
   clone include everything or just /workspace?
-- Clone a running sandbox vs a stopped one. Any difference?
+- Clone a running machine vs a stopped one. Any difference?
 - Make the same file different in two forks, then try to merge both into main.
   What happens with conflicts?
-- Diff a sandbox against itself. Diff against a nonexistent sandbox
+- Diff a machine against itself. Diff against a nonexistent machine
 - Merge with strategy "theirs" vs "ours". Is the behavior intuitive?
 - Merge specific files only. Does the `files` filter work?
 - Clone a clone of a clone. How deep can you go?

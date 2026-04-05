@@ -2,23 +2,23 @@
  * @smolvm/sdk — TypeScript SDK for smolvm
  *
  * Thin wrapper around smolvm's REST API. Matches the just-bash/Vercel
- * Sandbox API shape for swappability.
+ * Machine API shape for swappability.
  *
  * @example Basic usage
  * ```typescript
  * import { SmolvmClient } from "@smolvm/sdk";
  *
  * const client = new SmolvmClient();
- * const sandbox = await client.create("my-vm", { network: true });
- * await sandbox.start();
+ * const machine = await client.create("my-vm", { network: true });
+ * await machine.start();
  *
- * const result = await sandbox.sh("echo hello");
+ * const result = await machine.sh("echo hello");
  * console.log(result.stdout); // "hello\n"
  *
- * await sandbox.writeFile("/app/main.ts", "console.log('hi');");
- * const content = await sandbox.readFile("/app/main.ts");
+ * await machine.writeFile("/app/main.ts", "console.log('hi');");
+ * const content = await machine.readFile("/app/main.ts");
  *
- * await sandbox.cleanup();
+ * await machine.cleanup();
  * ```
  *
  * @example Fleet operations
@@ -33,17 +33,17 @@
 
 export { SmolvmClient } from "./smolvm-client.ts";
 export { SmolvmHttpClient, SmolvmError } from "./client.ts";
-export { Sandbox } from "./sandbox.ts";
+export { Machine } from "./machine.ts";
 export { MicroVM } from "./microvm.ts";
-export { SandboxFleet } from "./fleet.ts";
+export { MachineFleet } from "./fleet.ts";
 export type {
   CheckpointMetadata,
-  CloneSandboxRequest,
+  CloneMachineRequest,
   ContainerInfo,
   CreateCheckpointResponse,
   CreateContainerOptions,
   CreateMicroVMOptions,
-  CreateSandboxOptions,
+  CreateMachineOptions,
   DiffResult,
   DiskStats,
   EnvVar,
@@ -55,14 +55,14 @@ export type {
   HealthResponse,
   ImageInfo,
   MergeResponse,
-  MergeSandboxRequest,
+  MergeMachineRequest,
   MergeStrategy,
   MicroVMInfo,
   MountSpec,
   PortSpec,
   ResourceStats,
   RestoreCheckpointResponse,
-  SandboxInfo,
+  MachineInfo,
   SnapshotInfo,
   SnapshotListResponse,
   StarterInfo,

@@ -1,6 +1,6 @@
-//! Shared helpers for microvm and sandbox CLI commands.
+//! Shared helpers for microvm and machine CLI commands.
 //!
-//! Both `microvm` and `sandbox` expose the same lifecycle commands
+//! Both `microvm` and `machine` expose the same lifecycle commands
 //! (create, start, stop, delete, ls) with only cosmetic differences.
 //! This module provides the common implementations, parameterised by
 //! [`VmKind`].
@@ -18,7 +18,7 @@ use smolvm::storage::{DEFAULT_OVERLAY_SIZE_GIB, DEFAULT_STORAGE_SIZE_GIB};
 // VmKind
 // ============================================================================
 
-/// Distinguishes microvm vs sandbox for display strings and minor
+/// Distinguishes microvm vs machine for display strings and minor
 /// behavioural differences.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VmKind {
@@ -99,7 +99,7 @@ pub fn vm_label(name: &Option<String>) -> String {
 
 /// Ensure a VM is running and return a connected client.
 ///
-/// This is the common pattern used by exec commands in both microvm and sandbox.
+/// This is the common pattern used by exec commands in both microvm and machine.
 /// It resolves the VM manager, checks connectivity, and establishes a client connection.
 pub fn ensure_running_and_connect(
     name: &Option<String>,
@@ -185,10 +185,10 @@ pub struct CreateVmParams {
     pub overlay_gb: Option<u64>,
 }
 
-/// Maximum length for VM/sandbox names.
+/// Maximum length for VM/machine names.
 const MAX_NAME_LENGTH: usize = 40;
 
-/// Validate a VM/sandbox name for CLI commands.
+/// Validate a VM/machine name for CLI commands.
 ///
 /// Same rules as the API validation but returns `smolvm::Error` instead of `ApiError`.
 fn validate_name(name: &str, kind: VmKind) -> smolvm::Result<()> {
@@ -245,7 +245,7 @@ fn validate_name(name: &str, kind: VmKind) -> smolvm::Result<()> {
     Ok(())
 }
 
-/// Create a named VM/sandbox configuration (does not start it).
+/// Create a named VM/machine configuration (does not start it).
 pub fn create_vm(kind: VmKind, params: CreateVmParams) -> smolvm::Result<()> {
     // Validate name before touching the database
     validate_name(&params.name, kind)?;
@@ -330,7 +330,7 @@ pub fn create_vm(kind: VmKind, params: CreateVmParams) -> smolvm::Result<()> {
 // Start
 // ============================================================================
 
-/// Start a named VM/sandbox that has a config record.
+/// Start a named VM/machine that has a config record.
 ///
 /// Uses direct DB operations instead of SmolvmConfig::load() to avoid
 /// loading all config settings and all VM records. Only reads the single
@@ -490,7 +490,7 @@ pub struct DefaultVmOverrides {
     pub workdir: Option<String>,
 }
 
-/// Start the default VM/sandbox.
+/// Start the default VM/machine.
 pub fn start_vm_default(kind: VmKind) -> smolvm::Result<()> {
     let manager = AgentManager::new_default()?;
 
@@ -511,7 +511,7 @@ pub fn start_vm_default(kind: VmKind) -> smolvm::Result<()> {
     let mut config = SmolvmConfig::load()?;
     persist_default_running(&mut config, manager.child_pid(), None);
 
-    // Run init commands if the default record has them (persisted from sandbox run -d -s)
+    // Run init commands if the default record has them (persisted from machine run -d -s)
     let record = config.get_vm("default").cloned();
 
     if let Some(record) = record {
@@ -544,7 +544,7 @@ pub fn start_vm_default(kind: VmKind) -> smolvm::Result<()> {
 // Stop
 // ============================================================================
 
-/// Stop a named VM/sandbox that has a config record (or fall back to
+/// Stop a named VM/machine that has a config record (or fall back to
 /// agent-only stop if the name is not in config).
 pub fn stop_vm_named(kind: VmKind, name: &str) -> smolvm::Result<()> {
     let mut config = SmolvmConfig::load()?;
@@ -597,7 +597,7 @@ pub fn stop_vm_named(kind: VmKind, name: &str) -> smolvm::Result<()> {
     Ok(())
 }
 
-/// Stop the default VM/sandbox.
+/// Stop the default VM/machine.
 pub fn stop_vm_default(kind: VmKind) -> smolvm::Result<()> {
     let manager = AgentManager::new_default()?;
 
@@ -625,13 +625,13 @@ pub fn stop_vm_default(kind: VmKind) -> smolvm::Result<()> {
 // Delete
 // ============================================================================
 
-/// Options that vary between microvm and sandbox delete.
+/// Options that vary between microvm and machine delete.
 pub struct DeleteVmOptions {
     /// If true, stop the VM before deleting when it is running.
     pub stop_if_running: bool,
 }
 
-/// Delete a named VM/sandbox configuration.
+/// Delete a named VM/machine configuration.
 pub fn delete_vm(
     kind: VmKind,
     name: &str,
@@ -646,7 +646,7 @@ pub fn delete_vm(
         .ok_or_else(|| smolvm::Error::vm_not_found(name))?
         .clone();
 
-    // Stop if running (sandbox does this, microvm does not)
+    // Stop if running (machine does this, microvm does not)
     if options.stop_if_running && record.actual_state() == RecordState::Running {
         if let Ok(manager) = AgentManager::for_vm(name) {
             println!("Stopping {} '{}'...", kind.label(), name);
@@ -691,10 +691,10 @@ pub fn delete_vm(
 // Status
 // ============================================================================
 
-/// Show status of a named or default VM/sandbox.
+/// Show status of a named or default VM/machine.
 ///
 /// The `extra` callback is invoked when the VM is running, allowing callers
-/// to display additional information (e.g., sandbox lists containers).
+/// to display additional information (e.g., machine lists containers).
 pub fn status_vm<F>(kind: VmKind, name: &Option<String>, extra: F) -> smolvm::Result<()>
 where
     F: FnOnce(&AgentManager),
@@ -718,7 +718,7 @@ where
 // List
 // ============================================================================
 
-/// List all VMs/sandboxes.
+/// List all VMs/machinees.
 pub fn list_vms(kind: VmKind, verbose: bool, json: bool) -> smolvm::Result<()> {
     let config = SmolvmConfig::load()?;
     let vms: Vec<_> = config.list_vms().collect();

@@ -8,12 +8,12 @@ use std::sync::Arc;
 
 use crate::agent::PullOptions;
 use crate::api::error::{classify_ensure_running_error, ApiError};
-use crate::api::state::{ensure_running_and_persist, with_sandbox_client, ApiState};
+use crate::api::state::{ensure_running_and_persist, with_machine_client, ApiState};
 use crate::api::types::{
     ApiErrorResponse, ImageInfo, ListImagesResponse, PullImageRequest, PullImageResponse,
 };
 
-/// List images in a sandbox.
+/// List images in a machine.
 #[utoipa::path(
     get,
     path = "/api/v1/machines/{id}/images",
@@ -28,11 +28,11 @@ use crate::api::types::{
 )]
 pub async fn list_images(
     State(state): State<Arc<ApiState>>,
-    Path(sandbox_id): Path<String>,
+    Path(machine_id): Path<String>,
 ) -> Result<Json<ListImagesResponse>, ApiError> {
-    let entry = state.get_machine(&sandbox_id)?;
+    let entry = state.get_machine(&machine_id)?;
 
-    // Check if sandbox VM is actually alive, return empty list if not
+    // Check if machine VM is actually alive, return empty list if not
     {
         let entry = entry.lock();
         if !entry.manager.is_process_alive() {
@@ -40,7 +40,7 @@ pub async fn list_images(
         }
     }
 
-    let images = with_sandbox_client(&entry, |c| c.list_images()).await?;
+    let images = with_machine_client(&entry, |c| c.list_images()).await?;
 
     let images = images
         .into_iter()
@@ -57,7 +57,7 @@ pub async fn list_images(
     Ok(Json(ListImagesResponse { images }))
 }
 
-/// Pull an image into a sandbox.
+/// Pull an image into a machine.
 #[utoipa::path(
     post,
     path = "/api/v1/machines/{id}/images/pull",
@@ -75,7 +75,7 @@ pub async fn list_images(
 )]
 pub async fn pull_image(
     State(state): State<Arc<ApiState>>,
-    Path(sandbox_id): Path<String>,
+    Path(machine_id): Path<String>,
     Json(req): Json<PullImageRequest>,
 ) -> Result<Json<PullImageResponse>, ApiError> {
     if req.image.is_empty() {
@@ -84,16 +84,16 @@ pub async fn pull_image(
         ));
     }
 
-    let entry = state.get_machine(&sandbox_id)?;
+    let entry = state.get_machine(&machine_id)?;
 
-    // Ensure sandbox is running and persist state to DB
-    ensure_running_and_persist(&state, &sandbox_id, &entry)
+    // Ensure machine is running and persist state to DB
+    ensure_running_and_persist(&state, &machine_id, &entry)
         .await
         .map_err(classify_ensure_running_error)?;
 
     let image = req.image.clone();
     let oci_platform = req.oci_platform.clone();
-    let image_info = with_sandbox_client(&entry, move |c| {
+    let image_info = with_machine_client(&entry, move |c| {
         let mut opts = PullOptions::new().use_registry_config(true);
         if let Some(p) = oci_platform {
             opts = opts.oci_platform(p);

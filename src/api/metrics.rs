@@ -19,19 +19,19 @@ pub fn init() -> PrometheusHandle {
 // Metric recording helpers
 // ============================================================================
 
-/// Record a sandbox creation event.
-pub fn record_sandbox_created() {
-    counter!("smolvm_sandboxes_created_total").increment(1);
+/// Record a machine creation event.
+pub fn record_machine_created() {
+    counter!("smolvm_machinees_created_total").increment(1);
 }
 
-/// Record a sandbox deletion event.
-pub fn record_sandbox_deleted() {
-    counter!("smolvm_sandboxes_deleted_total").increment(1);
+/// Record a machine deletion event.
+pub fn record_machine_deleted() {
+    counter!("smolvm_machinees_deleted_total").increment(1);
 }
 
-/// Record sandbox boot time in seconds.
-pub fn record_sandbox_boot_time(secs: f64) {
-    histogram!("smolvm_sandbox_boot_seconds").record(secs);
+/// Record machine boot time in seconds.
+pub fn record_machine_boot_time(secs: f64) {
+    histogram!("smolvm_machine_boot_seconds").record(secs);
 }
 
 /// Record exec command duration in seconds.
@@ -44,9 +44,9 @@ pub fn record_exec_called() {
     counter!("smolvm_exec_total").increment(1);
 }
 
-/// Set the current number of active sandboxes.
-pub fn set_active_sandboxes(n: u64) {
-    gauge!("smolvm_sandboxes_active").set(n as f64);
+/// Set the current number of active machinees.
+pub fn set_active_machinees(n: u64) {
+    gauge!("smolvm_machinees_active").set(n as f64);
 }
 
 #[cfg(test)]
@@ -65,11 +65,11 @@ mod tests {
     fn test_metrics_helpers_dont_panic() {
         // The metrics macros go to a global recorder. In test context
         // the recorder may not be installed, but the calls must not panic.
-        record_sandbox_created();
-        record_sandbox_deleted();
+        record_machine_created();
+        record_machine_deleted();
         record_exec_called();
         record_exec_duration(0.5);
-        record_sandbox_boot_time(1.2);
-        set_active_sandboxes(3);
+        record_machine_boot_time(1.2);
+        set_active_machinees(3);
     }
 }

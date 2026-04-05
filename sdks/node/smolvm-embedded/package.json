@@ -41,7 +41,7 @@
     "smolvm",
     "embedded",
     "microvm",
-    "sandbox",
+    "machine",
     "virtualization",
     "napi"
   ],

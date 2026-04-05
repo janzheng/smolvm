@@ -36,16 +36,16 @@ Results get appended to `PLAYTEST-LOG.md` in this directory.
 
 | # | File | Mission | Time |
 |---|------|---------|------|
-| 01 | `01-first-contact.md` | Cold start: can you get a sandbox running from zero? | 15 min |
-| 02 | `02-build-something.md` | Actually build and run a web app inside a sandbox | 20 min |
+| 01 | `01-first-contact.md` | Cold start: can you get a machine running from zero? | 15 min |
+| 02 | `02-build-something.md` | Actually build and run a web app inside a machine | 20 min |
 | 03 | `03-break-it.md` | Adversarial: try to crash, leak, or confuse the server | 20 min |
-| 04 | `04-agent-autonomy.md` | Give Claude Code a real task inside a sandbox | 30 min |
+| 04 | `04-agent-autonomy.md` | Give Claude Code a real task inside a machine | 30 min |
 | 05 | `05-fork-and-compare.md` | Use clone/diff/merge as a real branching workflow | 20 min |
 | 06 | `06-disaster-recovery.md` | Snapshot, destroy, restore — does state actually survive? | 15 min |
 | 07 | `07-sdk-ergonomics.md` | Use the TS SDK to build something real. What's clunky? | 20 min |
 | 08 | `08-web-ui-walkthrough.md` | Use the web UI like a real user. What's confusing? | 15 min |
-| 09 | `09-tunnel-to-the-world.md` | Expose a sandbox service publicly via cloudflared | 20 min |
-| 10 | `10-stress-and-limits.md` | Many sandboxes, big files, long processes — find the limits | 30 min |
+| 09 | `09-tunnel-to-the-world.md` | Expose a machine service publicly via cloudflared | 20 min |
+| 10 | `10-stress-and-limits.md` | Many machinees, big files, long processes — find the limits | 30 min |
 
 ## How to run a playtest
 

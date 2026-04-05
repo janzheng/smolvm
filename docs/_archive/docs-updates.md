@@ -72,30 +72,30 @@ Exec calls without timeout can hang indefinitely if a command blocks
 }
 ```
 
-### 3. Within-Sandbox Exec is Serial
+### 3. Within-Machine Exec is Serial
 
-Multiple concurrent exec calls to the same sandbox execute one at a time.
+Multiple concurrent exec calls to the same machine execute one at a time.
 Three 1-second sleeps take ~3s, not ~1s.
 
 ```
 // Serial (3s for 3x1s sleep)
 Promise.all([
-  exec("sandbox-1", "sleep 1"),
-  exec("sandbox-1", "sleep 1"),
-  exec("sandbox-1", "sleep 1"),
+  exec("machine-1", "sleep 1"),
+  exec("machine-1", "sleep 1"),
+  exec("machine-1", "sleep 1"),
 ])
 
-// Parallel (1s for 3x1s sleep) — use separate sandboxes
+// Parallel (1s for 3x1s sleep) — use separate machinees
 Promise.all([
-  exec("sandbox-1", "sleep 1"),
-  exec("sandbox-2", "sleep 1"),
-  exec("sandbox-3", "sleep 1"),
+  exec("machine-1", "sleep 1"),
+  exec("machine-2", "sleep 1"),
+  exec("machine-3", "sleep 1"),
 ])
 ```
 
 ### 4. Volume Mounts Don't Work (Alpha Bug)
 
-The API accepts mount configuration and sandbox creation succeeds, but
+The API accepts mount configuration and machine creation succeeds, but
 files are NOT visible across the host/guest boundary.
 
 ```json
@@ -121,7 +121,7 @@ files are NOT visible across the host/guest boundary.
 
 Port mapping config is accepted but connections from host are refused.
 
-### 6. Container-in-Sandbox Returns 500
+### 6. Container-in-Machine Returns 500
 
 Image pull works, but container creation fails with crun storage path error.
 
@@ -167,7 +167,7 @@ async function apiPost(path: string, body?: unknown): Promise<Response> {
 }
 
 async function exec(
-  sandbox: string,
+  machine: string,
   command: string[],
   opts?: {
     env?: { name: string; value: string }[];
@@ -175,7 +175,7 @@ async function exec(
     timeout_secs?: number;
   },
 ) {
-  const resp = await apiPost(`/sandboxes/${sandbox}/exec`, {
+  const resp = await apiPost(`/machines/${machine}/exec`, {
     command,
     ...opts,
   });
@@ -188,26 +188,26 @@ async function exec(
 }
 ```
 
-### Pattern: Full Sandbox Lifecycle
+### Pattern: Full Machine Lifecycle
 
 ```typescript
 // 1. Create
-await apiPost("/sandboxes", {
-  name: "my-sandbox",
+await apiPost("/machinees", {
+  name: "my-machine",
   resources: { cpus: 2, memory_mb: 2048, network: true },
 });
 
 // 2. Start
-await apiPost("/sandboxes/my-sandbox/start");
+await apiPost("/machines/my-machine/start");
 
 // 3. Bootstrap (install tools)
-await exec("my-sandbox", ["sh", "-c", "apk add --no-cache git nodejs npm"], {
+await exec("my-machine", ["sh", "-c", "apk add --no-cache git nodejs npm"], {
   timeout_secs: 60,
 });
 
 // 4. Work (with env vars)
 const result = await exec(
-  "my-sandbox",
+  "my-machine",
   ["sh", "-c", "cd /workspace && node agent.js"],
   {
     env: [{ name: "API_KEY", value: "sk-..." }],
@@ -216,11 +216,11 @@ const result = await exec(
 );
 
 // 5. Extract results
-const output = await exec("my-sandbox", ["cat", "/workspace/result.json"]);
+const output = await exec("my-machine", ["cat", "/workspace/result.json"]);
 
 // 6. Cleanup
-await apiPost("/sandboxes/my-sandbox/stop");
-await fetch(`${API}/sandboxes/my-sandbox`, { method: "DELETE" });
+await apiPost("/machines/my-machine/stop");
+await fetch(`${API}/machines/my-machine`, { method: "DELETE" });
 ```
 
 ### Pattern: Fleet with Parallel Exec
@@ -230,7 +230,7 @@ const FLEET_SIZE = 3;
 
 // Create sequentially (fast — 6ms each)
 for (let i = 0; i < FLEET_SIZE; i++) {
-  await apiPost("/sandboxes", {
+  await apiPost("/machinees", {
     name: `agent-${i}`,
     resources: { cpus: 2, memory_mb: 2048, network: true },
   });
@@ -239,11 +239,11 @@ for (let i = 0; i < FLEET_SIZE; i++) {
 // Start in parallel
 await Promise.all(
   Array.from({ length: FLEET_SIZE }, (_, i) =>
-    apiPost(`/sandboxes/agent-${i}/start`)
+    apiPost(`/machines/agent-${i}/start`)
   ),
 );
 
-// Exec in parallel (cross-sandbox = truly parallel)
+// Exec in parallel (cross-machine = truly parallel)
 const results = await Promise.all(
   Array.from({ length: FLEET_SIZE }, (_, i) =>
     exec(`agent-${i}`, ["sh", "-c", "echo working on agent " + i], {
@@ -254,8 +254,8 @@ const results = await Promise.all(
 
 // Cleanup
 for (let i = 0; i < FLEET_SIZE; i++) {
-  await apiPost(`/sandboxes/agent-${i}/stop`);
-  await fetch(`${API}/sandboxes/agent-${i}`, { method: "DELETE" });
+  await apiPost(`/machines/agent-${i}/stop`);
+  await fetch(`${API}/machines/agent-${i}`, { method: "DELETE" });
 }
 ```
 
@@ -265,7 +265,7 @@ Since volume mounts are buggy, use exec-based workarounds:
 
 ```typescript
 // Write a file
-await exec("sandbox", [
+await exec("machine", [
   "sh", "-c",
   `cat > /workspace/config.json << 'HEREDOC'
 ${JSON.stringify(config, null, 2)}
@@ -273,14 +273,14 @@ HEREDOC`
 ]);
 
 // Read a file
-const { stdout } = await exec("sandbox", ["cat", "/workspace/output.json"]);
+const { stdout } = await exec("machine", ["cat", "/workspace/output.json"]);
 const data = JSON.parse(stdout);
 
 // List directory
-const { stdout: listing } = await exec("sandbox", ["ls", "-la", "/workspace/"]);
+const { stdout: listing } = await exec("machine", ["ls", "-la", "/workspace/"]);
 
 // Check if file exists
-const { exit_code } = await exec("sandbox", ["test", "-f", "/workspace/file.txt"]);
+const { exit_code } = await exec("machine", ["test", "-f", "/workspace/file.txt"]);
 const exists = exit_code === 0;
 ```
 
@@ -291,7 +291,7 @@ Don't use `--version` for busybox commands. Use `which` instead:
 ```typescript
 const runtimes = ["node", "python3", "git", "curl", "deno"];
 for (const name of runtimes) {
-  const { exit_code, stdout } = await exec("sandbox", [
+  const { exit_code, stdout } = await exec("machine", [
     "sh", "-c",
     `which ${name} 2>/dev/null && ${name} --version 2>&1 | head -1`,
   ], { timeout_secs: 5 });
@@ -305,13 +305,13 @@ for (const name of runtimes) {
 
 | Operation | Time |
 |-----------|------|
-| Create sandbox (API) | 6-14ms |
-| Start sandbox (VM boot) | 258-805ms |
+| Create machine (API) | 6-14ms |
+| Start machine (VM boot) | 258-805ms |
 | First exec after start | 12-15ms |
 | Warm exec (subsequent) | 12ms |
 | Total create→first exec | 281-831ms |
 | CLI one-shot | ~5.5s |
-| Stop sandbox | ~2.2s |
+| Stop machine | ~2.2s |
 | Bootstrap (apk add basics) | ~7s |
 | Full lifecycle (alpine) | ~10.1s |
 | Full lifecycle (pre-built OCI) | ~3s |
@@ -345,7 +345,7 @@ for (const name of runtimes) {
 
 CLI equivalent:
 ```bash
-smolvm sandbox run -e MY_VAR=hello -e API_KEY=sk-... alpine:latest -- sh -c 'echo $MY_VAR'
+smolvm machine run -e MY_VAR=hello -e API_KEY=sk-... alpine:latest -- sh -c 'echo $MY_VAR'
 ```
 
 ---
@@ -354,7 +354,7 @@ smolvm sandbox run -e MY_VAR=hello -e API_KEY=sk-... alpine:latest -- sh -c 'ech
 
 | Mode | Use Case | Persistence | CLI |
 |------|----------|-------------|-----|
-| Sandbox | One-shot tasks, testing | Ephemeral (gone after stop) | `smolvm sandbox run` |
+| Machine | One-shot tasks, testing | Ephemeral (gone after stop) | `smolvm machine run` |
 | MicroVM | Persistent dev environments | Survives stop/start | `smolvm microvm create/start/exec` |
 | Pack | Portable distribution | Self-contained binary | `smolvm pack` |
 
@@ -367,18 +367,18 @@ All three are manageable via the REST API.
 ### 10. MicroVM REST API Exists
 
 The `/api/v1/microvms` endpoints provide full CRUD + exec for persistent
-microVMs. The schema differs from sandboxes:
+microVMs. The schema differs from machinees:
 
 ```json
-// Sandbox create — nested resources
-{ "name": "my-sandbox", "resources": { "cpus": 2, "memory_mb": 2048, "network": true } }
+// Machine create — nested resources
+{ "name": "my-machine", "resources": { "cpus": 2, "memory_mb": 2048, "network": true } }
 
 // MicroVM create — flat schema
 { "name": "my-vm", "cpus": 2, "memoryMb": 4096, "network": true, "overlay_gb": 4 }
 ```
 
-Note: `memory_mb` (sandbox) vs `memoryMb` (microVM). The microVM API also
-exposes `overlay_gb` and `storage_gb` params that sandboxes don't have.
+Note: `memory_mb` (machine) vs `memoryMb` (microVM). The microVM API also
+exposes `overlay_gb` and `storage_gb` params that machinees don't have.
 
 ### 11. `overlay_gb` Works — But Needs `resize2fs`
 
@@ -594,11 +594,11 @@ POST   /api/v1/microvms/{name}/exec        Execute command
 // Returns: { "exit_code": 0, "stdout": "hello\n", "stderr": "" }
 ```
 
-### Key Differences from Sandbox API
+### Key Differences from Machine API
 
-| | Sandbox | MicroVM |
+| | Machine | MicroVM |
 |---|---|---|
-| Endpoint | `/api/v1/sandboxes` | `/api/v1/microvms` |
+| Endpoint | `/api/v1/machines` | `/api/v1/microvms` |
 | Memory param | `resources.memory_mb` | `memoryMb` |
 | CPU param | `resources.cpus` | `cpus` |
 | Network param | `resources.network` | `network` |

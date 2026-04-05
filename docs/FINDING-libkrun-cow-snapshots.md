@@ -13,7 +13,7 @@ to the host filesystem. The host disk files are immutable bases.
 
 ## Evidence
 
-1. Created fresh sandbox, pushed snapshot (v1)
+1. Created fresh machine, pushed snapshot (v1)
 2. Installed vim (31 MB of new packages), wrote marker file, ran `sync`
 3. Stopped VM to ensure flush
 4. MD5 of overlay.raw: **identical** before and after
@@ -24,11 +24,11 @@ to the host filesystem. The host disk files are immutable bases.
 
 ### For existing full snapshots
 Full snapshots archive the immutable base disk files. These are identical across
-all sandboxes created from the same OCI image. **Live VM state (installed
+all machinees created from the same OCI image. **Live VM state (installed
 packages, written files) is stored in libkrun's COW layer, NOT in the host
 disk files.**
 
-Snapshots "work" because pulled sandboxes boot from the same base overlay,
+Snapshots "work" because pulled machinees boot from the same base overlay,
 which already contains init_commands effects (packages installed at creation
 time). But **modifications made after creation (runtime installs, file writes)
 are NOT captured in snapshot archives**.
@@ -61,7 +61,7 @@ init_commands (at creation) rather than during runtime.
    host disk file.
 
 2. **Different init_commands** — to capture different states, create different
-   sandboxes with different init_commands rather than snapshotting live state.
+   machinees with different init_commands rather than snapshotting live state.
 
 ## Upstream Fix Needed
 

@@ -10,10 +10,10 @@
 // ============================================================================
 
 /**
- * Configuration for creating a sandbox.
+ * Configuration for creating a machine.
  */
-export interface SandboxConfig {
-  /** Unique name for the sandbox. Used as the VM identifier. */
+export interface MachineConfig {
+  /** Unique name for the machine. Used as the VM identifier. */
   name: string;
   /** Host directories to mount into the VM. */
   mounts?: MountSpec[];
@@ -64,7 +64,7 @@ export interface ResourceSpec {
 /**
  * Configuration for creating a MicroVM.
  *
- * Same shape as SandboxConfig — MicroVMs are persistent named VMs
+ * Same shape as MachineConfig — MicroVMs are persistent named VMs
  * that survive across process invocations and support reconnection.
  */
 export interface MicroVMConfig {

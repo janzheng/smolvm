@@ -11,7 +11,7 @@ safety guardrails. This is the most complete "agent dev environment on
 smolvm" implementation we've found.
 
 **TL;DR — What we learned from this project:**
-1. MicroVM > Sandbox — they independently hit the same overlayfs bug
+1. MicroVM > Machine — they independently hit the same overlayfs bug
 2. SSH is the real control plane — `smolvm exec` for bootstrapping, SSH for everything else
 3. Egress filtering is solvable today — 3-layer approach (Node guard + LD_PRELOAD + HTTP proxy)
 4. Claude Code works in smolvm — with a TCP backlog monkey-patch (`listen()` backlog → 1)
@@ -52,7 +52,7 @@ serial-exec limitation we hit in testing.
 The `setup-vm-v2.sh` provisioning script (648 lines) does everything:
 
 ```bash
-# 1. Create microVM (not sandbox — they found the overlayfs bug too)
+# 1. Create microVM (not machine — they found the overlayfs bug too)
 smolvm microvm create $VM_NAME --net -p 2222:22 --cpus 2 --mem 4096
 
 # 2. Install packages (7+ second bootstrap tax, same as our findings)
@@ -98,7 +98,7 @@ via `NO_PROXY` and connects directly — the proxy is for restricting *agent
 tool calls*, not Claude itself.
 
 **Limitation:** A sufficiently clever agent could unset the proxy env vars.
-This is a safety net, not a hard sandbox. But combined with the Node.js guard
+This is a safety net, not a hard machine. But combined with the Node.js guard
 and LD_PRELOAD guard, it's surprisingly robust.
 
 ## Health Check System
@@ -165,10 +165,10 @@ Every boot requires: `chown root:root /var/empty /root; chmod 755 /var/empty`.
 
 We didn't discover this in CX04 because we never set up SSH.
 
-### MicroVM, Not Sandbox
+### MicroVM, Not Machine
 
-They explicitly chose microVM mode over sandbox mode because:
-> "sandboxes have a known overlayfs bug that prevents filesystem writes
+They explicitly chose microVM mode over machine mode because:
+> "machinees have a known overlayfs bug that prevents filesystem writes
 > (like `apk add` or `npm install`)"
 
 This matches our finding that volume mounts are buggy. MicroVMs write
@@ -185,7 +185,7 @@ domain allowlist proxy, network guards. Provisioned by `setup-vm-v2.sh`
 ### Lobster
 
 Everything in Standard + a running OpenClaw AI gateway. Gets a dedicated
-OpenClaw port, auth token, and sandbox mode toggle in the UI. Provisioned by
+OpenClaw port, auth token, and machine mode toggle in the UI. Provisioned by
 `setup-vm-lobster.sh` (~12 min). Requires Node.js v22+ (upgraded from
 Alpine 3.21 repos since the base 3.19 only has v21).
 
@@ -239,7 +239,7 @@ itself with additional agent management capabilities built on top.
 
 This project validates several of our CX04 findings and extends them:
 
-1. **MicroVM > Sandbox** — they independently reached the same conclusion
+1. **MicroVM > Machine** — they independently reached the same conclusion
    about the overlayfs bug forcing microVM mode.
 
 2. **SSH as escape hatch** — `smolvm exec` is fine for bootstrapping, but SSH

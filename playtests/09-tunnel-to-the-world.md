@@ -1,19 +1,19 @@
 # Playtest 09: Tunnel to the World
 
-**Mission**: Run a web service inside a sandbox and expose it to the public
-internet via cloudflared. Can someone on a different machine hit your sandbox?
+**Mission**: Run a web service inside a machine and expose it to the public
+internet via cloudflared. Can someone on a different machine hit your machine?
 
 **Time**: ~20 min
 
 ## Entry point
 
-Create a sandbox from `claude-code` starter (which should include cloudflared).
+Create a machine from `claude-code` starter (which should include cloudflared).
 
 ## The challenge
 
-1. Build or write a simple web server inside the sandbox
+1. Build or write a simple web server inside the machine
 2. Start it on a port (e.g., 3000)
-3. Verify it works from inside the sandbox (`curl localhost:3000` via exec)
+3. Verify it works from inside the machine (`curl localhost:3000` via exec)
 4. Start a cloudflared tunnel pointing at it
 5. Get the public URL from the tunnel logs
 6. Hit that URL from your host machine's browser
@@ -30,17 +30,17 @@ Create a sandbox from `claude-code` starter (which should include cloudflared).
 - Start two services on different ports with two tunnels. Do both work?
 - Kill the tunnel. Does the service keep running? Restart the tunnel — does
   it get a new URL?
-- What happens when the sandbox is stopped with a tunnel running?
+- What happens when the machine is stopped with a tunnel running?
 - Try exposing a WebSocket connection through the tunnel
 
 ## Known constraints
 
-- Port mapping from host to sandbox (T02) is broken. Cloudflared tunnels
+- Port mapping from host to machine (T02) is broken. Cloudflared tunnels
   work around this by proxying from inside the VM
 - Free cloudflared tunnels give random `*.trycloudflare.com` URLs
 
 ## What we're really testing
 
-- Network stack works end-to-end (sandbox → cloudflared → internet → user)
+- Network stack works end-to-end (machine → cloudflared → internet → user)
 - cloudflared is a viable workaround for the port mapping bug
 - Real-world usability: can an agent build something and show it to a human?

@@ -1,7 +1,7 @@
 /**
  * CX04 smolvm — Fleet Test
  *
- * Tests multi-sandbox orchestration: parallel creation, parallel exec,
+ * Tests multi-machine orchestration: parallel creation, parallel exec,
  * state isolation, and cleanup.
  */
 
@@ -35,7 +35,7 @@ const tCreateStart = performance.now();
 
 for (let i = 0; i < FLEET_SIZE; i++) {
   const name = `${PREFIX}-${i}`;
-  const createResp = await apiPost("/sandboxes", {
+  const createResp = await apiPost("/machinees", {
     name,
     resources: { cpus: 1, memory_mb: 512, network: true },
   });
@@ -46,19 +46,19 @@ for (let i = 0; i < FLEET_SIZE; i++) {
   }
 }
 const createMs = Math.round(performance.now() - tCreateStart);
-test(`Created ${names.length}/${FLEET_SIZE} sandboxes`, names.length === FLEET_SIZE);
-console.log(`  ⏱  Sequential create: ${createMs}ms (${Math.round(createMs / FLEET_SIZE)}ms/sandbox)`);
+test(`Created ${names.length}/${FLEET_SIZE} machinees`, names.length === FLEET_SIZE);
+console.log(`  ⏱  Sequential create: ${createMs}ms (${Math.round(createMs / FLEET_SIZE)}ms/machine)`);
 
 // --- Parallel start ---
 console.log("\nFleet Start (parallel):");
 const tStartStart = performance.now();
 const startResults = await Promise.all(
-  names.map(name => apiPost(`/sandboxes/${name}/start`))
+  names.map(name => apiPost(`/machinees/${name}/start`))
 );
 const startMs = Math.round(performance.now() - tStartStart);
 const allStarted = startResults.every(r => r.ok);
-test("All sandboxes started", allStarted);
-console.log(`  ⏱  Parallel start: ${startMs}ms (${Math.round(startMs / FLEET_SIZE)}ms/sandbox)`);
+test("All machinees started", allStarted);
+console.log(`  ⏱  Parallel start: ${startMs}ms (${Math.round(startMs / FLEET_SIZE)}ms/machine)`);
 
 for (const r of startResults) {
   if (!r.bodyUsed) await r.text();
@@ -67,35 +67,35 @@ for (const r of startResults) {
 // --- Verify all running ---
 console.log("\nFleet Status:");
 {
-  const listResp = await apiGet("/sandboxes");
+  const listResp = await apiGet("/machinees");
   const data = await listResp.json();
-  const fleetSandboxes = data.sandboxes.filter((s: { name: string }) => s.name.startsWith(PREFIX));
-  const allRunning = fleetSandboxes.every((s: { state: string }) => s.state === "running");
-  test(`All ${FLEET_SIZE} in list`, fleetSandboxes.length === FLEET_SIZE);
+  const fleetMachinees = data.machinees.filter((s: { name: string }) => s.name.startsWith(PREFIX));
+  const allRunning = fleetMachinees.every((s: { state: string }) => s.state === "running");
+  test(`All ${FLEET_SIZE} in list`, fleetMachinees.length === FLEET_SIZE);
   test("All state=running", allRunning);
 }
 
 // --- Parallel exec ---
-console.log("\nParallel Exec (each sandbox gets unique task):");
+console.log("\nParallel Exec (each machine gets unique task):");
 const tExecStart = performance.now();
 const execResults = await Promise.all(
-  names.map((name, i) => sh(name, `echo "result-from-sandbox-${i}" && sleep 1`))
+  names.map((name, i) => sh(name, `echo "result-from-machine-${i}" && sleep 1`))
 );
 const execMs = Math.round(performance.now() - tExecStart);
 
 const allCorrect = execResults.every((r, i) =>
-  r.exit_code === 0 && r.stdout.includes(`result-from-sandbox-${i}`)
+  r.exit_code === 0 && r.stdout.includes(`result-from-machine-${i}`)
 );
 test("All execs returned correct results", allCorrect);
 console.log(`  ⏱  Parallel exec (3x sleep 1): ${execMs}ms`);
 
 const isCrossParallel = execMs < 2500;
-test("Cross-sandbox exec is parallel", isCrossParallel, `${execMs}ms`);
+test("Cross-machine exec is parallel", isCrossParallel, `${execMs}ms`);
 
 // --- State isolation ---
 console.log("\nState Isolation:");
 {
-  // Write unique marker per sandbox — use unique filenames to avoid race conditions
+  // Write unique marker per machine — use unique filenames to avoid race conditions
   await Promise.all(
     names.map((name, i) => sh(name, `echo "marker-${i}" > /tmp/identity-${i}.txt`))
   );
@@ -105,11 +105,11 @@ console.log("\nState Isolation:");
   );
 
   const isolated = reads.every((r, i) => r.stdout.trim() === `marker-${i}`);
-  test("Each sandbox has isolated state", isolated);
+  test("Each machine has isolated state", isolated);
 
   if (!isolated) {
     for (let i = 0; i < reads.length; i++) {
-      console.log(`     Sandbox ${i}: ${reads[i].stdout.trim()}`);
+      console.log(`     Machine ${i}: ${reads[i].stdout.trim()}`);
     }
   }
 }
@@ -121,11 +121,11 @@ for (const name of names) {
   await cleanup(name);
 }
 const cleanMs = Math.round(performance.now() - tCleanStart);
-console.log(`  ⏱  Cleanup: ${cleanMs}ms (${Math.round(cleanMs / FLEET_SIZE)}ms/sandbox)`);
+console.log(`  ⏱  Cleanup: ${cleanMs}ms (${Math.round(cleanMs / FLEET_SIZE)}ms/machine)`);
 
-const verifyResp = await apiGet("/sandboxes");
+const verifyResp = await apiGet("/machinees");
 const verifyData = await verifyResp.json();
-const remaining = verifyData.sandboxes.filter((s: { name: string }) => s.name.startsWith(PREFIX));
-test("All sandboxes cleaned up", remaining.length === 0, `${remaining.length} remaining`);
+const remaining = verifyData.machinees.filter((s: { name: string }) => s.name.startsWith(PREFIX));
+test("All machinees cleaned up", remaining.length === 0, `${remaining.length} remaining`);
 
 summary();

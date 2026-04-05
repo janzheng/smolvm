@@ -37,80 +37,80 @@ console.log("Health:");
   console.log(`     📦 smolvm ${h.version}`);
 }
 
-// --- Sandbox lifecycle ---
-console.log("\nSandbox Lifecycle:");
+// --- Machine lifecycle ---
+console.log("\nMachine Lifecycle:");
 {
-  const sandbox = await client.createAndStart("sdk-test", {
+  const machine = await client.createAndStart("sdk-test", {
     cpus: 2,
     memoryMb: 1024,
     network: true,
   });
-  test("Create + start", sandbox.state === "running" || true); // state may not be cached yet
+  test("Create + start", machine.state === "running" || true); // state may not be cached yet
 
-  const info = await sandbox.info();
+  const info = await machine.info();
   test("Info returns data", info.state === "running");
 
   // exec
-  const result = await sandbox.exec(["echo", "hello-sdk"]);
+  const result = await machine.exec(["echo", "hello-sdk"]);
   test("exec() works", result.exit_code === 0 && result.stdout.trim() === "hello-sdk");
 
   // sh
-  const shResult = await sandbox.sh("echo hello && echo world");
+  const shResult = await machine.sh("echo hello && echo world");
   test("sh() works", shResult.exit_code === 0 && shResult.stdout.includes("hello") && shResult.stdout.includes("world"));
 
   // runCommand (just-bash compat)
-  const runResult = await sandbox.runCommand("echo just-bash-compat");
+  const runResult = await machine.runCommand("echo just-bash-compat");
   test("runCommand() works", runResult.stdout.trim() === "just-bash-compat");
 
   // env vars
-  const envResult = await sandbox.sh("echo $MY_VAR", {
+  const envResult = await machine.sh("echo $MY_VAR", {
     env: [{ name: "MY_VAR", value: "sdk-value" }],
   });
   test("Env vars via exec", envResult.stdout.trim() === "sdk-value");
 
-  await sandbox.cleanup();
+  await machine.cleanup();
   test("Cleanup succeeds", true);
 }
 
 // --- File I/O ---
 console.log("\nFile I/O:");
 {
-  const sandbox = await client.createAndStart("sdk-file-test", { network: true });
+  const machine = await client.createAndStart("sdk-file-test", { network: true });
 
   // writeFile + readFile
-  await sandbox.writeFile("/tmp/test.txt", "hello from SDK");
-  const content = await sandbox.readFile("/tmp/test.txt");
+  await machine.writeFile("/tmp/test.txt", "hello from SDK");
+  const content = await machine.readFile("/tmp/test.txt");
   test("writeFile + readFile", content === "hello from SDK");
 
   // writeFiles (batch)
-  await sandbox.writeFiles({
+  await machine.writeFiles({
     "/tmp/a.txt": "file-a",
     "/tmp/b.txt": "file-b",
   });
-  const a = await sandbox.readFile("/tmp/a.txt");
-  const b = await sandbox.readFile("/tmp/b.txt");
+  const a = await machine.readFile("/tmp/a.txt");
+  const b = await machine.readFile("/tmp/b.txt");
   test("writeFiles (batch)", a === "file-a" && b === "file-b");
 
   // nested directory creation
-  await sandbox.writeFile("/workspace/deep/nested/file.txt", "deep content");
-  const deep = await sandbox.readFile("/workspace/deep/nested/file.txt");
+  await machine.writeFile("/workspace/deep/nested/file.txt", "deep content");
+  const deep = await machine.readFile("/workspace/deep/nested/file.txt");
   test("Nested directory auto-creation", deep === "deep content");
 
   // listFiles
-  const files = await sandbox.listFiles("/tmp");
+  const files = await machine.listFiles("/tmp");
   test("listFiles", files.includes("a.txt") && files.includes("b.txt"));
 
   // exists
-  const yes = await sandbox.exists("/tmp/a.txt");
-  const no = await sandbox.exists("/tmp/nonexistent");
+  const yes = await machine.exists("/tmp/a.txt");
+  const no = await machine.exists("/tmp/nonexistent");
   test("exists()", yes === true && no === false);
 
   // Special characters in content
-  await sandbox.writeFile("/tmp/special.txt", 'quotes "and" \'stuff\' & newlines\nline2');
-  const special = await sandbox.readFile("/tmp/special.txt");
+  await machine.writeFile("/tmp/special.txt", 'quotes "and" \'stuff\' & newlines\nline2');
+  const special = await machine.readFile("/tmp/special.txt");
   test("Special chars in file content", special.includes("quotes") && special.includes("line2"));
 
-  await sandbox.cleanup();
+  await machine.cleanup();
 }
 
 // --- Fleet ---
@@ -130,11 +130,11 @@ console.log("\nFleet Operations:");
 
   // execEach
   const eachResults = await fleet.execEach([
-    "echo sandbox-0",
-    "echo sandbox-1",
-    "echo sandbox-2",
+    "echo machine-0",
+    "echo machine-1",
+    "echo machine-2",
   ]);
-  const eachOk = eachResults.every((r, i) => r.stdout.trim() === `sandbox-${i}`);
+  const eachOk = eachResults.every((r, i) => r.stdout.trim() === `machine-${i}`);
   test("execEach (different commands)", eachOk);
 
   // Parallel execution timing
@@ -146,17 +146,17 @@ console.log("\nFleet Operations:");
   // State isolation
   await fleet.execAll("echo unique > /tmp/id.txt");
   await Promise.all(
-    fleet.sandboxes.map((s, i) => s.sh(`echo marker-${i} > /tmp/id.txt`)),
+    fleet.machinees.map((s, i) => s.sh(`echo marker-${i} > /tmp/id.txt`)),
   );
   const reads = await Promise.all(
-    fleet.sandboxes.map((s) => s.sh("cat /tmp/id.txt")),
+    fleet.machinees.map((s) => s.sh("cat /tmp/id.txt")),
   );
   const isolated = reads.every((r, i) => r.stdout.trim() === `marker-${i}`);
   test("State isolation across fleet", isolated);
 
   // at()
   const first = fleet.at(0);
-  test("fleet.at(0) returns sandbox", first.name === "sdk-fleet-0");
+  test("fleet.at(0) returns machine", first.name === "sdk-fleet-0");
 
   await fleet.cleanup();
   test("Fleet cleanup", true);
@@ -186,8 +186,8 @@ console.log("\nMicroVM:");
 // --- List ---
 console.log("\nList Operations:");
 {
-  const sandboxes = await client.list();
-  test("list() returns array", Array.isArray(sandboxes));
+  const machinees = await client.list();
+  test("list() returns array", Array.isArray(machinees));
 
   const vms = await client.listMicroVMs();
   test("listMicroVMs() returns array", Array.isArray(vms));

@@ -1,5 +1,5 @@
 #!/bin/sh
-# DNS-based egress filter for smolvm sandboxes.
+# DNS-based egress filter for smolvm machinees.
 # Usage: dns-filter.sh domain1.com domain2.com ...
 #
 # Pre-resolves allowed domains to /etc/hosts then blocks all DNS resolution.

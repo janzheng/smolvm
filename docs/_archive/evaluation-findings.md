@@ -20,7 +20,7 @@ Tested 2026-02-26 on macOS Apple Silicon.
 
 | Suite | Pass | Fail | Total |
 |-------|------|------|-------|
-| Basic Sandbox | 29 | 0 | 29 |
+| Basic Machine | 29 | 0 | 29 |
 | Capabilities | 39 | 6 | 45 |
 | Fleet | 8 | 0 | 8 |
 | Lifecycle | pass | — | — |
@@ -32,22 +32,22 @@ Tested 2026-02-26 on macOS Apple Silicon.
 
 ### REST API via `smolvm serve`
 
-The biggest positive surprise. Full HTTP CRUD for sandboxes, microVMs,
+The biggest positive surprise. Full HTTP CRUD for machinees, microVMs,
 containers, and images. OpenAPI 3.1 spec + Swagger UI included. Endpoints
 are clean, responses are predictable, error handling is reasonable.
 
 ```
-POST /api/v1/sandboxes           → Create
-POST /api/v1/sandboxes/{id}/start → Start
-POST /api/v1/sandboxes/{id}/exec  → Execute command
-POST /api/v1/sandboxes/{id}/stop  → Stop
-DELETE /api/v1/sandboxes/{id}     → Delete
+POST /api/v1/machines           → Create
+POST /api/v1/machines/{id}/start → Start
+POST /api/v1/machines/{id}/exec  → Execute command
+POST /api/v1/machines/{id}/stop  → Stop
+DELETE /api/v1/machines/{id}     → Delete
 ```
 
 ### Boot Speed
 
 Create-to-first-exec in 281ms. This is genuinely fast — faster than any
-cloud sandbox. The VM is ready to execute commands almost instantly after
+cloud machine. The VM is ready to execute commands almost instantly after
 `start` returns.
 
 ### Environment Variables
@@ -56,10 +56,10 @@ Both CLI (`-e KEY=VALUE`) and API (`env: [{name, value}]`) work correctly.
 Multiple vars, special characters, all verified. This was listed as
 missing in the pre-evaluation docs — it works.
 
-### Cross-Sandbox Parallelism
+### Cross-Machine Parallelism
 
-Three sandboxes sleeping 1s each complete in 1011ms total — truly parallel.
-This means fleet orchestration works: create N sandboxes, run tasks across
+Three machinees sleeping 1s each complete in 1011ms total — truly parallel.
+This means fleet orchestration works: create N machinees, run tasks across
 them concurrently.
 
 ### Persistence
@@ -78,7 +78,7 @@ successfully. This means you can pre-build images with tools installed.
 
 ### Volume Mounts (3 test failures)
 
-The API accepts mount configuration and sandbox creation succeeds, but
+The API accepts mount configuration and machine creation succeeds, but
 files are not visible across the host/guest boundary. This is the most
 impactful bug — it blocks the most natural file I/O pattern.
 
@@ -93,15 +93,15 @@ exec cat /path/to/file                               # read
 Port mapping config is accepted but connections from host to mapped ports
 return "Connection refused".
 
-### Container-in-Sandbox (1 test failure)
+### Container-in-Machine (1 test failure)
 
 Image pull works, but container creation returns 500 with a crun storage
 path error.
 
-### Within-Sandbox Parallelism (1 test failure)
+### Within-Machine Parallelism (1 test failure)
 
-Exec calls to the same sandbox are serialized. Three 1-second sleeps take
-3043ms. Use multiple sandboxes for parallelism instead.
+Exec calls to the same machine are serialized. Three 1-second sleeps take
+3043ms. Use multiple machinees for parallelism instead.
 
 ---
 
@@ -120,7 +120,7 @@ The doc site has significant problems:
    - Swagger UI is available but not referenced
 
 3. **API doc pages are shells:**
-   - `/sdk/api-sandbox`, `/sdk/api-microvm`, `/sdk/api-container` exist as
+   - `/sdk/api-machine`, `/sdk/api-microvm`, `/sdk/api-container` exist as
      pages but contain minimal content
 
 4. **Env var support not documented:**
@@ -143,7 +143,7 @@ The doc site has significant problems:
 | API style | SDK (npm) | SDK (JSR) | REST + SDK | **REST only** |
 | Env vars | Proxy-level | Placeholders | Real | **Real** |
 | Docs quality | Good | Good | Good | **Poor** |
-| Parallelism | Cross-sandbox | Single only | Cross-sprite | Cross-sandbox |
+| Parallelism | Cross-machine | Single only | Cross-sprite | Cross-machine |
 
 **Best at:** Boot speed, cost (free), isolation (true VM), local-first
 **Worst at:** Documentation, pre-installed tooling, checkpoint/restore

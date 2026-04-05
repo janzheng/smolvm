@@ -292,9 +292,9 @@ fn lookup_user(username: &str) -> std::result::Result<(u32, u32, String), String
 /// Set up network firewall to prevent VM from reaching host services.
 ///
 /// S01 security fix: Without this, TSI (Transparent Socket Impersonation) allows
-/// the VM to reach any port on the host via the vsock proxy. This means a sandbox
+/// the VM to reach any port on the host via the vsock proxy. This means a machine
 /// with `network: true` could hit the smolvm API on port 8080 and manage other
-/// sandboxes — a critical privilege escalation.
+/// machinees — a critical privilege escalation.
 ///
 /// We detect the default gateway (host) IP from /proc/net/route and add iptables
 /// rules to block access to sensitive host ports. Also enforces domain allowlists
@@ -319,7 +319,7 @@ fn setup_network_firewall() {
 
     // Block access to common host service ports via the gateway.
     // These are the ports most likely to be running host services
-    // that a sandbox should never be able to reach.
+    // that a machine should never be able to reach.
     let blocked_ports: &[u16] = &[
         9090,  // smolvm API server
         22,    // SSH

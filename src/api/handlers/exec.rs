@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::api::error::{classify_ensure_running_error, ApiError};
-use crate::api::state::{ensure_running_and_persist, with_sandbox_client, ApiState};
+use crate::api::state::{ensure_running_and_persist, with_machine_client, ApiState};
 use crate::api::types::{
     ApiErrorResponse, EnvVar, ExecRequest, ExecResponse, LogsQuery, RunRequest,
 };
@@ -35,9 +35,9 @@ use crate::api::state::MachineEntry;
 // User switching is now handled agent-side via setuid/setgid in the wire protocol.
 // The old `wrap_command_for_user` su -l approach has been removed.
 
-/// Sanitize env vars and inject proxy defaults for a sandbox.
+/// Sanitize env vars and inject proxy defaults for a machine.
 ///
-/// When a sandbox has secrets configured:
+/// When a machine has secrets configured:
 /// 1. Strip user-provided env vars that match protected key names (e.g., ANTHROPIC_API_KEY)
 /// 2. Inject proxy defaults (BASE_URL + placeholder key) for any keys not already set
 ///
@@ -71,7 +71,7 @@ fn apply_secret_proxy_env(
     }
 }
 
-/// Execute a command in a sandbox.
+/// Execute a command in a machine.
 ///
 /// This executes directly in the VM (not in a container).
 #[utoipa::path(
@@ -98,7 +98,7 @@ pub async fn exec_command(
 
     let entry = state.get_machine(&id)?;
 
-    // Ensure sandbox is running and persist state to DB
+    // Ensure machine is running and persist state to DB
     ensure_running_and_persist(&state, &id, &entry)
         .await
         .map_err(classify_ensure_running_error)?;
@@ -119,7 +119,7 @@ pub async fn exec_command(
     let exec_start = std::time::Instant::now();
 
     let (exit_code, stdout, stderr) =
-        with_sandbox_client(&entry, move |c| c.vm_exec_as(command, env, workdir, timeout, user)).await?;
+        with_machine_client(&entry, move |c| c.vm_exec_as(command, env, workdir, timeout, user)).await?;
 
     crate::api::metrics::record_exec_duration(exec_start.elapsed().as_secs_f64());
 
@@ -157,7 +157,7 @@ pub async fn run_command(
 
     let entry = state.get_machine(&id)?;
 
-    // Ensure sandbox is running and persist state to DB
+    // Ensure machine is running and persist state to DB
     ensure_running_and_persist(&state, &id, &entry)
         .await
         .map_err(classify_ensure_running_error)?;
@@ -169,7 +169,7 @@ pub async fn run_command(
     let timeout = req.timeout_secs.map(Duration::from_secs);
     let user = req.user.clone();
 
-    // Get mounts from sandbox config (converted to protocol format)
+    // Get mounts from machine config (converted to protocol format)
     // Also sanitize env vars for secret proxy protection
     let mounts_config = {
         let entry = entry.lock();
@@ -185,7 +185,7 @@ pub async fn run_command(
             .collect::<Vec<_>>()
     };
 
-    let (exit_code, stdout, stderr) = with_sandbox_client(&entry, move |c| {
+    let (exit_code, stdout, stderr) = with_machine_client(&entry, move |c| {
         c.run_with_mounts_timeout_and_user(&image, command, env, workdir, mounts_config, timeout, user)
     })
     .await?;
@@ -203,7 +203,7 @@ pub async fn run_command(
 static LOG_FOLLOW_SEMAPHORE: std::sync::LazyLock<Semaphore> =
     std::sync::LazyLock::new(|| Semaphore::new(16));
 
-/// Stream sandbox console logs via SSE.
+/// Stream machine console logs via SSE.
 #[utoipa::path(
     get,
     path = "/api/v1/machines/{id}/logs",
@@ -513,7 +513,7 @@ async fn handle_interactive_ws(state: Arc<ApiState>, id: String, socket: WebSock
         return;
     }
 
-    // Get sandbox and ensure running
+    // Get machine and ensure running
     let entry = match state.get_machine(&id) {
         Ok(e) => e,
         Err(e) => {
@@ -703,7 +703,7 @@ async fn handle_exec_ws(state: Arc<ApiState>, id: String, mut socket: WebSocket)
         return;
     }
 
-    // Get sandbox and ensure running
+    // Get machine and ensure running
     let entry = match state.get_machine(&id) {
         Ok(e) => e,
         Err(e) => {

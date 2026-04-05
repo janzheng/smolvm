@@ -1,17 +1,17 @@
 # smolvm User Guide
 
-A small computer for agents. Each sandbox is an isolated micro VM — its own
+A small computer for agents. Each machine is an isolated micro VM — its own
 filesystem, network, and tools. Push code in, work on it, pull results out.
 Fork, snapshot, merge — like git, but for entire machines.
 
 ## Table of Contents
 
 - [Setup](#setup)
-- [Your First Sandbox](#your-first-sandbox)
+- [Your First Machine](#your-first-machine)
 - [Files & Folders](#files--folders)
 - [Snapshots](#snapshots)
 - [Clone, Diff, Merge](#clone-diff-merge)
-- [Fleet (Parallel Sandboxes)](#fleet-parallel-sandboxes)
+- [Fleet (Parallel Machinees)](#fleet-parallel-machinees)
 - [Running Agents](#running-agents)
 - [Secrets](#secrets)
 - [Remote Access](#remote-access)
@@ -61,7 +61,7 @@ The rest of this guide uses `smolctl` for brevity.
 
 ---
 
-## Your First Sandbox
+## Your First Machine
 
 ### Create and Start
 
@@ -101,7 +101,7 @@ smolctl sh my-vm "npm run build" --timeout 120
 ### Check Status
 
 ```bash
-smolctl ls                 # List all sandboxes
+smolctl ls                 # List all machinees
 smolctl info my-vm         # Detailed JSON info
 smolctl stats my-vm        # CPU, memory, disk usage
 smolctl logs my-vm         # Stream stdout/stderr
@@ -124,16 +124,16 @@ smolctl down my-vm --force # Skip safety checks
 ### Copy Files In and Out
 
 ```bash
-# Local → sandbox
+# Local → machine
 smolctl cp ./my-file.txt my-vm:/workspace/my-file.txt
 smolctl cp ./my-folder my-vm:/workspace/my-folder
 
-# Sandbox → local
+# Machine → local
 smolctl cp my-vm:/workspace/output.txt ./output.txt
 smolctl cp my-vm:/workspace/results ./results
 ```
 
-### Browse Files Inside a Sandbox
+### Browse Files Inside a Machine
 
 ```bash
 smolctl files ls my-vm /workspace
@@ -144,13 +144,13 @@ smolctl files rm my-vm /workspace/temp.log
 
 ### Sync Directories (Bidirectional)
 
-For ongoing development — sync a local directory with a sandbox:
+For ongoing development — sync a local directory with a machine:
 
 ```bash
-# Push local dir into sandbox
+# Push local dir into machine
 smolctl sync push my-vm ./src --to /workspace/src --exclude node_modules --exclude .git
 
-# Pull sandbox dir to local
+# Pull machine dir to local
 smolctl sync pull my-vm --from /workspace/output --to ./output
 
 # Watch mode — auto-push on local changes
@@ -164,7 +164,7 @@ smolctl sync push my-vm ./src --to /workspace/src --dry-run
 
 ## Snapshots
 
-Snapshots are portable archives of a sandbox's entire state. Like git commits,
+Snapshots are portable archives of a machine's entire state. Like git commits,
 but for whole machines.
 
 ### Push (Save) a Snapshot
@@ -246,7 +246,7 @@ When you just need the code, not the whole VM:
 # Export just /workspace as tar.gz (~14KB vs ~100MB full snapshot)
 smolctl snapshot export-workspace my-vm ./workspace.tar.gz
 
-# Import workspace into a different sandbox
+# Import workspace into a different machine
 smolctl snapshot import-workspace ./workspace.tar.gz other-vm
 ```
 
@@ -281,7 +281,7 @@ smolctl clone my-vm my-vm-fork
 ### Diff
 
 ```bash
-# Compare workspaces between two sandboxes
+# Compare workspaces between two machinees
 smolctl diff my-vm my-vm-fork
 
 # Or using git diff (line-level)
@@ -299,9 +299,9 @@ smolctl git merge my-vm-fork my-vm --strategy theirs
 smolctl git merge my-vm-fork my-vm --strategy ours
 ```
 
-### Git Inside Sandboxes
+### Git Inside Machinees
 
-Every sandbox has a git-initialized workspace at `/workspace`:
+Every machine has a git-initialized workspace at `/workspace`:
 
 ```bash
 smolctl git status my-vm
@@ -311,14 +311,14 @@ smolctl git commit my-vm -m "save progress"
 
 ---
 
-## Fleet (Parallel Sandboxes)
+## Fleet (Parallel Machinees)
 
-Run the same task across many sandboxes at once.
+Run the same task across many machinees at once.
 
 ### Create a Fleet
 
 ```bash
-# Create 5 sandboxes named worker-0 through worker-4
+# Create 5 machinees named worker-0 through worker-4
 smolctl fleet up worker 5 --cpus 2 --memory 1024
 ```
 
@@ -332,7 +332,7 @@ smolctl fleet ls worker
 ### Fan Out and Gather (Fork-Join Pattern)
 
 ```bash
-# Fork: clone a sandbox into 3 copies, each on its own git branch
+# Fork: clone a machine into 3 copies, each on its own git branch
 smolctl fleet fanout my-vm 3
 
 # Each copy works independently...
@@ -340,7 +340,7 @@ smolctl sh my-vm-0 "implement feature A"
 smolctl sh my-vm-1 "implement feature B"
 smolctl sh my-vm-2 "implement feature C"
 
-# Gather: merge all forks back into one sandbox
+# Gather: merge all forks back into one machine
 smolctl fleet gather my-vm --into my-vm-merged
 ```
 
@@ -354,7 +354,7 @@ smolctl fleet down worker
 
 ## Running Agents
 
-Run Claude Code (or other AI agents) inside sandboxes with controlled
+Run Claude Code (or other AI agents) inside machinees with controlled
 permissions.
 
 ### Basic Agent Run
@@ -362,7 +362,7 @@ permissions.
 ```bash
 smolctl agent run "Build a React todo app with tests" \
   --starter claude-code \
-  --sandbox permissive \
+  --machine permissive \
   --secret anthropic \
   --timeout 300
 ```
@@ -371,15 +371,15 @@ smolctl agent run "Build a React todo app with tests" \
 
 ```bash
 # See available presets
-smolctl sandbox ls
+smolctl machine ls
 
 # Check what a preset allows
-smolctl sandbox show permissive
-smolctl sandbox show developer
-smolctl sandbox show research
+smolctl machine show permissive
+smolctl machine show developer
+smolctl machine show research
 
 # Test if a tool is allowed
-smolctl sandbox test developer "Bash(git push --force)"
+smolctl machine test developer "Bash(git push --force)"
 ```
 
 | Preset | Description |
@@ -393,7 +393,7 @@ smolctl sandbox test developer "Bash(git push --force)"
 ```bash
 # Run multiple agents from a prompts file
 smolctl agent fleet agents prompts.txt \
-  --sandbox developer \
+  --machine developer \
   --starter claude-code \
   --secret anthropic
 
@@ -405,7 +405,7 @@ smolctl agent collect agents ./results
 
 ## Secrets
 
-Secrets are injected into sandboxes via a reverse proxy — the actual API key
+Secrets are injected into machinees via a reverse proxy — the actual API key
 never enters the VM. The VM sees a local proxy endpoint instead.
 
 ### Register Secrets
@@ -419,10 +419,10 @@ export SMOLVM_SECRET_ANTHROPIC=sk-ant-xxx
 smolvm serve start
 ```
 
-### Use in Sandboxes
+### Use in Machinees
 
 ```bash
-# Create sandbox with secret access
+# Create machine with secret access
 smolctl up my-vm --secret anthropic
 
 # Inside the VM, API calls to Anthropic are automatically proxied
@@ -440,7 +440,7 @@ smolctl secret update --secret anthropic=sk-ant-NEW-KEY
 
 ## Remote Access
 
-Access your sandboxes from anywhere via Cloudflare tunnel.
+Access your machinees from anywhere via Cloudflare tunnel.
 
 ### Quick Setup
 
@@ -481,9 +481,9 @@ smolvm serve start --web-ui ./web-ui
 ```
 
 Features:
-- Live sandbox list with status indicators
-- Interactive terminal (ghostty-web) — open a shell in any sandbox
-- Create, start, stop, delete sandboxes from the browser
+- Live machine list with status indicators
+- Interactive terminal (ghostty-web) — open a shell in any machine
+- Create, start, stop, delete machinees from the browser
 
 There's also a terminal dashboard:
 
@@ -496,7 +496,7 @@ smolctl dashboard
 ## MCP Servers
 
 Model Context Protocol servers give agents structured tool access to the
-sandbox filesystem, exec, and git.
+machine filesystem, exec, and git.
 
 ### Install and Use
 
@@ -525,7 +525,7 @@ smolctl mcp call my-vm git status '{}'
 
 ## Jobs & Workers
 
-A work queue for distributing tasks to sandbox workers.
+A work queue for distributing tasks to machine workers.
 
 ### Submit and Monitor Jobs
 
@@ -542,7 +542,7 @@ smolctl job watch <job-id>
 
 ### Worker Mode
 
-Run a sandbox as a worker that polls for jobs:
+Run a machine as a worker that polls for jobs:
 
 ```bash
 smolctl agent worker --reuse my-vm --max-jobs 10
@@ -557,7 +557,7 @@ smolctl agent worker --reuse my-vm --max-jobs 10
 ```bash
 smolctl up dev --starter node
 smolctl sync watch dev ./src --to /workspace/src --exclude node_modules
-# Edit locally, tests run in sandbox
+# Edit locally, tests run in machine
 smolctl sh dev "cd /workspace/src && npm test"
 ```
 
@@ -594,7 +594,7 @@ smolctl start colleague-vm
 
 ### Install Packages
 
-Sandboxes run Alpine Linux. Use `apk` for system packages:
+Machinees run Alpine Linux. Use `apk` for system packages:
 
 ```bash
 smolctl sh my-vm "apk add git nodejs npm python3 py3-pip curl jq"
@@ -608,7 +608,7 @@ smolctl up my-vm --init "apk add nodejs npm" --init "npm install -g typescript"
 
 ### Post-Start Setup
 
-The `--setup` flag on `up` runs commands after the sandbox boots:
+The `--setup` flag on `up` runs commands after the machine boots:
 
 ```bash
 smolctl up my-vm --setup "apk add git" --setup "git clone https://github.com/me/repo /workspace/repo"
@@ -618,20 +618,20 @@ smolctl up my-vm --setup "apk add git" --setup "git clone https://github.com/me/
 
 ## Command Reference
 
-### Sandbox Lifecycle
+### Machine Lifecycle
 
 | Command | Description |
 |---------|-------------|
 | `up <name> [flags]` | Create + start (one shot) |
 | `down <name> [--force]` | Stop + delete (with safety checks) |
 | `create <name> [flags]` | Create only |
-| `start <name>` | Start a stopped sandbox |
-| `stop <name>` | Stop a running sandbox |
-| `rm <name> [--force]` | Delete a sandbox |
-| `ls` | List all sandboxes |
-| `info <name>` | Detailed sandbox info (JSON) |
-| `prune` | Delete ALL sandboxes |
-| `resume <name>` | Reconnect to cached sandbox |
+| `start <name>` | Start a stopped machine |
+| `stop <name>` | Stop a running machine |
+| `rm <name> [--force]` | Delete a machine |
+| `ls` | List all machinees |
+| `info <name>` | Detailed machine info (JSON) |
+| `prune` | Delete ALL machinees |
+| `resume <name>` | Reconnect to cached machine |
 
 ### Execution
 
@@ -640,7 +640,7 @@ smolctl up my-vm --setup "apk add git" --setup "git clone https://github.com/me/
 | `sh <name> <cmd>` | Run shell command |
 | `exec <name> [--] <cmd...>` | Run command directly |
 | `run <name> <image> <cmd...>` | Run in OCI container overlay |
-| `logs <name>` | Stream sandbox output |
+| `logs <name>` | Stream machine output |
 
 ### Files
 
@@ -651,16 +651,16 @@ smolctl up my-vm --setup "apk add git" --setup "git clone https://github.com/me/
 | `files cat <name> <path>` | Read file |
 | `files write <name> <path>` | Write file |
 | `files rm <name> <path>` | Delete file |
-| `sync push <name> [dir]` | Push local dir to sandbox |
-| `sync pull <name> [dir]` | Pull sandbox dir to local |
+| `sync push <name> [dir]` | Push local dir to machine |
+| `sync pull <name> [dir]` | Pull machine dir to local |
 | `sync watch <name> [dir]` | Watch and auto-push |
 
 ### Snapshots
 
 | Command | Description |
 |---------|-------------|
-| `snapshot push <name>` | Save sandbox as snapshot |
-| `snapshot pull <snap> <name>` | Restore snapshot to new sandbox |
+| `snapshot push <name>` | Save machine as snapshot |
+| `snapshot pull <snap> <name>` | Restore snapshot to new machine |
 | `snapshot ls` | List snapshots |
 | `snapshot rm <name>` | Delete snapshot |
 | `snapshot describe <name>` | Show metadata |
@@ -683,10 +683,10 @@ smolctl up my-vm --setup "apk add git" --setup "git clone https://github.com/me/
 
 | Command | Description |
 |---------|-------------|
-| `clone <name> <new>` | Clone sandbox (CoW) |
-| `diff <name> <other>` | Compare sandboxes |
-| `merge <source> <target>` | Merge sandboxes |
-| `git status/log/commit/init` | Git inside sandbox |
+| `clone <name> <new>` | Clone machine (CoW) |
+| `diff <name> <other>` | Compare machinees |
+| `merge <source> <target>` | Merge machinees |
+| `git status/log/commit/init` | Git inside machine |
 | `git diff <src> <tgt>` | Line-level diff |
 | `git merge <src> <tgt>` | Three-way merge |
 
@@ -694,7 +694,7 @@ smolctl up my-vm --setup "apk add git" --setup "git clone https://github.com/me/
 
 | Command | Description |
 |---------|-------------|
-| `fleet up <prefix> <N>` | Create N sandboxes |
+| `fleet up <prefix> <N>` | Create N machinees |
 | `fleet down <prefix>` | Delete all with prefix |
 | `fleet ls [prefix]` | List fleet members |
 | `fleet exec <prefix> <cmd>` | Run on all |
@@ -705,7 +705,7 @@ smolctl up my-vm --setup "apk add git" --setup "git clone https://github.com/me/
 
 | Command | Description |
 |---------|-------------|
-| `agent run "<prompt>"` | Run Claude Code in sandbox |
+| `agent run "<prompt>"` | Run Claude Code in machine |
 | `agent fleet <prefix> <file>` | Multi-agent from prompts file |
 | `agent worker` | Worker mode (polls for jobs) |
 | `agent collect <prefix>` | Download all agent results |
@@ -754,7 +754,7 @@ smolctl up my-vm --setup "apk add git" --setup "git clone https://github.com/me/
 | Boot | 258-805ms |
 | First exec | 12-15ms |
 | Warm exec | 12ms |
-| Fleet (3 parallel) | 82ms/sandbox |
+| Fleet (3 parallel) | 82ms/machine |
 | Snapshot push | 8-22s |
 | Snapshot pull | ~21s |
 
@@ -766,4 +766,4 @@ smolctl up my-vm --setup "apk add git" --setup "git clone https://github.com/me/
 - **Port mapping** connections refused (use tunnels instead)
 - **Domain allowlists** code ready but not enforced (upstream libkrun blocker)
 - **macOS only** for now on Apple Silicon; Linux KVM also supported
-- Sandboxes run **Alpine Linux** (musl libc — some glibc-only binaries won't work)
+- Machinees run **Alpine Linux** (musl libc — some glibc-only binaries won't work)

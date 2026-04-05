@@ -6,7 +6,7 @@ use crate::api::types::ProviderInfoResponse;
 
 /// Get provider information.
 ///
-/// Returns metadata about the current sandbox provider (name, version,
+/// Returns metadata about the current machine provider (name, version,
 /// capabilities, region).
 #[utoipa::path(
     get,
@@ -31,7 +31,7 @@ pub async fn get_provider_info() -> Json<ProviderInfoResponse> {
             "containers".into(),
             "images".into(),
         ],
-        max_sandboxes: None,
+        max_machinees: None,
         region: Some("local".into()),
     })
 }

@@ -1,4 +1,4 @@
-//! Permission management handlers for sandbox RBAC.
+//! Permission management handlers for machine RBAC.
 
 use axum::{
     extract::{Path, State},
@@ -14,9 +14,9 @@ use crate::api::types::{
     MachinePermission, MachineRole,
 };
 
-/// Grant a role to a token on a sandbox.
+/// Grant a role to a token on a machine.
 ///
-/// Only the sandbox Owner can grant permissions.
+/// Only the machine Owner can grant permissions.
 #[utoipa::path(
     post,
     path = "/api/v1/machines/{id}/permissions",
@@ -27,7 +27,7 @@ use crate::api::types::{
     request_body = GrantPermissionRequest,
     responses(
         (status = 200, description = "Permission granted", body = PermissionResponse),
-        (status = 403, description = "Forbidden — not the sandbox owner", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden — not the machine owner", body = ApiErrorResponse),
         (status = 404, description = "Machine not found", body = ApiErrorResponse)
     )
 )]
@@ -67,15 +67,15 @@ pub async fn grant_permission(
 
     Ok(Json(PermissionResponse {
         message: format!(
-            "granted '{}' role to token hash '{}' on sandbox '{}'",
+            "granted '{}' role to token hash '{}' on machine '{}'",
             req.role, grant_hash, id
         ),
     }))
 }
 
-/// List permissions on a sandbox.
+/// List permissions on a machine.
 ///
-/// Only the sandbox Owner can view permissions.
+/// Only the machine Owner can view permissions.
 #[utoipa::path(
     get,
     path = "/api/v1/machines/{id}/permissions",
@@ -85,7 +85,7 @@ pub async fn grant_permission(
     ),
     responses(
         (status = 200, description = "Permission list", body = ListPermissionsResponse),
-        (status = 403, description = "Forbidden — not the sandbox owner", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden — not the machine owner", body = ApiErrorResponse),
         (status = 404, description = "Machine not found", body = ApiErrorResponse)
     )
 )]
@@ -104,14 +104,14 @@ pub async fn list_permissions(
     let entry = entry.lock();
 
     Ok(Json(ListPermissionsResponse {
-        sandbox: id,
+        machine: id,
         permissions: entry.permissions.clone(),
     }))
 }
 
-/// Revoke a permission from a sandbox.
+/// Revoke a permission from a machine.
 ///
-/// Only the sandbox Owner can revoke permissions. Cannot revoke your own Owner role.
+/// Only the machine Owner can revoke permissions. Cannot revoke your own Owner role.
 #[utoipa::path(
     delete,
     path = "/api/v1/machines/{id}/permissions/{token_hash}",
@@ -123,7 +123,7 @@ pub async fn list_permissions(
     responses(
         (status = 200, description = "Permission revoked", body = PermissionResponse),
         (status = 400, description = "Cannot revoke own Owner role", body = ApiErrorResponse),
-        (status = 403, description = "Forbidden — not the sandbox owner", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden — not the machine owner", body = ApiErrorResponse),
         (status = 404, description = "Machine or permission not found", body = ApiErrorResponse)
     )
 )]
@@ -155,14 +155,14 @@ pub async fn revoke_permission(
 
     if entry.permissions.len() == original_len {
         return Err(ApiError::NotFound(format!(
-            "no permission found for token hash '{}' on sandbox '{}'",
+            "no permission found for token hash '{}' on machine '{}'",
             target_hash, id
         )));
     }
 
     Ok(Json(PermissionResponse {
         message: format!(
-            "revoked permission for token hash '{}' on sandbox '{}'",
+            "revoked permission for token hash '{}' on machine '{}'",
             target_hash, id
         ),
     }))

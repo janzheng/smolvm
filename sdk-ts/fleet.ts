@@ -1,105 +1,105 @@
 /**
  * smolvm TypeScript SDK — Fleet
  *
- * Multi-sandbox orchestration. Creates N sandboxes, executes commands
+ * Multi-machine orchestration. Creates N machinees, executes commands
  * across all of them in parallel, and cleans up.
  */
 
 import { SmolvmHttpClient } from "./client.ts";
-import { Sandbox } from "./sandbox.ts";
-import type { CreateSandboxOptions, ExecOptions, ExecResult } from "./types.ts";
+import { Machine } from "./machine.ts";
+import type { CreateMachineOptions, ExecOptions, ExecResult } from "./types.ts";
 
-export class SandboxFleet {
-  public readonly sandboxes: Sandbox[];
+export class MachineFleet {
+  public readonly machinees: Machine[];
 
   constructor(
-    sandboxes: Sandbox[],
+    machinees: Machine[],
     private readonly http: SmolvmHttpClient,
   ) {
-    this.sandboxes = sandboxes;
+    this.machinees = machinees;
   }
 
-  /** Number of sandboxes in the fleet. */
+  /** Number of machinees in the fleet. */
   get size(): number {
-    return this.sandboxes.length;
+    return this.machinees.length;
   }
 
-  /** All sandbox names. */
+  /** All machine names. */
   get names(): string[] {
-    return this.sandboxes.map((s) => s.name);
+    return this.machinees.map((s) => s.name);
   }
 
   /**
-   * Execute a shell command across all sandboxes in parallel.
-   * Returns results in the same order as sandboxes.
+   * Execute a shell command across all machinees in parallel.
+   * Returns results in the same order as machinees.
    */
   async execAll(cmd: string, opts?: ExecOptions): Promise<ExecResult[]> {
-    return Promise.all(this.sandboxes.map((s) => s.sh(cmd, opts)));
+    return Promise.all(this.machinees.map((s) => s.sh(cmd, opts)));
   }
 
   /**
-   * Execute different commands on each sandbox in parallel.
+   * Execute different commands on each machine in parallel.
    * Commands array must match fleet size.
    */
   async execEach(cmds: string[], opts?: ExecOptions): Promise<ExecResult[]> {
-    if (cmds.length !== this.sandboxes.length) {
+    if (cmds.length !== this.machinees.length) {
       throw new Error(
-        `Expected ${this.sandboxes.length} commands, got ${cmds.length}`,
+        `Expected ${this.machinees.length} commands, got ${cmds.length}`,
       );
     }
     return Promise.all(
-      this.sandboxes.map((s, i) => s.sh(cmds[i], opts)),
+      this.machinees.map((s, i) => s.sh(cmds[i], opts)),
     );
   }
 
   /**
-   * Execute a raw command array across all sandboxes in parallel.
+   * Execute a raw command array across all machinees in parallel.
    */
   async execAllRaw(
     command: string[],
     opts?: ExecOptions,
   ): Promise<ExecResult[]> {
-    return Promise.all(this.sandboxes.map((s) => s.exec(command, opts)));
+    return Promise.all(this.machinees.map((s) => s.exec(command, opts)));
   }
 
-  /** Get a specific sandbox by index. */
-  at(index: number): Sandbox {
-    const s = this.sandboxes[index];
+  /** Get a specific machine by index. */
+  at(index: number): Machine {
+    const s = this.machinees[index];
     if (!s) throw new Error(`Fleet index ${index} out of range (size: ${this.size})`);
     return s;
   }
 
-  /** Stop and delete all sandboxes. Ignores errors. */
+  /** Stop and delete all machinees. Ignores errors. */
   async cleanup(): Promise<void> {
-    await Promise.all(this.sandboxes.map((s) => s.cleanup()));
+    await Promise.all(this.machinees.map((s) => s.cleanup()));
   }
 }
 
 /**
- * Create a fleet of sandboxes.
+ * Create a fleet of machinees.
  * Names are auto-generated as `{prefix}-0`, `{prefix}-1`, etc.
  */
 export async function createFleet(
   http: SmolvmHttpClient,
   prefix: string,
   count: number,
-  opts?: CreateSandboxOptions,
-): Promise<SandboxFleet> {
-  const sandboxes: Sandbox[] = [];
+  opts?: CreateMachineOptions,
+): Promise<MachineFleet> {
+  const machinees: Machine[] = [];
 
   for (let i = 0; i < count; i++) {
     const name = `${prefix}-${i}`;
 
     // Cleanup any leftover from previous runs
     try {
-      await http.stopSandbox(name);
+      await http.stopMachine(name);
     } catch { /* ignore */ }
     try {
-      await http.deleteSandbox(name);
+      await http.deleteMachine(name);
     } catch { /* ignore */ }
 
     // Create
-    await http.createSandbox({
+    await http.createMachine({
       name,
       mounts: opts?.mounts,
       ports: opts?.ports,
@@ -116,11 +116,11 @@ export async function createFleet(
       from_starter: opts?.fromStarter,
     });
 
-    sandboxes.push(new Sandbox(name, http));
+    machinees.push(new Machine(name, http));
   }
 
   // Start all in parallel
-  await Promise.all(sandboxes.map((s) => s.start()));
+  await Promise.all(machinees.map((s) => s.start()));
 
-  return new SandboxFleet(sandboxes, http);
+  return new MachineFleet(machinees, http);
 }

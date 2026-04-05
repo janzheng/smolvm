@@ -1,7 +1,7 @@
 /**
- * smolvm TypeScript SDK — Sandbox
+ * smolvm TypeScript SDK — Machine
  *
- * High-level stateful wrapper around a single smolvm sandbox.
+ * High-level stateful wrapper around a single smolvm machine.
  * Provides exec, shell, file I/O, and just-bash-compatible API.
  */
 
@@ -10,7 +10,7 @@ import type {
   ContainerInfo,
   CreateCheckpointResponse,
   CreateContainerOptions,
-  CreateSandboxOptions,
+  CreateMachineOptions,
   DiffResult,
   ExecOptions,
   ExecResult,
@@ -19,13 +19,13 @@ import type {
   FileReadResponse,
   ImageInfo,
   MergeResponse,
-  MergeSandboxRequest,
+  MergeMachineRequest,
   ResourceStats,
-  SandboxInfo,
+  MachineInfo,
 } from "./types.ts";
 
-export class Sandbox {
-  private _info: SandboxInfo | null = null;
+export class Machine {
+  private _info: MachineInfo | null = null;
 
   constructor(
     public readonly name: string,
@@ -42,62 +42,62 @@ export class Sandbox {
   // --------------------------------------------------------------------------
 
   async start(): Promise<void> {
-    this._info = await this.http.startSandbox(this.name);
+    this._info = await this.http.startMachine(this.name);
   }
 
   async stop(): Promise<void> {
-    this._info = await this.http.stopSandbox(this.name);
+    this._info = await this.http.stopMachine(this.name);
   }
 
   async delete(force = false): Promise<void> {
-    await this.http.deleteSandbox(this.name, force);
+    await this.http.deleteMachine(this.name, force);
     this._info = null;
   }
 
-  async info(): Promise<SandboxInfo> {
-    this._info = await this.http.getSandbox(this.name);
+  async info(): Promise<MachineInfo> {
+    this._info = await this.http.getMachine(this.name);
     return this._info;
   }
 
   /** Get resource statistics (CPU, memory, disk usage). */
   async stats(): Promise<ResourceStats> {
-    return this.http.sandboxStats(this.name);
+    return this.http.machineStats(this.name);
   }
 
   /**
-   * Create a cold checkpoint of this sandbox.
-   * The sandbox must be stopped first.
+   * Create a cold checkpoint of this machine.
+   * The machine must be stopped first.
    */
   async checkpoint(): Promise<CreateCheckpointResponse> {
     return this.http.createCheckpoint(this.name);
   }
 
   /**
-   * Clone this sandbox into a new sandbox.
+   * Clone this machine into a new machine.
    * On macOS with APFS, cloning is instant (copy-on-write).
-   * The source sandbox does not need to be stopped.
+   * The source machine does not need to be stopped.
    */
-  async clone(cloneName: string): Promise<Sandbox> {
-    await this.http.cloneSandbox(this.name, cloneName);
-    return new Sandbox(cloneName, this.http);
+  async clone(cloneName: string): Promise<Machine> {
+    await this.http.cloneMachine(this.name, cloneName);
+    return new Machine(cloneName, this.http);
   }
 
   /**
-   * Compare this sandbox with another.
-   * Lists files that differ between the two sandboxes.
-   * Both sandboxes must be running (will be auto-started).
+   * Compare this machine with another.
+   * Lists files that differ between the two machinees.
+   * Both machinees must be running (will be auto-started).
    */
   async diff(other: string): Promise<DiffResult> {
-    return this.http.diffSandboxes(this.name, other);
+    return this.http.diffMachinees(this.name, other);
   }
 
   /**
-   * Merge files from this sandbox into another.
+   * Merge files from this machine into another.
    * Uses the diff to identify changed files and transfers them
    * via the exec channel.
    */
-  async merge(target: string, opts?: MergeSandboxRequest): Promise<MergeResponse> {
-    return this.http.mergeSandboxes(this.name, target, opts);
+  async merge(target: string, opts?: MergeMachineRequest): Promise<MergeResponse> {
+    return this.http.mergeMachinees(this.name, target, opts);
   }
 
   /** Stop + delete. Ignores errors (safe for cleanup). */
@@ -111,15 +111,15 @@ export class Sandbox {
   // --------------------------------------------------------------------------
 
   /**
-   * Execute a command array in the sandbox.
+   * Execute a command array in the machine.
    * Command is NOT processed through a shell.
    *
    * @example
-   * await sandbox.exec(["echo", "hello"]);
-   * await sandbox.exec(["node", "--version"]);
+   * await machine.exec(["echo", "hello"]);
+   * await machine.exec(["node", "--version"]);
    */
   async exec(command: string[], opts?: ExecOptions): Promise<ExecResult> {
-    return this.http.execSandbox(this.name, command, opts);
+    return this.http.execMachine(this.name, command, opts);
   }
 
   /**
@@ -128,8 +128,8 @@ export class Sandbox {
    * (pipes, redirects, &&, ||, variable expansion).
    *
    * @example
-   * await sandbox.sh("echo hello && ls -la");
-   * await sandbox.sh("cat /etc/os-release | grep NAME");
+   * await machine.sh("echo hello && ls -la");
+   * await machine.sh("cat /etc/os-release | grep NAME");
    */
   async sh(cmd: string, opts?: ExecOptions): Promise<ExecResult> {
     return this.exec(["sh", "-c", cmd], opts);
@@ -139,7 +139,7 @@ export class Sandbox {
    * Execute a shell command. Alias for sh() — just-bash compatible.
    *
    * @example
-   * await sandbox.runCommand("echo hello");
+   * await machine.runCommand("echo hello");
    */
   async runCommand(cmd: string, opts?: ExecOptions): Promise<ExecResult> {
     return this.sh(cmd, opts);
@@ -150,10 +150,10 @@ export class Sandbox {
   // --------------------------------------------------------------------------
 
   /**
-   * Write a file to the sandbox filesystem via the file API.
+   * Write a file to the machine filesystem via the file API.
    * Content is base64-encoded for transport.
    *
-   * @param path - Absolute path in the sandbox filesystem
+   * @param path - Absolute path in the machine filesystem
    * @param content - File content (will be base64-encoded)
    * @param permissions - Optional Unix permissions string (e.g. "0644")
    */
@@ -163,7 +163,7 @@ export class Sandbox {
   }
 
   /**
-   * Read a file from the sandbox filesystem via the file API.
+   * Read a file from the machine filesystem via the file API.
    * Returns decoded content (base64 decoded from API response).
    */
   async readFile(path: string): Promise<string> {
@@ -172,7 +172,7 @@ export class Sandbox {
   }
 
   /**
-   * Delete a file from the sandbox filesystem via the file API.
+   * Delete a file from the machine filesystem via the file API.
    */
   async deleteFile(path: string): Promise<void> {
     await this.http.deleteFile(this.name, path);
@@ -182,7 +182,7 @@ export class Sandbox {
    * Write multiple files at once. just-bash compatible.
    *
    * @example
-   * await sandbox.writeFiles({
+   * await machine.writeFiles({
    *   "/app/main.ts": "console.log('hello');",
    *   "/app/package.json": '{"name": "test"}',
    * });
@@ -214,7 +214,7 @@ export class Sandbox {
    * Upload a binary file via multipart/form-data.
    * No base64 encoding needed — suitable for large files.
    *
-   * @param path - Absolute path in the sandbox filesystem
+   * @param path - Absolute path in the machine filesystem
    * @param data - Raw file data
    * @param permissions - Optional Unix permissions string (e.g. "0755")
    */
@@ -250,10 +250,10 @@ export class Sandbox {
   }
 
   /**
-   * Push this sandbox as a snapshot for later retrieval.
+   * Push this machine as a snapshot for later retrieval.
    */
   async push(): Promise<void> {
-    await this.http.pushSandbox(this.name);
+    await this.http.pushMachine(this.name);
   }
 
   // --------------------------------------------------------------------------
@@ -271,7 +271,7 @@ export class Sandbox {
 
   /**
    * Run a command using an OCI image (ephemeral overlay).
-   * The sandbox must have the image pulled first.
+   * The machine must have the image pulled first.
    */
   async runInImage(
     image: string,

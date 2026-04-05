@@ -1,7 +1,7 @@
-//! Remote sandbox provider — talks to a remote smolvm instance via HTTP.
+//! Remote machine provider — talks to a remote smolvm instance via HTTP.
 //!
 //! This enables multi-node topologies: a local smolvm instance can manage
-//! sandboxes on a remote smolvm server by delegating over the REST API.
+//! machinees on a remote smolvm server by delegating over the REST API.
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -10,7 +10,7 @@ use crate::api::types::{
     CreateMachineRequest, ExecRequest, ExecResponse, ListMachinesResponse,
     MachineInfo,
 };
-use crate::provider::{ProviderError, ProviderInfo, SandboxProvider};
+use crate::provider::{ProviderError, ProviderInfo, MachineProvider};
 
 /// Health response with owned strings (for deserialization from remote).
 #[derive(Deserialize)]
@@ -77,7 +77,7 @@ impl RemoteProvider {
 }
 
 #[async_trait]
-impl SandboxProvider for RemoteProvider {
+impl MachineProvider for RemoteProvider {
     fn info(&self) -> ProviderInfo {
         ProviderInfo {
             name: "remote".into(),
@@ -89,7 +89,7 @@ impl SandboxProvider for RemoteProvider {
             .into_iter()
             .map(String::from)
             .collect(),
-            max_sandboxes: None,
+            max_machinees: None,
             region: Some(self.base_url.clone()),
         }
     }
@@ -165,7 +165,7 @@ impl SandboxProvider for RemoteProvider {
             .json()
             .await
             .map_err(|e| ProviderError::Internal(format!("JSON decode: {}", e)))?;
-        Ok(body.sandboxes)
+        Ok(body.machinees)
     }
 
     async fn exec(

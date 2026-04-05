@@ -74,7 +74,7 @@ Same pattern, different flags:
 ```typescript
 const args = [];
 if (model) args.push('--model', model);
-if (sandboxMode) args.push('--sandbox', sandboxMode);
+if (machineMode) args.push('--machine', machineMode);
 if (approvalPolicy === 'auto') args.push('--approval-policy', 'auto-edit');
 if (webSearch) args.push('--web-search', 'true');
 ```

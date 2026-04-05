@@ -54,7 +54,7 @@ console.log("Auth Rejection:");
 
 {
   // Request with wrong token should be rejected
-  const resp = await fetch(`${API}/sandboxes`, {
+  const resp = await fetch(`${API}/machinees`, {
     headers: { "Authorization": "Bearer wrong-token-xxx" },
     signal: AbortSignal.timeout(10_000),
   });
@@ -64,7 +64,7 @@ console.log("Auth Rejection:");
 
 {
   // Request with no token should be rejected
-  const resp = await fetch(`${API}/sandboxes`, {
+  const resp = await fetch(`${API}/machinees`, {
     signal: AbortSignal.timeout(10_000),
   });
   test("No token → 401", resp.status === 401, `got status=${resp.status}`);
@@ -97,11 +97,11 @@ console.log("\nAuth Success:");
 
 {
   // Request with correct token should work
-  const resp = await apiGet("/sandboxes");
+  const resp = await apiGet("/machinees");
   test("Correct token → 200", resp.ok, `got status=${resp.status}`);
   if (resp.ok) {
     const data = await resp.json();
-    test("Response has sandboxes array", Array.isArray(data.sandboxes));
+    test("Response has machinees array", Array.isArray(data.machinees));
   }
 }
 
@@ -114,16 +114,16 @@ console.log("\nLifecycle with Auth:");
 await cleanup(SANDBOX);
 
 {
-  const resp = await apiPost("/sandboxes", {
+  const resp = await apiPost("/machinees", {
     name: SANDBOX,
     resources: { cpus: 2, memory_mb: 1024, network: true },
   });
-  test("Create sandbox (authed)", resp.ok, `status=${resp.status}`);
+  test("Create machine (authed)", resp.ok, `status=${resp.status}`);
 }
 
 {
-  const resp = await apiPost(`/sandboxes/${SANDBOX}/start`);
-  test("Start sandbox (authed)", resp.ok, `status=${resp.status}`);
+  const resp = await apiPost(`/machinees/${SANDBOX}/start`);
+  test("Start machine (authed)", resp.ok, `status=${resp.status}`);
 }
 
 {
@@ -133,8 +133,8 @@ await cleanup(SANDBOX);
 }
 
 {
-  const resp = await apiGet(`/sandboxes/${SANDBOX}`);
-  test("Get sandbox info (authed)", resp.ok);
+  const resp = await apiGet(`/machinees/${SANDBOX}`);
+  test("Get machine info (authed)", resp.ok);
 }
 
 // ============================================================================
@@ -144,8 +144,8 @@ await cleanup(SANDBOX);
 console.log("\nCleanup:");
 {
   await cleanup(SANDBOX);
-  const resp = await apiGet(`/sandboxes/${SANDBOX}`);
-  test("Sandbox cleaned up", resp.status === 404);
+  const resp = await apiGet(`/machinees/${SANDBOX}`);
+  test("Machine cleaned up", resp.status === 404);
 }
 
 summary();

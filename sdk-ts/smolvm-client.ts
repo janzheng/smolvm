@@ -2,20 +2,20 @@
  * smolvm TypeScript SDK — SmolvmClient
  *
  * Top-level client. The main entry point for the SDK.
- * Creates sandboxes, microvms, and fleets.
+ * Creates machinees, microvms, and fleets.
  */
 
 import { SmolvmHttpClient } from "./client.ts";
-import { Sandbox } from "./sandbox.ts";
+import { Machine } from "./machine.ts";
 import { MicroVM } from "./microvm.ts";
-import { SandboxFleet, createFleet } from "./fleet.ts";
+import { MachineFleet, createFleet } from "./fleet.ts";
 import type {
   CheckpointMetadata,
   CreateMicroVMOptions,
-  CreateSandboxOptions,
+  CreateMachineOptions,
   HealthResponse,
   RestoreCheckpointResponse,
-  SandboxInfo,
+  MachineInfo,
   MicroVMInfo,
   SnapshotInfo,
   StarterInfo,
@@ -42,21 +42,21 @@ export class SmolvmClient {
   }
 
   // --------------------------------------------------------------------------
-  // Sandboxes
+  // Machinees
   // --------------------------------------------------------------------------
 
   /**
-   * Create a new sandbox (ephemeral VM).
-   * Does NOT start it — call sandbox.start() after.
+   * Create a new machine (ephemeral VM).
+   * Does NOT start it — call machine.start() after.
    *
    * @example
-   * const sandbox = await client.create("my-vm", { cpus: 2, network: true });
-   * await sandbox.start();
-   * await sandbox.sh("echo hello");
-   * await sandbox.cleanup();
+   * const machine = await client.create("my-vm", { cpus: 2, network: true });
+   * await machine.start();
+   * await machine.sh("echo hello");
+   * await machine.cleanup();
    */
-  async create(name: string, opts?: CreateSandboxOptions): Promise<Sandbox> {
-    await this.http.createSandbox({
+  async create(name: string, opts?: CreateMachineOptions): Promise<Machine> {
+    await this.http.createMachine({
       name,
       mounts: opts?.mounts,
       ports: opts?.ports,
@@ -73,35 +73,35 @@ export class SmolvmClient {
       from_starter: opts?.fromStarter,
       secrets: opts?.secrets,
     });
-    return new Sandbox(name, this.http);
+    return new Machine(name, this.http);
   }
 
   /**
-   * Create and immediately start a sandbox. Convenience method.
+   * Create and immediately start a machine. Convenience method.
    *
    * @example
-   * const sandbox = await client.createAndStart("my-vm", { network: true });
-   * await sandbox.sh("echo hello");
-   * await sandbox.cleanup();
+   * const machine = await client.createAndStart("my-vm", { network: true });
+   * await machine.sh("echo hello");
+   * await machine.cleanup();
    */
-  async createAndStart(name: string, opts?: CreateSandboxOptions): Promise<Sandbox> {
-    const sandbox = await this.create(name, opts);
-    await sandbox.start();
-    return sandbox;
+  async createAndStart(name: string, opts?: CreateMachineOptions): Promise<Machine> {
+    const machine = await this.create(name, opts);
+    await machine.start();
+    return machine;
   }
 
   /**
-   * Get an existing sandbox by name.
+   * Get an existing machine by name.
    * Does NOT create it — use create() for that.
    */
-  async get(name: string): Promise<Sandbox> {
+  async get(name: string): Promise<Machine> {
     // Verify it exists
-    await this.http.getSandbox(name);
-    return new Sandbox(name, this.http);
+    await this.http.getMachine(name);
+    return new Machine(name, this.http);
   }
 
-  async list(): Promise<SandboxInfo[]> {
-    return this.http.listSandboxes();
+  async list(): Promise<MachineInfo[]> {
+    return this.http.listMachines();
   }
 
   // --------------------------------------------------------------------------
@@ -110,7 +110,7 @@ export class SmolvmClient {
 
   /**
    * Create a new MicroVM (persistent VM).
-   * MicroVMs use a different REST schema than sandboxes.
+   * MicroVMs use a different REST schema than machinees.
    */
   async createMicroVM(name: string, opts?: CreateMicroVMOptions): Promise<MicroVM> {
     await this.http.createMicroVM({
@@ -143,9 +143,9 @@ export class SmolvmClient {
     return this.http.listCheckpoints();
   }
 
-  async restoreCheckpoint(checkpointId: string, name: string): Promise<Sandbox> {
+  async restoreCheckpoint(checkpointId: string, name: string): Promise<Machine> {
     await this.http.restoreCheckpoint(checkpointId, name);
-    return new Sandbox(name, this.http);
+    return new Machine(name, this.http);
   }
 
   async deleteCheckpoint(checkpointId: string): Promise<void> {
@@ -168,9 +168,9 @@ export class SmolvmClient {
     return this.http.listSnapshots();
   }
 
-  async pullSnapshot(snapshotName: string, sandboxName: string): Promise<Sandbox> {
-    await this.http.pullSnapshot(snapshotName, sandboxName);
-    return new Sandbox(sandboxName, this.http);
+  async pullSnapshot(snapshotName: string, machineName: string): Promise<Machine> {
+    await this.http.pullSnapshot(snapshotName, machineName);
+    return new Machine(machineName, this.http);
   }
 
   async deleteSnapshot(name: string): Promise<void> {
@@ -182,7 +182,7 @@ export class SmolvmClient {
   // --------------------------------------------------------------------------
 
   /**
-   * Create a fleet of sandboxes. All are created and started.
+   * Create a fleet of machinees. All are created and started.
    * Names: `{prefix}-0`, `{prefix}-1`, ...
    *
    * @example
@@ -193,8 +193,8 @@ export class SmolvmClient {
   async createFleet(
     prefix: string,
     count: number,
-    opts?: CreateSandboxOptions,
-  ): Promise<SandboxFleet> {
+    opts?: CreateMachineOptions,
+  ): Promise<MachineFleet> {
     return createFleet(this.http, prefix, count, opts);
   }
 }

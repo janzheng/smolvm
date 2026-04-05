@@ -30,21 +30,21 @@ test_version() {
 test_help() {
     local output
     output=$($SMOLVM --help 2>&1)
-    [[ "$output" == *"sandbox"* ]] && \
+    [[ "$output" == *"machine"* ]] && \
     [[ "$output" == *"microvm"* ]] && \
     [[ "$output" == *"container"* ]]
 }
 
-test_sandbox_help() {
+test_machine_help() {
     local output
-    output=$($SMOLVM sandbox --help 2>&1)
+    output=$($SMOLVM machine --help 2>&1)
     [[ "$output" == *"run"* ]]
 }
 
-test_sandbox_run_platform_flag() {
-    # Verify --oci-platform flag exists in sandbox run help
+test_machine_run_platform_flag() {
+    # Verify --oci-platform flag exists in machine run help
     local output
-    output=$($SMOLVM sandbox run --help 2>&1)
+    output=$($SMOLVM machine run --help 2>&1)
     [[ "$output" == *"--oci-platform"* ]] && \
     [[ "$output" == *"linux/arm64"* ]] && \
     [[ "$output" == *"linux/amd64"* ]]
@@ -86,9 +86,9 @@ test_invalid_subcommand() {
     ! $SMOLVM nonexistent-command 2>/dev/null
 }
 
-test_sandbox_run_missing_image() {
+test_machine_run_missing_image() {
     # Should fail when image is not provided
-    ! $SMOLVM sandbox run 2>/dev/null
+    ! $SMOLVM machine run 2>/dev/null
 }
 
 # =============================================================================
@@ -111,18 +111,18 @@ test_microvm_create_storage_flag() {
     [[ "$output" == *"GiB"* ]]
 }
 
-test_sandbox_create_overlay_flag() {
-    # Verify --overlay flag exists in sandbox create help
+test_machine_create_overlay_flag() {
+    # Verify --overlay flag exists in machine create help
     local output
-    output=$($SMOLVM sandbox create --help 2>&1)
+    output=$($SMOLVM machine create --help 2>&1)
     [[ "$output" == *"--overlay"* ]] && \
     [[ "$output" == *"GiB"* ]]
 }
 
-test_sandbox_run_overlay_flag() {
-    # Verify --overlay flag exists in sandbox run help
+test_machine_run_overlay_flag() {
+    # Verify --overlay flag exists in machine run help
     local output
-    output=$($SMOLVM sandbox run --help 2>&1)
+    output=$($SMOLVM machine run --help 2>&1)
     [[ "$output" == *"--overlay"* ]] && \
     [[ "$output" == *"GiB"* ]]
 }
@@ -133,16 +133,16 @@ test_sandbox_run_overlay_flag() {
 
 run_test "Version command" test_version || true
 run_test "Help command" test_help || true
-run_test "Sandbox help" test_sandbox_help || true
-run_test "Sandbox run --oci-platform flag" test_sandbox_run_platform_flag || true
+run_test "Machine help" test_machine_help || true
+run_test "Machine run --oci-platform flag" test_machine_run_platform_flag || true
 run_test "Pack --oci-platform flag" test_pack_platform_flag || true
 run_test "Microvm help" test_microvm_help || true
 run_test "Container help" test_container_help || true
 run_test "Invalid subcommand fails" test_invalid_subcommand || true
-run_test "Sandbox run without image fails" test_sandbox_run_missing_image || true
+run_test "Machine run without image fails" test_machine_run_missing_image || true
 run_test "Microvm create --overlay flag" test_microvm_create_overlay_flag || true
 run_test "Microvm create --storage flag" test_microvm_create_storage_flag || true
-run_test "Sandbox create --overlay flag" test_sandbox_create_overlay_flag || true
-run_test "Sandbox run --overlay flag" test_sandbox_run_overlay_flag || true
+run_test "Machine create --overlay flag" test_machine_create_overlay_flag || true
+run_test "Machine run --overlay flag" test_machine_run_overlay_flag || true
 
 print_summary "CLI Tests"

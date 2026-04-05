@@ -2,7 +2,7 @@
   "tasks": {
     "ctl": "deno run --allow-net --allow-env --allow-read --allow-run --allow-write cli/smolctl.ts",
     "serve": "smolvm serve start --listen 127.0.0.1:9090",
-    "test": "deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-sandbox.ts",
+    "test": "deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-machine.ts",
     "test-capabilities": "deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-capabilities.ts",
     "test-fleet": "deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-fleet.ts",
     "test-lifecycle": "deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-lifecycle.ts",
@@ -11,6 +11,6 @@
     "test-sync": "deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-sync.ts",
     "test-proxy": "deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-secret-proxy.ts",
     "test-remote": "deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-remote.ts",
-    "test-all": "deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-sandbox.ts && deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-capabilities.ts && deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-fleet.ts && deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-isolation.ts && deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-containers-debug.ts && deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-sync.ts"
+    "test-all": "deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-machine.ts && deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-capabilities.ts && deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-fleet.ts && deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-isolation.ts && deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-containers-debug.ts && deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-sync.ts"
   }
 }

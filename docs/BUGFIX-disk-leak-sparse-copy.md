@@ -2,25 +2,25 @@
 
 **Date:** 2026-03-22
 **Files changed:**
-- `smolvm-plus/src/api/handlers/sandboxes.rs` — sandbox delete cleanup
+- `smolvm-plus/src/api/handlers/machinees.rs` — machine delete cleanup
 - `smolvm-plus/src/api/handlers/snapshots.rs` — sparse-aware extraction
 
 ## Problem
 
 Two bugs combined to silently consume ~271 GB of disk:
 
-### 1. Sandbox delete never cleaned up VM disk files
+### 1. Machine delete never cleaned up VM disk files
 
-`DELETE /sandboxes/{name}` removed the sandbox from the in-memory registry but
+`DELETE /machines/{name}` removed the machine from the in-memory registry but
 **never deleted the VM data directory** (`~/Library/Caches/smolvm/vms/{name}/`).
-Every sandbox that was created and deleted left behind its `overlay.raw` +
+Every machine that was created and deleted left behind its `overlay.raw` +
 `storage.raw` files permanently.
 
 ### 2. Snapshot pull destroyed sparse file optimization
 
 `overlay.raw` and `storage.raw` are created as **sparse files** — they report
 an apparent size of 10 GB + 20 GB but only consume actual disk for non-zero
-blocks (~25–49 MB for a fresh sandbox).
+blocks (~25–49 MB for a fresh machine).
 
 However, `pull_snapshot` used `std::io::copy` to extract disk images from the
 tar.gz archive. This writes every byte sequentially — including the vast zero
@@ -28,7 +28,7 @@ regions — producing **dense** files that consume their full apparent size on
 disk.
 
 **Result:** Each snapshot pull created ~30 GB of real disk usage instead of
-~25 MB. Combined with bug #1 (never cleaning up), leaked sandboxes accumulated
+~25 MB. Combined with bug #1 (never cleaning up), leaked machinees accumulated
 to hundreds of GB.
 
 ### Measured impact
@@ -40,11 +40,11 @@ to hundreds of GB.
 
 ## Fix
 
-### Sandbox delete cleanup (`sandboxes.rs`)
+### Machine delete cleanup (`machinees.rs`)
 
-Added `std::fs::remove_dir_all(vm_data_dir(&name))` to `delete_sandbox` after
+Added `std::fs::remove_dir_all(vm_data_dir(&name))` to `delete_machine` after
 stopping the VM process. This ensures `overlay.raw`, `storage.raw`, and all
-marker files are removed when a sandbox is deleted.
+marker files are removed when a machine is deleted.
 
 ### Sparse-aware copy (`snapshots.rs`)
 
@@ -80,4 +80,4 @@ dependencies. The delete cleanup is a straightforward missing `remove_dir_all`.
 Verified with a push → pull round-trip:
 - Fresh create: 49 MB actual (unchanged)
 - Snapshot pull: 17 MB actual (was 30 GB)
-- Sandbox delete: directory fully removed (was leaked)
+- Machine delete: directory fully removed (was leaked)

@@ -11,7 +11,7 @@ use crate::api::error::ApiError;
 use crate::api::state::ApiState;
 use crate::api::types::{ApiErrorResponse, DiskStats, ResourceStatsResponse};
 
-/// Get resource statistics for a sandbox.
+/// Get resource statistics for a machine.
 #[utoipa::path(
     get,
     path = "/api/v1/machines/{id}/stats",
@@ -24,7 +24,7 @@ use crate::api::types::{ApiErrorResponse, DiskStats, ResourceStatsResponse};
         (status = 404, description = "Machine not found", body = ApiErrorResponse)
     )
 )]
-pub async fn sandbox_stats(
+pub async fn machine_stats(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ResourceStatsResponse>, ApiError> {

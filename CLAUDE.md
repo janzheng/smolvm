@@ -1,6 +1,6 @@
 # smolvm
 
-Micro VM platform for agent isolation. Each sandbox is an Alpine Linux VM with its own filesystem, network, and tools.
+Micro VM platform for agent isolation. Each machine is an Alpine Linux VM with its own filesystem, network, and tools.
 
 ## Active Code
 
@@ -14,7 +14,7 @@ Micro VM platform for agent isolation. Each sandbox is an Alpine Linux VM with i
 | `playtests/` | E2E playtest scripts | Bash |
 | `starters/` | Smolfile templates (node, python, openclaw) | TOML |
 | `docs/` | All project documentation | Markdown |
-| `mcp-servers/` | MCP server configs for sandboxed tools | TypeScript |
+| `mcp-servers/` | MCP server configs for machineed tools | TypeScript |
 | `deploy/` | Deployment configs (systemd, etc.) | -- |
 | `lib/` | Bundled libkrun/libkrunfw dylibs | Binary |
 
@@ -69,15 +69,15 @@ deno task test-all
 All routes under `/api/v1/`. See `docs/` for full reference.
 
 Key endpoints:
-- `POST /api/v1/sandboxes` -- create sandbox
-- `POST /api/v1/sandboxes/:name/exec` -- execute command
-- `GET /api/v1/sandboxes/:name/files/*path` -- read file
-- `PUT /api/v1/sandboxes/:name/files/*path` -- write file
-- `POST /api/v1/sandboxes/:name/snapshots` -- push snapshot
+- `POST /api/v1/machines` -- create machine
+- `POST /api/v1/machines/:name/exec` -- execute command
+- `GET /api/v1/machines/:name/files/*path` -- read file
+- `PUT /api/v1/machines/:name/files/*path` -- write file
+- `POST /api/v1/machines/:name/snapshots` -- push snapshot
 
 ## Known Issues
 
 - Port mapping connections refused (use tunnels instead)
-- Container-in-sandbox 500 error (upstream)
+- Container-in-machine 500 error (upstream)
 - VM can reach host API via TSI (mitigated by auth token)
 - libkrun linkage: building server binary on macOS requires correct DYLD_LIBRARY_PATH pointing to bundled libkrun, not homebrew's version

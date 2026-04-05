@@ -5,7 +5,7 @@
 # Usage:
 #   ./tests/run_all.sh              # Run all tests
 #   ./tests/run_all.sh cli          # Run only CLI tests
-#   ./tests/run_all.sh sandbox      # Run only sandbox tests
+#   ./tests/run_all.sh machine      # Run only machine tests
 #   ./tests/run_all.sh microvm      # Run only microvm tests
 #   ./tests/run_all.sh container    # Run only container tests
 #   ./tests/run_all.sh api          # Run only HTTP API tests
@@ -83,8 +83,8 @@ case "$TESTS_TO_RUN" in
     cli)
         run_suite "CLI Tests" "$SCRIPT_DIR/test_cli.sh"
         ;;
-    sandbox)
-        run_suite "Sandbox Tests" "$SCRIPT_DIR/test_sandbox.sh"
+    machine)
+        run_suite "Machine Tests" "$SCRIPT_DIR/test_machine.sh"
         ;;
     microvm)
         run_suite "MicroVM Tests" "$SCRIPT_DIR/test_microvm.sh"
@@ -118,7 +118,7 @@ case "$TESTS_TO_RUN" in
         ;;
     all)
         run_suite "CLI Tests" "$SCRIPT_DIR/test_cli.sh"
-        run_suite "Sandbox Tests" "$SCRIPT_DIR/test_sandbox.sh"
+        run_suite "Machine Tests" "$SCRIPT_DIR/test_machine.sh"
         run_suite "MicroVM Tests" "$SCRIPT_DIR/test_microvm.sh"
         run_suite "Container Tests" "$SCRIPT_DIR/test_container.sh"
         run_suite "HTTP API Tests" "$SCRIPT_DIR/test_api.sh"
@@ -126,7 +126,7 @@ case "$TESTS_TO_RUN" in
         ;;
     *)
         echo "Unknown test suite: $TESTS_TO_RUN"
-        echo "Available: cli, sandbox, microvm, container, api, pack, pack-quick, bench, bench-vm, bench-container, all"
+        echo "Available: cli, machine, microvm, container, api, pack, pack-quick, bench, bench-vm, bench-container, all"
         exit 1
         ;;
 esac

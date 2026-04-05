@@ -1,4 +1,4 @@
-//! Secret proxy for safe API key injection into sandboxes.
+//! Secret proxy for safe API key injection into machinees.
 //!
 //! The secret proxy prevents API key exfiltration by keeping real keys on the
 //! host side. Inside the VM, SDKs are configured with `*_BASE_URL=http://localhost:9800/<service>`
@@ -35,7 +35,7 @@ use std::sync::Arc;
 
 /// Start the host-side secret proxy on a Unix socket.
 ///
-/// This is spawned as a background thread per sandbox. It listens for
+/// This is spawned as a background thread per machine. It listens for
 /// HTTP requests from the guest-side proxy (via vsock → Unix socket)
 /// and forwards them with real credentials.
 ///
@@ -43,7 +43,7 @@ use std::sync::Arc;
 pub fn start_proxy_listener(
     socket_path: &Path,
     config: ProxyConfig,
-    sandbox_name: String,
+    machine_name: String,
 ) -> std::io::Result<std::thread::JoinHandle<()>> {
     // Clean up old socket
     let _ = std::fs::remove_file(socket_path);
@@ -52,14 +52,14 @@ pub fn start_proxy_listener(
     let config = Arc::new(config);
 
     tracing::info!(
-        sandbox = %sandbox_name,
+        machine = %machine_name,
         socket = %socket_path.display(),
         services = ?config.services.keys().collect::<Vec<_>>(),
         "secret proxy listening"
     );
 
     let handle = std::thread::Builder::new()
-        .name(format!("proxy-{}", sandbox_name))
+        .name(format!("proxy-{}", machine_name))
         .spawn(move || {
             // Create a shared HTTP client for this proxy instance
             let http_client = match reqwest::blocking::Client::builder()
@@ -85,7 +85,7 @@ pub fn start_proxy_listener(
                         });
                     }
                     Err(e) => {
-                        // Socket was closed (sandbox shutting down)
+                        // Socket was closed (machine shutting down)
                         if e.kind() == std::io::ErrorKind::Other
                             || e.kind() == std::io::ErrorKind::BrokenPipe
                         {
@@ -96,7 +96,7 @@ pub fn start_proxy_listener(
                 }
             }
 
-            tracing::debug!(sandbox = %sandbox_name, "secret proxy shut down");
+            tracing::debug!(machine = %machine_name, "secret proxy shut down");
         })?;
 
     Ok(handle)

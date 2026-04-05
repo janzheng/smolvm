@@ -437,7 +437,7 @@ mod tests {
         secrets.insert("anthropic".to_string(), "test-ant-real".to_string());
         let config = ProxyConfig::new(secrets);
 
-        // Sandbox has NO secrets configured — env vars should pass through
+        // Machine has NO secrets configured — env vars should pass through
         let mut env = vec![
             ("ANTHROPIC_API_KEY".to_string(), "test-ant-user-key".to_string()),
         ];
@@ -445,7 +445,7 @@ mod tests {
         let stripped = config.sanitize_env(&mut env, &[], &[]);
 
         assert_eq!(stripped, 0);
-        assert_eq!(env[0].1, "test-ant-user-key", "should NOT strip when sandbox has no secrets");
+        assert_eq!(env[0].1, "test-ant-user-key", "should NOT strip when machine has no secrets");
     }
 
     #[test]

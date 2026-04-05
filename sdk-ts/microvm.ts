@@ -2,7 +2,7 @@
  * smolvm TypeScript SDK — MicroVM
  *
  * High-level wrapper for persistent MicroVMs.
- * MicroVMs differ from Sandboxes: different REST schema, persistent by design,
+ * MicroVMs differ from Machinees: different REST schema, persistent by design,
  * no image/container management.
  */
 
@@ -69,7 +69,7 @@ export class MicroVM {
   }
 
   // --------------------------------------------------------------------------
-  // File I/O (same exec-channel approach as Sandbox)
+  // File I/O (same exec-channel approach as Machine)
   // --------------------------------------------------------------------------
 
   async writeFile(path: string, content: string): Promise<void> {

@@ -1,6 +1,6 @@
 //! MCP (Model Context Protocol) handlers.
 //!
-//! Provides stateless MCP server interaction inside sandboxes via the existing
+//! Provides stateless MCP server interaction inside machinees via the existing
 //! exec infrastructure. Each request execs the MCP server command, sends JSON-RPC
 //! messages through stdin, and parses the response from stdout.
 
@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::api::error::{classify_ensure_running_error, ApiError};
-use crate::api::state::{ensure_running_and_persist, with_sandbox_client, ApiState};
+use crate::api::state::{ensure_running_and_persist, with_machine_client, ApiState};
 use crate::api::types::{
     ApiErrorResponse, CallMcpToolRequest, CallMcpToolResponse, EnvVar, ListMcpToolsResponse,
     McpServerConfig, McpServerStatus, McpToolInfo,
@@ -115,9 +115,9 @@ fn parse_jsonrpc_responses(stdout: &str) -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// List MCP tools from all configured servers in a sandbox.
+/// List MCP tools from all configured servers in a machine.
 ///
-/// For each MCP server, this execs the server command inside the sandbox,
+/// For each MCP server, this execs the server command inside the machine,
 /// sends initialize + tools/list, and collects the discovered tools.
 #[utoipa::path(
     get,
@@ -142,7 +142,7 @@ pub async fn list_mcp_tools(
         .await
         .map_err(classify_ensure_running_error)?;
 
-    // Get configured MCP servers from sandbox
+    // Get configured MCP servers from machine
     let mcp_servers: Vec<McpServerConfig> = {
         let entry_lock = entry.lock();
         entry_lock.mcp_servers.clone()
@@ -168,7 +168,7 @@ pub async fn list_mcp_tools(
         let workdir = server_config.workdir.clone();
         let timeout = Some(Duration::from_secs(30));
 
-        let result = with_sandbox_client(&entry, move |c| {
+        let result = with_machine_client(&entry, move |c| {
             c.vm_exec_as(command, env, workdir, timeout, None)
         })
         .await;
@@ -227,7 +227,7 @@ pub async fn list_mcp_tools(
     }))
 }
 
-/// Call an MCP tool on a specific server inside a sandbox.
+/// Call an MCP tool on a specific server inside a machine.
 ///
 /// Executes the MCP server command, sends initialize + tools/call, and returns
 /// the result. The server runs ephemerally for each call.
@@ -279,7 +279,7 @@ pub async fn call_mcp_tool(
     let workdir = server_config.workdir.clone();
     let timeout = Some(Duration::from_secs(60));
 
-    let (exit_code, stdout, stderr) = with_sandbox_client(&entry, move |c| {
+    let (exit_code, stdout, stderr) = with_machine_client(&entry, move |c| {
         c.vm_exec_as(command, env, workdir, timeout, None)
     })
     .await?;
@@ -339,7 +339,7 @@ pub async fn call_mcp_tool(
     }
 }
 
-/// List configured MCP servers for a sandbox.
+/// List configured MCP servers for a machine.
 ///
 /// Returns the configured servers without running them. For tool discovery,
 /// use the `/mcp/tools` endpoint instead.
@@ -367,7 +367,7 @@ pub async fn list_mcp_servers(
     Ok(Json(servers))
 }
 
-/// Start/verify an MCP server inside the sandbox.
+/// Start/verify an MCP server inside the machine.
 ///
 /// Executes the MCP server command and sends an initialize message to verify
 /// it responds correctly. Returns the server status.
@@ -404,7 +404,7 @@ pub async fn start_mcp_server(
     let workdir = config.workdir.clone();
     let timeout = Some(Duration::from_secs(30));
 
-    let result = with_sandbox_client(&entry, move |c| {
+    let result = with_machine_client(&entry, move |c| {
         c.vm_exec_as(command, env, workdir, timeout, None)
     })
     .await;

@@ -25,7 +25,7 @@ cargo make dev
 
 # Run smolvm with environment variables set up automatically
 cargo make smolvm --version
-cargo make smolvm sandbox run --net --image alpine:latest -- echo hello
+cargo make smolvm machine run --net --image alpine:latest -- echo hello
 cargo make smolvm microvm ls
 
 # Or run the binary directly with environment variables:
@@ -55,7 +55,7 @@ cargo make test
 
 # Run specific test suites
 cargo make test-cli        # CLI tests only
-cargo make test-sandbox    # Sandbox tests only
+cargo make test-machine    # Machine tests only
 cargo make test-microvm    # MicroVM tests only
 cargo make test-pack       # Pack tests only
 cargo make test-lib        # Unit tests (no VM required)

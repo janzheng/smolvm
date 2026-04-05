@@ -10,7 +10,7 @@
  * - Persistence/state
  * - Lifecycle timing
  * - Orchestration (REST API CRUD)
- * - Containers-in-sandbox
+ * - Containers-in-machine
  */
 
 import {
@@ -35,7 +35,7 @@ console.log("==========================================\n");
 console.log("═══ 1. Language Runtimes ═══\n");
 
 // --- Alpine base ---
-console.log("Alpine base (default sandbox):");
+console.log("Alpine base (default machine):");
 {
   const name = "cx04-alpine";
   await createAndStart(name);
@@ -49,7 +49,7 @@ console.log("Alpine base (default sandbox):");
 }
 
 // --- Node.js via run (ephemeral overlay) ---
-console.log("\nNode.js (via sandbox run with node image):");
+console.log("\nNode.js (via machine run with node image):");
 {
   const name = "cx04-node";
   await createAndStart(name);
@@ -75,7 +75,7 @@ console.log("\nNode.js (via sandbox run with node image):");
 }
 
 // --- Python via run ---
-console.log("\nPython (via sandbox run with python image):");
+console.log("\nPython (via machine run with python image):");
 {
   const name = "cx04-python";
   await createAndStart(name);
@@ -146,14 +146,14 @@ console.log("Volume Mounts:");
   const name = "cx04-volume";
   await cleanup(name);
 
-  const createResp = await apiPost("/sandboxes", {
+  const createResp = await apiPost("/machinees", {
     name,
     mounts: [{ source: tmpDir, target: "/workspace" }],
     resources: { cpus: 2, memory_mb: 1024, network: true },
   });
   test("Create with volume mount", createResp.ok);
 
-  const startResp = await apiPost(`/sandboxes/${name}/start`);
+  const startResp = await apiPost(`/machinees/${name}/start`);
   test("Start with volume mount", startResp.ok);
 
   if (startResp.ok) {
@@ -188,8 +188,8 @@ console.log("Volume Mounts:");
   try { await Deno.remove(tmpDir, { recursive: true }); } catch { /* */ }
 }
 
-// --- File persistence within sandbox ---
-console.log("\nFile Persistence (within sandbox):");
+// --- File persistence within machine ---
+console.log("\nFile Persistence (within machine):");
 {
   const name = "cx04-persist";
   await createAndStart(name);
@@ -238,7 +238,7 @@ console.log("\nPort Mapping:");
   const name = "cx04-ports";
   await cleanup(name);
 
-  const createResp = await apiPost("/sandboxes", {
+  const createResp = await apiPost("/machinees", {
     name,
     ports: [{ host: 19876, guest: 8080 }],
     resources: { cpus: 2, memory_mb: 1024, network: true },
@@ -246,7 +246,7 @@ console.log("\nPort Mapping:");
   test("Create with port mapping", createResp.ok);
 
   if (createResp.ok) {
-    await apiPost(`/sandboxes/${name}/start`);
+    await apiPost(`/machinees/${name}/start`);
 
     await sh(name, "mkdir -p /tmp/www && echo 'smolvm-port-test' > /tmp/www/index.html");
     await sh(name, "httpd -p 8080 -h /tmp/www &", { timeout_secs: 5 });
@@ -321,12 +321,12 @@ console.log("\n═══ 6. Persistence / State ═══\n");
   await sh(name, "echo 'state-marker' > /root/state.txt");
   await sh(name, "apk add --no-cache jq 2>/dev/null", { timeout_secs: 60 });
 
-  console.log("  Stopping sandbox...");
-  await apiPost(`/sandboxes/${name}/stop`);
+  console.log("  Stopping machine...");
+  await apiPost(`/machinees/${name}/stop`);
   await new Promise(r => setTimeout(r, 1000));
 
-  console.log("  Restarting sandbox...");
-  const restartResp = await apiPost(`/sandboxes/${name}/start`);
+  console.log("  Restarting machine...");
+  const restartResp = await apiPost(`/machinees/${name}/start`);
   test("Restart after stop", restartResp.ok);
 
   if (restartResp.ok) {
@@ -349,7 +349,7 @@ console.log("\n═══ 7. Lifecycle Timing ═══\n");
 
   const t0 = performance.now();
   await cleanup(name);
-  const createResp = await apiPost("/sandboxes", {
+  const createResp = await apiPost("/machinees", {
     name,
     resources: { cpus: 2, memory_mb: 1024, network: true },
   });
@@ -357,7 +357,7 @@ console.log("\n═══ 7. Lifecycle Timing ═══\n");
   console.log(`  ⏱  Create: ${createMs}ms`);
 
   const t1 = performance.now();
-  await apiPost(`/sandboxes/${name}/start`);
+  await apiPost(`/machinees/${name}/start`);
   const startMs = Math.round(performance.now() - t1);
   console.log(`  ⏱  Start (VM boot): ${startMs}ms`);
 
@@ -379,11 +379,11 @@ console.log("\n═══ 7. Lifecycle Timing ═══\n");
   test("Warm exec under 100ms", warmExecMs < 100, `${warmExecMs}ms`);
 
   const t4 = performance.now();
-  await apiPost(`/sandboxes/${name}/stop`);
+  await apiPost(`/machinees/${name}/stop`);
   console.log(`  ⏱  Stop: ${Math.round(performance.now() - t4)}ms`);
 
   const t5 = performance.now();
-  await apiDelete(`/sandboxes/${name}`);
+  await apiDelete(`/machinees/${name}`);
   console.log(`  ⏱  Delete: ${Math.round(performance.now() - t5)}ms`);
 }
 
@@ -392,10 +392,10 @@ console.log("\n═══ 7. Lifecycle Timing ═══\n");
 // =====================================================
 console.log("\n═══ 8. Orchestration ═══\n");
 {
-  const notFound = await apiGet("/sandboxes/nonexistent-xyz");
-  test("404 for nonexistent sandbox", notFound.status === 404);
+  const notFound = await apiGet("/machinees/nonexistent-xyz");
+  test("404 for nonexistent machine", notFound.status === 404);
 
-  const badReq = await apiPost("/sandboxes", { name: "" });
+  const badReq = await apiPost("/machinees", { name: "" });
   test("400 for empty name", badReq.status === 400);
 
   const swagger = await fetch(`${BASE}/swagger-ui/`);
@@ -412,7 +412,7 @@ console.log("\n═══ 8. Orchestration ═══\n");
 // =====================================================
 // 9. CONTAINERS IN SANDBOX
 // =====================================================
-console.log("\n═══ 9. Containers in Sandbox ═══\n");
+console.log("\n═══ 9. Containers in Machine ═══\n");
 {
   const name = "cx04-containers";
   await createAndStart(name);
@@ -421,14 +421,14 @@ console.log("\n═══ 9. Containers in Sandbox ═══\n");
   test("Pull image", pullResp.ok);
 
   if (pullResp.ok) {
-    const imagesResp = await apiGet(`/sandboxes/${name}/images`);
+    const imagesResp = await apiGet(`/machinees/${name}/images`);
     test("List images", imagesResp.ok);
     if (imagesResp.ok) {
       const images = await imagesResp.json();
       console.log(`     📦 Images cached: ${images.images?.length ?? 0}`);
     }
 
-    const containerResp = await apiPost(`/sandboxes/${name}/containers`, {
+    const containerResp = await apiPost(`/machinees/${name}/containers`, {
       image: "alpine:latest",
       command: ["sleep", "infinity"],
     });
@@ -437,11 +437,11 @@ console.log("\n═══ 9. Containers in Sandbox ═══\n");
       test("Create container", true);
       console.log(`     📦 Container ID: ${container.id}`);
 
-      const startResp = await apiPost(`/sandboxes/${name}/containers/${container.id}/start`);
+      const startResp = await apiPost(`/machinees/${name}/containers/${container.id}/start`);
       test("Start container", startResp.ok);
 
       if (startResp.ok) {
-        const execResp = await apiPost(`/sandboxes/${name}/containers/${container.id}/exec`, {
+        const execResp = await apiPost(`/machinees/${name}/containers/${container.id}/exec`, {
           command: ["echo", "container-exec-works"],
           timeout_secs: 10,
         });
@@ -452,11 +452,11 @@ console.log("\n═══ 9. Containers in Sandbox ═══\n");
           test("Exec in container", false, `${execResp.status}`);
         }
 
-        const stopResp = await apiPost(`/sandboxes/${name}/containers/${container.id}/stop`, { timeout_secs: 5 });
+        const stopResp = await apiPost(`/machinees/${name}/containers/${container.id}/stop`, { timeout_secs: 5 });
         test("Stop container", stopResp.ok);
       }
 
-      const delResp = await apiDelete(`/sandboxes/${name}/containers/${container.id}`);
+      const delResp = await apiDelete(`/machinees/${name}/containers/${container.id}`);
       if (delResp.ok) {
         test("Delete container", true);
       } else {

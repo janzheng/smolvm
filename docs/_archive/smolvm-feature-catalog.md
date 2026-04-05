@@ -4,7 +4,7 @@
 
 smolvm is a local micro-VM tool: sub-300ms boot, OCI image compatibility,
 true VM isolation, Apache-2.0 licensed, single binary. It has a **full REST
-API** via `smolvm serve` (localhost:8080) that supports sandbox, microVM,
+API** via `smolvm serve` (localhost:8080) that supports machine, microVM,
 and container management — this is undocumented on the website and the
 advertised npm/pip SDKs don't exist (404).
 
@@ -17,7 +17,7 @@ The main gaps are checkpoint/restore, volume mount bugs, and documentation.
 
 | Feature | Status | Verified | Details |
 |---------|--------|----------|---------|
-| Sandbox mode (ephemeral) | Yes | Yes | Full CRUD via REST API + CLI |
+| Machine mode (ephemeral) | Yes | Yes | Full CRUD via REST API + CLI |
 | MicroVM mode (persistent) | Yes | Yes | Full CRUD + exec via REST API |
 | Pack mode (portable) | Yes | No | Single-file or dual-file executables |
 | OCI image support | Yes | Yes | alpine, node:22-alpine, python:3.13-alpine tested |
@@ -33,8 +33,8 @@ The main gaps are checkpoint/restore, volume mount bugs, and documentation.
 | CPU allocation | Yes | Yes | `resources.cpus` in API |
 | Memory allocation | Yes | Yes | `resources.memory_mb` in API |
 | Smolfile (TOML config) | Yes | No | Declarative VM config |
-| Container-in-sandbox | Yes | Buggy | Image pull works, container create 500s |
-| SSE log streaming | Yes | No | `/sandboxes/{id}/logs` endpoint |
+| Container-in-machine | Yes | Buggy | Image pull works, container create 500s |
+| SSE log streaming | Yes | No | `/machines/{id}/logs` endpoint |
 | macOS Apple Silicon | Yes | Yes | Tested on M-series |
 | Linux support | Planned | No | "coming soon" per docs |
 | Programmatic SDK (npm) | No | Confirmed 404 | Site claims it exists |
@@ -72,18 +72,18 @@ smolvm serve --listen 127.0.0.1:8080
 GET /health → { status: "ok", version: "0.1.16" }
 ```
 
-#### Sandboxes
+#### Machinees
 
 ```
-POST   /api/v1/sandboxes                     — Create sandbox
-GET    /api/v1/sandboxes                     — List sandboxes
-GET    /api/v1/sandboxes/{name}              — Get sandbox info
-POST   /api/v1/sandboxes/{name}/start        — Start sandbox
-POST   /api/v1/sandboxes/{name}/stop         — Stop sandbox
-DELETE /api/v1/sandboxes/{name}              — Delete sandbox
-POST   /api/v1/sandboxes/{name}/exec         — Execute command
-GET    /api/v1/sandboxes/{name}/logs         — Stream logs (SSE)
-POST   /api/v1/sandboxes/{name}/run          — Run in OCI image overlay
+POST   /api/v1/machines                     — Create machine
+GET    /api/v1/machines                     — List machinees
+GET    /api/v1/machines/{name}              — Get machine info
+POST   /api/v1/machines/{name}/start        — Start machine
+POST   /api/v1/machines/{name}/stop         — Stop machine
+DELETE /api/v1/machines/{name}              — Delete machine
+POST   /api/v1/machines/{name}/exec         — Execute command
+GET    /api/v1/machines/{name}/logs         — Stream logs (SSE)
+POST   /api/v1/machines/{name}/run          — Run in OCI image overlay
 ```
 
 #### MicroVMs
@@ -101,30 +101,30 @@ POST   /api/v1/microvms/{name}/exec          — Execute command
 #### Images
 
 ```
-POST   /api/v1/sandboxes/{name}/images/pull  — Pull OCI image
-GET    /api/v1/sandboxes/{name}/images       — List images
-DELETE /api/v1/sandboxes/{name}/images/{id}  — Delete image
+POST   /api/v1/machines/{name}/images/pull  — Pull OCI image
+GET    /api/v1/machines/{name}/images       — List images
+DELETE /api/v1/machines/{name}/images/{id}  — Delete image
 ```
 
-#### Containers (in sandbox)
+#### Containers (in machine)
 
 ```
-POST   /api/v1/sandboxes/{name}/containers           — Create container
-GET    /api/v1/sandboxes/{name}/containers           — List containers
-GET    /api/v1/sandboxes/{name}/containers/{id}      — Get container
-POST   /api/v1/sandboxes/{name}/containers/{id}/start — Start container
-POST   /api/v1/sandboxes/{name}/containers/{id}/stop  — Stop container
-DELETE /api/v1/sandboxes/{name}/containers/{id}      — Delete container
-POST   /api/v1/sandboxes/{name}/containers/{id}/exec  — Exec in container
+POST   /api/v1/machines/{name}/containers           — Create container
+GET    /api/v1/machines/{name}/containers           — List containers
+GET    /api/v1/machines/{name}/containers/{id}      — Get container
+POST   /api/v1/machines/{name}/containers/{id}/start — Start container
+POST   /api/v1/machines/{name}/containers/{id}/stop  — Stop container
+DELETE /api/v1/machines/{name}/containers/{id}      — Delete container
+POST   /api/v1/machines/{name}/containers/{id}/exec  — Exec in container
 ```
 
 ### Request/Response Types
 
-#### CreateSandboxRequest
+#### CreateMachineRequest
 
 ```json
 {
-  "name": "my-sandbox",
+  "name": "my-machine",
   "resources": {
     "cpus": 2,
     "memory_mb": 1024,
@@ -172,19 +172,19 @@ POST   /api/v1/sandboxes/{name}/containers/{id}/exec  — Exec in container
 
 | Metric | Time |
 |--------|------|
-| Create sandbox (API) | 6-14ms |
-| Start sandbox (VM boot) | 258-805ms |
+| Create machine (API) | 6-14ms |
+| Start machine (VM boot) | 258-805ms |
 | First exec after start | 12-15ms |
 | Warm exec (subsequent) | 12ms |
 | Total create→first exec | 281-831ms |
-| CLI one-shot (`sandbox run`) | ~5.5s |
-| Stop sandbox | ~2.2s |
+| CLI one-shot (`machine run`) | ~5.5s |
+| Stop machine | ~2.2s |
 
 ### Agent Lifecycle
 
 | Phase | Time | What |
 |-------|------|------|
-| CREATE | 0.8s | POST /sandboxes + start |
+| CREATE | 0.8s | POST /machinees + start |
 | BOOTSTRAP | 7.0s | apk add git curl nodejs npm |
 | WORK | 0.07s | sed + node test |
 | EXTRACT | 0.04s | git diff + cat |
@@ -197,10 +197,10 @@ With a pre-built OCI image (no bootstrap): ~3s total.
 
 | Metric | Result |
 |--------|--------|
-| Sequential create | 6ms/sandbox |
-| Parallel start (3) | 245ms total (82ms/sandbox) |
-| Cross-sandbox parallel exec | 1011ms for 3x1s sleep (truly parallel) |
-| Within-sandbox exec | Serial (3043ms for 3x1s sleep) |
+| Sequential create | 6ms/machine |
+| Parallel start (3) | 245ms total (82ms/machine) |
+| Cross-machine parallel exec | 1011ms for 3x1s sleep (truly parallel) |
+| Within-machine exec | Serial (3043ms for 3x1s sleep) |
 | State isolation | Confirmed |
 
 ---
@@ -209,19 +209,19 @@ With a pre-built OCI image (no bootstrap): ~3s total.
 
 ### Volume Mounts Not Working
 
-REST API accepts mount config and sandbox create+start succeed (HTTP 200),
+REST API accepts mount config and machine create+start succeed (HTTP 200),
 but files written on host aren't visible inside the VM and vice versa.
 Likely a virtiofs mount point issue.
 
 ### Port Mapping Not Working
 
-Port mapping config accepted, sandbox starts, but connecting from host to
+Port mapping config accepted, machine starts, but connecting from host to
 the mapped port returns "Connection refused". Either httpd isn't available
 in the Alpine image or port forwarding is incomplete.
 
-### Container-in-Sandbox 500 Error
+### Container-in-Machine 500 Error
 
-`POST /sandboxes/{name}/containers` returns 500:
+`POST /machines/{name}/containers` returns 500:
 ```
 container created but failed to start: crun start failed (exit 1):
 error opening file `/storage/containers/crun/.../status`: No such file or directory
@@ -229,8 +229,8 @@ error opening file `/storage/containers/crun/.../status`: No such file or direct
 
 ### Exec Serialization
 
-Multiple concurrent exec calls to the same sandbox execute serially, not
-in parallel. Cross-sandbox parallelism works fine.
+Multiple concurrent exec calls to the same machine execute serially, not
+in parallel. Cross-machine parallelism works fine.
 
 ### `sh --version` Hangs on Busybox
 
@@ -279,7 +279,7 @@ No `stats` endpoint or command for CPU/memory/disk usage.
 
 ## 6. Corrected Comparison Matrix
 
-| Capability | smolvm (actual) | Fly Sprites | Deno Sandbox | Cloudflare |
+| Capability | smolvm (actual) | Fly Sprites | Deno Machine | Cloudflare |
 |------------|----------------|-------------|--------------|------------|
 | Boot time | **~300ms** | ~500ms | ~1-2s | ~30s cold |
 | Isolation | VM (libkrun) | VM (Firecracker) | VM | Container |
@@ -288,7 +288,7 @@ No `stats` endpoint or command for CPU/memory/disk usage.
 | File I/O | exec cat/volume | REST API | SDK | SDK |
 | Persistence | stop/start | Checkpoints | Snapshots | None |
 | Networking | TCP/UDP | TCP/UDP + L3 egress | HTTPS proxy | Full + preview |
-| Multi-sandbox | REST API | REST API | SDK | max_instances |
+| Multi-machine | REST API | REST API | SDK | max_instances |
 | Cost | **Free (local)** | ~$0.44/4hr | Per-usage | $5/mo + usage |
 | Location | **Local** | Cloud | Cloud | Cloud |
 | Pre-installed tools | Nothing | Everything | Deno+Node+Python | Docker image |
@@ -308,35 +308,35 @@ Updated priority list based on actual testing:
 | 2 | **Document the REST API** | Best feature, completely hidden |
 | 3 | **Fix port mapping** | Creates but doesn't work |
 | 4 | **Add checkpoint/restore** | Key differentiator for agent workloads |
-| 5 | **Add file copy API endpoint** | `POST /sandboxes/{id}/files` |
-| 6 | **Fix container-in-sandbox** | crun storage path error |
+| 5 | **Add file copy API endpoint** | `POST /machines/{id}/files` |
+| 6 | **Fix container-in-machine** | crun storage path error |
 | 7 | **Remove fake SDK references from docs** | npm/pip both 404 |
-| 8 | **Add resource monitoring endpoint** | `GET /sandboxes/{id}/stats` |
+| 8 | **Add resource monitoring endpoint** | `GET /machines/{id}/stats` |
 | 9 | **Add egress filtering** | Domain-based allowlists |
 | 10 | **Linux support** | Already planned |
 
 Items 1-3 are documentation/bug fixes that would dramatically improve the
 developer experience. Items 4-5 would make smolvm competitive with cloud
-sandboxes for agent workloads.
+machinees for agent workloads.
 
 ---
 
 ## 8. The Pitch (Updated)
 
-smolvm already has the fastest boot of any sandbox tested (~300ms) and a
+smolvm already has the fastest boot of any machine tested (~300ms) and a
 functional REST API for programmatic orchestration. It's the only free,
 local-first, open-source option with true VM isolation.
 
 The main blockers are fixable: volume mounts need debugging, the REST API
 needs documentation, and the fake SDK references need removing. With those
 fixes plus checkpoint/restore, smolvm becomes the obvious choice for local
-agent development before deploying to cloud sandboxes for production.
+agent development before deploying to cloud machinees for production.
 
 **Today's workflow (works):**
 
 ```typescript
-// Create sandbox via REST API
-await fetch("http://localhost:8080/api/v1/sandboxes", {
+// Create machine via REST API
+await fetch("http://localhost:8080/api/v1/machines", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
@@ -346,8 +346,8 @@ await fetch("http://localhost:8080/api/v1/sandboxes", {
 });
 
 // Start + exec
-await fetch("http://localhost:8080/api/v1/sandboxes/agent-001/start", { method: "POST" });
-const result = await fetch("http://localhost:8080/api/v1/sandboxes/agent-001/exec", {
+await fetch("http://localhost:8080/api/v1/machines/agent-001/start", { method: "POST" });
+const result = await fetch("http://localhost:8080/api/v1/machines/agent-001/exec", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({

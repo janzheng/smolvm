@@ -1,6 +1,6 @@
 # smolvm
 
-A small computer for agents. Each sandbox is an isolated micro VM with its own filesystem, network, and tools. Push code in, work on it, pull results out. Fork, snapshot, merge — like git, but for entire machines.
+A small computer for agents. Each machine is an isolated micro VM with its own filesystem, network, and tools. Push code in, work on it, pull results out. Fork, snapshot, merge — like git, but for entire machines.
 
 Built on [smolvm](https://smolmachines.com) (libkrun micro VMs). Runs locally on macOS (Apple Silicon) or Linux (KVM). Access remotely via Cloudflare tunnel + bearer token auth.
 
@@ -12,7 +12,7 @@ See [docs/](docs/) for architecture and design documentation.
 # Start the server
 smolvm serve start --listen 127.0.0.1:9090
 
-# Spin up a sandbox
+# Spin up a machine
 deno task ctl up my-vm
 
 # Run commands
@@ -40,36 +40,36 @@ src/               Rust server source (forked from smol-machines/smolvm)
 crates/            Agent binary, protocol, pack, napi crates
 lib/               Bundled libkrun/libkrunfw dylibs
 sdk-ts/            TypeScript SDK (used by Brigade, smolctl, tests)
-cli/smolctl.ts     CLI for managing sandboxes (deno task ctl)
+cli/smolctl.ts     CLI for managing machinees (deno task ctl)
 tests/             SDK tests (*.ts) + shell integration tests (*.sh)
 playtests/         Agentic playtest scripts (e2e-playtest.sh)
 starters/          Smolfile templates (node, python, openclaw)
 docs/              API reference, security docs, research
-mcp-servers/       MCP server configs for sandboxed tools
+mcp-servers/       MCP server configs for machineed tools
 deploy/            Deployment configs
 .references/       Legacy code (gitignored, local-only)
 ```
 
 ## smolctl CLI
 
-Full sandbox management via `deno task ctl <command>`:
+Full machine management via `deno task ctl <command>`:
 
 | Command | Description |
 |---|---|
 | `up/down <name>` | Create+start / stop+delete |
-| `ls` | List sandboxes |
+| `ls` | List machinees |
 | `sh <name> <cmd>` | Run shell command |
 | `exec <name> <cmd...>` | Run command (no shell) |
 | `cp <src> <dst>` | Copy files in/out (`./local vm:/remote`) |
-| `git clone <name> <url>` | Clone repo inside sandbox |
+| `git clone <name> <url>` | Clone repo inside machine |
 | `clone/diff/merge` | Git-like VM workflows |
 | `snapshot push/pull/ls/rm/export/import/merge/lineage/squash` | Full snapshot management |
 | `image pull/ls` | OCI image management |
 | `run <name> <img> <cmd>` | Run in OCI overlay |
 | `files ls/cat/write/rm` | File operations |
 | `sync push/pull <name>` | Push/pull dirs (`--to /remote`, `--exclude`, `--dry-run`) |
-| `container ls/create/start/stop/rm/exec` | Manage containers inside sandbox |
-| `agent run/fleet/worker` | Run Claude Code agents in sandboxes |
+| `container ls/create/start/stop/rm/exec` | Manage containers inside machine |
+| `agent run/fleet/worker` | Run Claude Code agents in machinees |
 | `auth login/status/logout` | Claude subscription auth (OAuth) |
 | `job submit/ls/claim` | Work queue for agent tasks |
 | `mcp servers/tools/call` | MCP server integration |
@@ -78,7 +78,7 @@ Full sandbox management via `deno task ctl <command>`:
 | `dashboard` | Interactive TUI dashboard |
 | `tunnel start/stop` | Cloudflare/ngrok tunnel management |
 | `debug mounts/network` | Diagnostic info for troubleshooting |
-| `prune` | Delete all sandboxes |
+| `prune` | Delete all machinees |
 | `health` | Server health check |
 
 Exec flags: `--env KEY=VALUE`, `--workdir /path`, `--user <name>`, `--timeout <secs>`
@@ -109,7 +109,7 @@ Requires `cloudflared` (`brew install cloudflared`). See [docs/TUNNEL.md](docs/T
 
 ```bash
 cd server && ./tests/run_all.sh          # All 125 tests (6 suites)
-cd server && ./tests/run_all.sh sandbox   # Individual suite
+cd server && ./tests/run_all.sh machine   # Individual suite
 cd server && cargo test                   # Rust unit tests (200+)
 ```
 
@@ -136,9 +136,9 @@ For tunnel tests (PT-10), install cloudflared: `brew install cloudflared`.
 smolvm serve start --listen 127.0.0.1:9090
 
 deno task test-all          # All suites
-deno task test              # Sandbox basics
+deno task test              # Machine basics
 deno task test-capabilities # Full capability matrix
-deno task test-fleet        # Multi-sandbox parallelism
+deno task test-fleet        # Multi-machine parallelism
 deno task test-isolation    # Security + isolation
 deno task test-containers   # Container lifecycle + debug
 deno task test-sync         # Sync push/pull
@@ -148,7 +148,7 @@ With auth: `SMOLVM_API_TOKEN=<token> deno task test-all`
 
 ## Claude Code Auth
 
-`smolctl agent run` launches Claude Code inside a sandbox. Two auth methods:
+`smolctl agent run` launches Claude Code inside a machine. Two auth methods:
 
 **Option 1 — Claude subscription (recommended):**
 ```bash
@@ -162,7 +162,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 # or add to .env
 ```
 
-The agent run command uses subscription mode by default. Claude Code runs in `--settings` mode inside the sandbox so it can accept permissions headlessly.
+The agent run command uses subscription mode by default. Claude Code runs in `--settings` mode inside the machine so it can accept permissions headlessly.
 
 ## Performance
 
@@ -172,7 +172,7 @@ The agent run command uses subscription mode by default. Claude Code runs in `--
 | Boot | 258-805ms |
 | First exec | 12-15ms |
 | Warm exec | 12ms |
-| Fleet (3 parallel) | 82ms/sandbox |
+| Fleet (3 parallel) | 82ms/machine |
 
 ## Security
 
@@ -186,9 +186,9 @@ The agent run command uses subscription mode by default. Claude Code runs in `--
 These need fixes in smolvm/libkrun:
 
 - **Port mapping** connections refused (use tunnels instead)
-- **Container-in-sandbox** 500 error
+- **Container-in-machine** 500 error
 - **VM can reach host API** via TSI (mitigated by auth token)
-- ~~**Stale overlay rootfs from sandbox run**~~ Fixed in upstream #41 (synced)
+- ~~**Stale overlay rootfs from machine run**~~ Fixed in upstream #41 (synced)
 
 ## Notes for AI Agents
 
@@ -206,7 +206,7 @@ Always use `cargo make` at repo root — it handles `DYLD_LIBRARY_PATH`, `SMOLVM
 ```bash
 cargo make dev                    # build + codesign
 cargo make smolvm serve start     # run with correct env vars
-cargo make smolvm sandbox run --net alpine -- echo hello
+cargo make smolvm machine run --net alpine -- echo hello
 ```
 
 Running the binary directly without `DYLD_LIBRARY_PATH=./lib` will fail silently or with a cryptic dylib error. Do NOT use `cargo run` for the server — it doesn't set the library path.
@@ -227,9 +227,9 @@ For the E2E playtests, start the server in one terminal, run playtests in anothe
 - The server listens on `127.0.0.1:9090` by default
 - With auth: `smolvm serve start --generate-token`
 
-### Claude Code in sandboxes
+### Claude Code in machinees
 
-Uses **subscription mode** (OAuth), not API keys by default. Authenticate with `smolctl auth login` — opens browser, saves tokens to the project `.env`. Claude Code runs with `--settings` flag inside the sandbox for headless permission acceptance. See `.env.example` for all auth options.
+Uses **subscription mode** (OAuth), not API keys by default. Authenticate with `smolctl auth login` — opens browser, saves tokens to the project `.env`. Claude Code runs with `--settings` flag inside the machine for headless permission acceptance. See `.env.example` for all auth options.
 
 ### VM storage architecture
 
