@@ -6,22 +6,26 @@ Micro VM platform for agent isolation. Each sandbox is an Alpine Linux VM with i
 
 | Directory | What | Language |
 |-----------|------|----------|
-| `smolvm-plus/` | The smolvm server (our fork of upstream) | Rust |
+| `server/` | The smolvm server (our fork of upstream) | Rust |
 | `sdk-ts/` | TypeScript SDK (used by Brigade + smolctl) | TypeScript |
 | `cli/smolctl.ts` | CLI wrapper over HTTP API | TypeScript |
 | `tests/` | SDK test suites | TypeScript |
 | `playtests/` | E2E playtest scripts | Bash |
+| `starters/` | Smolfile templates (node, python, openclaw) | TOML |
+| `docs/` | All project documentation | Markdown |
+| `mcp-servers/` | MCP server configs for sandboxed tools | TypeScript |
+| `deploy/` | Deployment configs (systemd, etc.) | — |
 
 ## Legacy (do not modify)
 
-`.references/` — contains smolvm-experimental, smolvm-manager, web-ui, smolvm-web, smolvm-repo. All superseded by smolvm-plus + sdk-ts + cli. Gitignored, local-only reference.
+`.references/` — contains smolvm-experimental, smolvm-manager, web-ui, smolvm-web, smolvm-repo, sdk-py. All superseded. Gitignored, local-only reference.
 
 ## Building
 
-Always use `cargo make` in `smolvm-plus/` — handles DYLD_LIBRARY_PATH, SMOLVM_AGENT_ROOTFS, and codesigning:
+Always use `cargo make` in `server/` — handles DYLD_LIBRARY_PATH, SMOLVM_AGENT_ROOTFS, and codesigning:
 
 ```bash
-cd smolvm-plus
+cd server
 cargo make dev                    # build + codesign
 cargo make smolvm serve start     # run with correct env vars
 ```
@@ -40,10 +44,10 @@ Do NOT use `cargo run` — it doesn't set the library path.
 
 ```bash
 # Rust unit tests (no server needed)
-cd smolvm-plus && cargo test
+cd server && cargo test
 
 # Shell integration tests (no server needed, needs Hypervisor.framework)
-cd smolvm-plus && ./tests/run_all.sh
+cd server && ./tests/run_all.sh
 
 # E2E playtests (need running server)
 bash playtests/e2e-playtest.sh
@@ -68,4 +72,4 @@ Key endpoints:
 - Port mapping connections refused (use tunnels instead)
 - Container-in-sandbox 500 error (upstream)
 - VM can reach host API via TSI (mitigated by auth token)
-- libkrun linkage: building smolvm-plus binary on macOS requires correct DYLD_LIBRARY_PATH pointing to bundled libkrun, not homebrew's version
+- libkrun linkage: building server binary on macOS requires correct DYLD_LIBRARY_PATH pointing to bundled libkrun, not homebrew's version
