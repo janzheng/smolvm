@@ -11,7 +11,7 @@ pub mod mcp;
 pub mod microvms;
 pub mod permissions;
 pub mod provider;
-pub mod sandboxes;
+pub mod machines;
 pub mod secrets;
 pub mod snapshots;
 pub mod services;

@@ -19,7 +19,7 @@ use crate::api::error::{classify_ensure_running_error, ApiError};
 use crate::api::state::{ensure_running_and_persist, with_sandbox_client, ApiState};
 use crate::api::types::{
     ApiErrorResponse, FileInfo, ListFilesQuery, ListFilesResponse, ReadFileResponse,
-    SandboxRole, WriteFileRequest,
+    MachineRole, WriteFileRequest,
 };
 
 /// Validate a file path — must be absolute and contain no `..` traversal.
@@ -40,10 +40,10 @@ fn validate_path(path: &str) -> Result<(), ApiError> {
 /// Returns the file content as base64-encoded data.
 #[utoipa::path(
     get,
-    path = "/api/v1/sandboxes/{id}/files/{path}",
+    path = "/api/v1/machines/{id}/files/{path}",
     tag = "Files",
     params(
-        ("id" = String, Path, description = "Sandbox name"),
+        ("id" = String, Path, description = "Machine name"),
         ("path" = String, Path, description = "File path (absolute)")
     ),
     responses(
@@ -58,12 +58,12 @@ pub async fn read_file(
     headers: axum::http::HeaderMap,
 ) -> Result<Json<ReadFileResponse>, ApiError> {
     if let Some(token) = extract_bearer_token(&headers) {
-        check_permission(&state, &id, &token, SandboxRole::ReadOnly)?;
+        check_permission(&state, &id, &token, MachineRole::ReadOnly)?;
     }
     let file_path = format!("/{}", file_path);
     validate_path(&file_path)?;
 
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
     ensure_running_and_persist(&state, &id, &entry)
         .await
         .map_err(classify_ensure_running_error)?;
@@ -177,17 +177,17 @@ pub async fn read_file(
 /// The content must be base64-encoded.
 #[utoipa::path(
     put,
-    path = "/api/v1/sandboxes/{id}/files/{path}",
+    path = "/api/v1/machines/{id}/files/{path}",
     tag = "Files",
     params(
-        ("id" = String, Path, description = "Sandbox name"),
+        ("id" = String, Path, description = "Machine name"),
         ("path" = String, Path, description = "File path (absolute)")
     ),
     request_body = WriteFileRequest,
     responses(
         (status = 200, description = "File written"),
         (status = 400, description = "Invalid request", body = ApiErrorResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse),
+        (status = 404, description = "Machine not found", body = ApiErrorResponse),
         (status = 500, description = "Write failed", body = ApiErrorResponse)
     )
 )]
@@ -198,7 +198,7 @@ pub async fn write_file(
     Json(req): Json<WriteFileRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     if let Some(token) = extract_bearer_token(&headers) {
-        check_permission(&state, &id, &token, SandboxRole::Operator)?;
+        check_permission(&state, &id, &token, MachineRole::Operator)?;
     }
     let file_path = format!("/{}", file_path);
     validate_path(&file_path)?;
@@ -208,7 +208,7 @@ pub async fn write_file(
         .decode(&req.content)
         .map_err(|e| ApiError::BadRequest(format!("invalid base64 content: {}", e)))?;
 
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
     ensure_running_and_persist(&state, &id, &entry)
         .await
         .map_err(classify_ensure_running_error)?;
@@ -323,10 +323,10 @@ pub async fn write_file(
 /// Delete a file from a sandbox.
 #[utoipa::path(
     delete,
-    path = "/api/v1/sandboxes/{id}/files/{path}",
+    path = "/api/v1/machines/{id}/files/{path}",
     tag = "Files",
     params(
-        ("id" = String, Path, description = "Sandbox name"),
+        ("id" = String, Path, description = "Machine name"),
         ("path" = String, Path, description = "File path (absolute)")
     ),
     responses(
@@ -341,12 +341,12 @@ pub async fn delete_file(
     headers: axum::http::HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     if let Some(token) = extract_bearer_token(&headers) {
-        check_permission(&state, &id, &token, SandboxRole::Operator)?;
+        check_permission(&state, &id, &token, MachineRole::Operator)?;
     }
     let file_path = format!("/{}", file_path);
     validate_path(&file_path)?;
 
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
     ensure_running_and_persist(&state, &id, &entry)
         .await
         .map_err(classify_ensure_running_error)?;
@@ -374,15 +374,15 @@ pub async fn delete_file(
 /// List files in a directory.
 #[utoipa::path(
     get,
-    path = "/api/v1/sandboxes/{id}/files",
+    path = "/api/v1/machines/{id}/files",
     tag = "Files",
     params(
-        ("id" = String, Path, description = "Sandbox name"),
+        ("id" = String, Path, description = "Machine name"),
         ("dir" = String, Query, description = "Directory to list (default: /)")
     ),
     responses(
         (status = 200, description = "File listing", body = ListFilesResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse),
+        (status = 404, description = "Machine not found", body = ApiErrorResponse),
         (status = 500, description = "Listing failed", body = ApiErrorResponse)
     )
 )]
@@ -393,11 +393,11 @@ pub async fn list_files(
     Query(query): Query<ListFilesQuery>,
 ) -> Result<Json<ListFilesResponse>, ApiError> {
     if let Some(token) = extract_bearer_token(&headers) {
-        check_permission(&state, &id, &token, SandboxRole::ReadOnly)?;
+        check_permission(&state, &id, &token, MachineRole::ReadOnly)?;
     }
     validate_path(&query.dir)?;
 
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
     ensure_running_and_persist(&state, &id, &entry)
         .await
         .map_err(classify_ensure_running_error)?;
@@ -469,16 +469,16 @@ pub async fn list_files(
 /// Suitable for large files.
 #[utoipa::path(
     post,
-    path = "/api/v1/sandboxes/{id}/upload/{path}",
+    path = "/api/v1/machines/{id}/upload/{path}",
     tag = "Files",
     params(
-        ("id" = String, Path, description = "Sandbox name"),
+        ("id" = String, Path, description = "Machine name"),
         ("path" = String, Path, description = "File path (absolute)")
     ),
     responses(
         (status = 200, description = "File uploaded"),
         (status = 400, description = "Invalid request", body = ApiErrorResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse),
+        (status = 404, description = "Machine not found", body = ApiErrorResponse),
         (status = 500, description = "Upload failed", body = ApiErrorResponse)
     )
 )]
@@ -489,12 +489,12 @@ pub async fn upload_file(
     mut multipart: Multipart,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     if let Some(token) = extract_bearer_token(&headers) {
-        check_permission(&state, &id, &token, SandboxRole::Operator)?;
+        check_permission(&state, &id, &token, MachineRole::Operator)?;
     }
     let file_path = format!("/{}", file_path);
     validate_path(&file_path)?;
 
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
     ensure_running_and_persist(&state, &id, &entry)
         .await
         .map_err(classify_ensure_running_error)?;
@@ -626,17 +626,17 @@ pub async fn upload_file(
 /// The request body should be the raw tar.gz bytes (Content-Type: application/gzip).
 #[utoipa::path(
     post,
-    path = "/api/v1/sandboxes/{id}/archive/upload",
+    path = "/api/v1/machines/{id}/archive/upload",
     tag = "Files",
     params(
-        ("id" = String, Path, description = "Sandbox name"),
+        ("id" = String, Path, description = "Machine name"),
         ("dir" = Option<String>, Query, description = "Directory to extract to (default: /)")
     ),
     request_body(content_type = "application/gzip", content = Vec<u8>, description = "Raw tar.gz archive bytes"),
     responses(
         (status = 200, description = "Archive extracted"),
         (status = 400, description = "Invalid request", body = ApiErrorResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse),
+        (status = 404, description = "Machine not found", body = ApiErrorResponse),
         (status = 500, description = "Extract failed", body = ApiErrorResponse)
     )
 )]
@@ -648,7 +648,7 @@ pub async fn upload_archive(
     body: Bytes,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     if let Some(token) = extract_bearer_token(&headers) {
-        check_permission(&state, &id, &token, SandboxRole::Operator)?;
+        check_permission(&state, &id, &token, MachineRole::Operator)?;
     }
     let dir = query.dir.as_deref().unwrap_or("/");
     validate_path(dir)?;
@@ -657,7 +657,7 @@ pub async fn upload_archive(
         return Err(ApiError::BadRequest("empty archive body".into()));
     }
 
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
     ensure_running_and_persist(&state, &id, &entry)
         .await
         .map_err(classify_ensure_running_error)?;
@@ -770,15 +770,15 @@ pub async fn upload_archive(
 /// Returns the raw tar.gz bytes.
 #[utoipa::path(
     get,
-    path = "/api/v1/sandboxes/{id}/archive",
+    path = "/api/v1/machines/{id}/archive",
     tag = "Files",
     params(
-        ("id" = String, Path, description = "Sandbox name"),
+        ("id" = String, Path, description = "Machine name"),
         ("dir" = Option<String>, Query, description = "Directory to archive (default: /)")
     ),
     responses(
         (status = 200, description = "Archive content (application/gzip)"),
-        (status = 404, description = "Sandbox or directory not found", body = ApiErrorResponse),
+        (status = 404, description = "Machine or directory not found", body = ApiErrorResponse),
         (status = 500, description = "Archive failed", body = ApiErrorResponse)
     )
 )]
@@ -789,12 +789,12 @@ pub async fn download_archive(
     Query(query): Query<ArchiveQuery>,
 ) -> Result<(axum::http::HeaderMap, Bytes), ApiError> {
     if let Some(token) = extract_bearer_token(&headers) {
-        check_permission(&state, &id, &token, SandboxRole::ReadOnly)?;
+        check_permission(&state, &id, &token, MachineRole::ReadOnly)?;
     }
     let dir = query.dir.as_deref().unwrap_or("/");
     validate_path(dir)?;
 
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
     ensure_running_and_persist(&state, &id, &entry)
         .await
         .map_err(classify_ensure_running_error)?;

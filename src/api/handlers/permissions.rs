@@ -11,7 +11,7 @@ use crate::api::error::ApiError;
 use crate::api::state::ApiState;
 use crate::api::types::{
     ApiErrorResponse, GrantPermissionRequest, ListPermissionsResponse, PermissionResponse,
-    SandboxPermission, SandboxRole,
+    MachinePermission, MachineRole,
 };
 
 /// Grant a role to a token on a sandbox.
@@ -19,16 +19,16 @@ use crate::api::types::{
 /// Only the sandbox Owner can grant permissions.
 #[utoipa::path(
     post,
-    path = "/api/v1/sandboxes/{id}/permissions",
+    path = "/api/v1/machines/{id}/permissions",
     tag = "Permissions",
     params(
-        ("id" = String, Path, description = "Sandbox name")
+        ("id" = String, Path, description = "Machine name")
     ),
     request_body = GrantPermissionRequest,
     responses(
         (status = 200, description = "Permission granted", body = PermissionResponse),
         (status = 403, description = "Forbidden — not the sandbox owner", body = ApiErrorResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse)
+        (status = 404, description = "Machine not found", body = ApiErrorResponse)
     )
 )]
 pub async fn grant_permission(
@@ -41,11 +41,11 @@ pub async fn grant_permission(
         .ok_or_else(|| ApiError::Unauthorized("missing bearer token".into()))?;
 
     // Only Owner can grant permissions
-    check_permission(&state, &id, &token, SandboxRole::Owner)?;
+    check_permission(&state, &id, &token, MachineRole::Owner)?;
 
     let grant_hash = hash_token(&req.token);
 
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
     let mut entry = entry.lock();
 
     // Check if this token already has a permission — update it
@@ -59,7 +59,7 @@ pub async fn grant_permission(
     }
 
     if !found {
-        entry.permissions.push(SandboxPermission {
+        entry.permissions.push(MachinePermission {
             token_hash: grant_hash.clone(),
             role: req.role.clone(),
         });
@@ -78,15 +78,15 @@ pub async fn grant_permission(
 /// Only the sandbox Owner can view permissions.
 #[utoipa::path(
     get,
-    path = "/api/v1/sandboxes/{id}/permissions",
+    path = "/api/v1/machines/{id}/permissions",
     tag = "Permissions",
     params(
-        ("id" = String, Path, description = "Sandbox name")
+        ("id" = String, Path, description = "Machine name")
     ),
     responses(
         (status = 200, description = "Permission list", body = ListPermissionsResponse),
         (status = 403, description = "Forbidden — not the sandbox owner", body = ApiErrorResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse)
+        (status = 404, description = "Machine not found", body = ApiErrorResponse)
     )
 )]
 pub async fn list_permissions(
@@ -98,9 +98,9 @@ pub async fn list_permissions(
         .ok_or_else(|| ApiError::Unauthorized("missing bearer token".into()))?;
 
     // Only Owner can view permissions
-    check_permission(&state, &id, &token, SandboxRole::Owner)?;
+    check_permission(&state, &id, &token, MachineRole::Owner)?;
 
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
     let entry = entry.lock();
 
     Ok(Json(ListPermissionsResponse {
@@ -114,17 +114,17 @@ pub async fn list_permissions(
 /// Only the sandbox Owner can revoke permissions. Cannot revoke your own Owner role.
 #[utoipa::path(
     delete,
-    path = "/api/v1/sandboxes/{id}/permissions/{token_hash}",
+    path = "/api/v1/machines/{id}/permissions/{token_hash}",
     tag = "Permissions",
     params(
-        ("id" = String, Path, description = "Sandbox name"),
+        ("id" = String, Path, description = "Machine name"),
         ("token_hash" = String, Path, description = "Token hash to revoke")
     ),
     responses(
         (status = 200, description = "Permission revoked", body = PermissionResponse),
         (status = 400, description = "Cannot revoke own Owner role", body = ApiErrorResponse),
         (status = 403, description = "Forbidden — not the sandbox owner", body = ApiErrorResponse),
-        (status = 404, description = "Sandbox or permission not found", body = ApiErrorResponse)
+        (status = 404, description = "Machine or permission not found", body = ApiErrorResponse)
     )
 )]
 pub async fn revoke_permission(
@@ -136,7 +136,7 @@ pub async fn revoke_permission(
         .ok_or_else(|| ApiError::Unauthorized("missing bearer token".into()))?;
 
     // Only Owner can revoke permissions
-    check_permission(&state, &id, &token, SandboxRole::Owner)?;
+    check_permission(&state, &id, &token, MachineRole::Owner)?;
 
     let caller_hash = hash_token(&token);
 
@@ -147,7 +147,7 @@ pub async fn revoke_permission(
         ));
     }
 
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
     let mut entry = entry.lock();
 
     let original_len = entry.permissions.len();

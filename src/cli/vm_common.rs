@@ -23,37 +23,37 @@ use smolvm::storage::{DEFAULT_OVERLAY_SIZE_GIB, DEFAULT_STORAGE_SIZE_GIB};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VmKind {
     Microvm,
-    Sandbox,
+    Machine,
 }
 
 impl VmKind {
-    /// Lowercase label used in user-facing messages ("microvm" / "sandbox").
+    /// Lowercase label used in user-facing messages ("microvm" / "machine").
     pub fn label(self) -> &'static str {
         match self {
             VmKind::Microvm => "microvm",
-            VmKind::Sandbox => "sandbox",
+            VmKind::Machine => "machine",
         }
     }
 
-    /// Title-case label ("MicroVM" / "Sandbox").
+    /// Title-case label ("MicroVM" / "Machine").
     pub fn display_name(self) -> &'static str {
         match self {
             VmKind::Microvm => "MicroVM",
-            VmKind::Sandbox => "Sandbox",
+            VmKind::Machine => "Machine",
         }
     }
 
-    /// CLI prefix for help text ("smolvm microvm" / "smolvm sandbox").
+    /// CLI prefix for help text ("smolvm microvm" / "smolvm machine").
     pub fn cli_prefix(self) -> &'static str {
         match self {
             VmKind::Microvm => "smolvm microvm",
-            VmKind::Sandbox => "smolvm sandbox",
+            VmKind::Machine => "smolvm machine",
         }
     }
 
     /// Whether the JSON list output should include the `network` field.
     pub fn include_network_in_json(self) -> bool {
-        matches!(self, VmKind::Sandbox)
+        matches!(self, VmKind::Machine)
     }
 }
 
@@ -725,7 +725,7 @@ pub fn list_vms(kind: VmKind, verbose: bool, json: bool) -> smolvm::Result<()> {
 
     let empty_label = match kind {
         VmKind::Microvm => "No VMs found",
-        VmKind::Sandbox => "No sandboxes found",
+        VmKind::Machine => "No machines found",
     };
 
     if vms.is_empty() {

@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::api::types::{CreateSandboxRequest, ExecRequest, ExecResponse, SandboxInfo};
+use crate::api::types::{CreateMachineRequest, ExecRequest, ExecResponse, MachineInfo};
 
 /// Provider capabilities — what a provider supports.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -55,10 +55,10 @@ pub trait SandboxProvider: Send + Sync {
     fn info(&self) -> ProviderInfo;
 
     /// Create a new sandbox.
-    async fn create(&self, req: CreateSandboxRequest) -> Result<SandboxInfo, ProviderError>;
+    async fn create(&self, req: CreateMachineRequest) -> Result<MachineInfo, ProviderError>;
 
     /// Start an existing sandbox.
-    async fn start(&self, id: &str) -> Result<SandboxInfo, ProviderError>;
+    async fn start(&self, id: &str) -> Result<MachineInfo, ProviderError>;
 
     /// Stop a running sandbox.
     async fn stop(&self, id: &str) -> Result<(), ProviderError>;
@@ -67,10 +67,10 @@ pub trait SandboxProvider: Send + Sync {
     async fn delete(&self, id: &str) -> Result<(), ProviderError>;
 
     /// Get sandbox info by name.
-    async fn get(&self, id: &str) -> Result<SandboxInfo, ProviderError>;
+    async fn get(&self, id: &str) -> Result<MachineInfo, ProviderError>;
 
     /// List all sandboxes managed by this provider.
-    async fn list(&self) -> Result<Vec<SandboxInfo>, ProviderError>;
+    async fn list(&self) -> Result<Vec<MachineInfo>, ProviderError>;
 
     /// Execute a command in a sandbox.
     async fn exec(&self, id: &str, req: ExecRequest) -> Result<ExecResponse, ProviderError>;

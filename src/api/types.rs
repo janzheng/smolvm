@@ -10,7 +10,7 @@ use utoipa::{IntoParams, ToSchema};
 /// Role-based permission level for sandbox access.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
-pub enum SandboxRole {
+pub enum MachineRole {
     /// Read-only access: list, get info, read files, view logs.
     ReadOnly,
     /// Operator access: exec, manage files, start/stop — cannot delete.
@@ -19,24 +19,24 @@ pub enum SandboxRole {
     Owner,
 }
 
-impl std::fmt::Display for SandboxRole {
+impl std::fmt::Display for MachineRole {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SandboxRole::ReadOnly => write!(f, "readonly"),
-            SandboxRole::Operator => write!(f, "operator"),
-            SandboxRole::Owner => write!(f, "owner"),
+            MachineRole::ReadOnly => write!(f, "readonly"),
+            MachineRole::Operator => write!(f, "operator"),
+            MachineRole::Owner => write!(f, "owner"),
         }
     }
 }
 
 /// A permission grant associating a hashed token with a role on a sandbox.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct SandboxPermission {
+pub struct MachinePermission {
     /// SHA-256 hash of the bearer token (truncated to 16 hex chars).
     #[schema(example = "a1b2c3d4e5f6a7b8")]
     pub token_hash: String,
     /// Granted role.
-    pub role: SandboxRole,
+    pub role: MachineRole,
 }
 
 /// Request to grant a permission on a sandbox.
@@ -45,7 +45,7 @@ pub struct GrantPermissionRequest {
     /// The bearer token to grant access to (will be hashed before storage).
     pub token: String,
     /// The role to grant.
-    pub role: SandboxRole,
+    pub role: MachineRole,
 }
 
 /// Response listing permissions on a sandbox.
@@ -54,7 +54,7 @@ pub struct ListPermissionsResponse {
     /// Sandbox name.
     pub sandbox: String,
     /// Current permissions (token hashes + roles).
-    pub permissions: Vec<SandboxPermission>,
+    pub permissions: Vec<MachinePermission>,
 }
 
 /// Response from granting or revoking a permission.
@@ -82,7 +82,7 @@ pub struct RestartSpec {
 
 /// Request to create a new sandbox.
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
-pub struct CreateSandboxRequest {
+pub struct CreateMachineRequest {
     /// Unique name for the sandbox.
     #[schema(example = "my-sandbox")]
     pub name: String,
@@ -124,7 +124,7 @@ pub struct CreateSandboxRequest {
 
 /// Request to clone an existing sandbox.
 #[derive(Debug, Deserialize, ToSchema)]
-pub struct CloneSandboxRequest {
+pub struct CloneMachineRequest {
     /// Name for the cloned sandbox.
     #[schema(example = "my-sandbox-fork")]
     pub name: String,
@@ -145,7 +145,7 @@ pub struct DiffResponse {
 
 /// Request to merge files from one sandbox into another.
 #[derive(Debug, Deserialize, ToSchema)]
-pub struct MergeSandboxRequest {
+pub struct MergeMachineRequest {
     /// Conflict resolution strategy.
     #[serde(default)]
     pub strategy: MergeStrategy,
@@ -253,7 +253,7 @@ pub struct ResourceSpec {
 /// Sandbox status information.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct SandboxInfo {
+pub struct MachineInfo {
     /// Sandbox name.
     #[schema(example = "my-sandbox")]
     pub name: String,
@@ -279,9 +279,9 @@ pub struct SandboxInfo {
 
 /// List sandboxes response.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct ListSandboxesResponse {
+pub struct ListMachinesResponse {
     /// List of sandboxes.
-    pub sandboxes: Vec<SandboxInfo>,
+    pub sandboxes: Vec<MachineInfo>,
 }
 
 // ============================================================================
@@ -400,7 +400,7 @@ pub struct CreateContainerRequest {
 /// Note: The `source` field is the virtiofs tag, which corresponds to
 /// host mounts configured on the sandbox. Tags are assigned in order:
 /// `smolvm0`, `smolvm1`, etc. based on the sandbox's mount configuration.
-/// Use `GET /api/v1/sandboxes/:id` to see the tag-to-path mapping.
+/// Use `GET /api/v1/machines/:id` to see the tag-to-path mapping.
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct ContainerMountSpec {
     /// Virtiofs tag (e.g., "smolvm0", "smolvm1").
@@ -1348,7 +1348,7 @@ mod tests {
 
     #[test]
     fn test_merge_request_defaults() {
-        let req: MergeSandboxRequest = serde_json::from_str("{}").unwrap();
+        let req: MergeMachineRequest = serde_json::from_str("{}").unwrap();
         assert!(matches!(req.strategy, MergeStrategy::Theirs));
         assert!(req.files.is_empty());
     }
@@ -1356,7 +1356,7 @@ mod tests {
     #[test]
     fn test_merge_request_with_files() {
         let json = r#"{"strategy":"ours","files":["/app/main.ts","/app/config.json"]}"#;
-        let req: MergeSandboxRequest = serde_json::from_str(json).unwrap();
+        let req: MergeMachineRequest = serde_json::from_str(json).unwrap();
         assert!(matches!(req.strategy, MergeStrategy::Ours));
         assert_eq!(req.files.len(), 2);
         assert_eq!(req.files[0], "/app/main.ts");
@@ -1391,16 +1391,16 @@ mod tests {
     }
 
     #[test]
-    fn test_create_sandbox_request_default_user() {
+    fn test_create_machine_request_default_user() {
         let json = r#"{"name":"test","default_user":"agent"}"#;
-        let req: CreateSandboxRequest = serde_json::from_str(json).unwrap();
+        let req: CreateMachineRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.default_user, Some("agent".into()));
     }
 
     #[test]
-    fn test_create_sandbox_request_no_default_user() {
+    fn test_create_machine_request_no_default_user() {
         let json = r#"{"name":"test"}"#;
-        let req: CreateSandboxRequest = serde_json::from_str(json).unwrap();
+        let req: CreateMachineRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.default_user, None);
     }
 

@@ -30,7 +30,7 @@ use crate::data::consts::BYTES_PER_MIB;
 use crate::data::storage::HostMount;
 use tokio::sync::Semaphore;
 
-use crate::api::state::SandboxEntry;
+use crate::api::state::MachineEntry;
 
 // User switching is now handled agent-side via setuid/setgid in the wire protocol.
 // The old `wrap_command_for_user` su -l approach has been removed.
@@ -44,7 +44,7 @@ use crate::api::state::SandboxEntry;
 /// This prevents real API keys from entering the VM via `--env` overrides.
 fn apply_secret_proxy_env(
     env: &mut Vec<(String, String)>,
-    entry: &SandboxEntry,
+    entry: &MachineEntry,
     state: &ApiState,
 ) {
     if entry.default_env.is_empty() && entry.secrets.is_empty() {
@@ -76,16 +76,16 @@ fn apply_secret_proxy_env(
 /// This executes directly in the VM (not in a container).
 #[utoipa::path(
     post,
-    path = "/api/v1/sandboxes/{id}/exec",
+    path = "/api/v1/machines/{id}/exec",
     tag = "Execution",
     params(
-        ("id" = String, Path, description = "Sandbox name")
+        ("id" = String, Path, description = "Machine name")
     ),
     request_body = ExecRequest,
     responses(
         (status = 200, description = "Command executed", body = ExecResponse),
         (status = 400, description = "Invalid request", body = ApiErrorResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse),
+        (status = 404, description = "Machine not found", body = ApiErrorResponse),
         (status = 500, description = "Execution failed", body = ApiErrorResponse)
     )
 )]
@@ -96,7 +96,7 @@ pub async fn exec_command(
 ) -> Result<Json<ExecResponse>, ApiError> {
     validate_command(&req.command)?;
 
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
 
     // Ensure sandbox is running and persist state to DB
     ensure_running_and_persist(&state, &id, &entry)
@@ -135,16 +135,16 @@ pub async fn exec_command(
 /// This creates a temporary overlay from the image and runs the command.
 #[utoipa::path(
     post,
-    path = "/api/v1/sandboxes/{id}/run",
+    path = "/api/v1/machines/{id}/run",
     tag = "Execution",
     params(
-        ("id" = String, Path, description = "Sandbox name")
+        ("id" = String, Path, description = "Machine name")
     ),
     request_body = RunRequest,
     responses(
         (status = 200, description = "Command executed", body = ExecResponse),
         (status = 400, description = "Invalid request", body = ApiErrorResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse),
+        (status = 404, description = "Machine not found", body = ApiErrorResponse),
         (status = 500, description = "Execution failed", body = ApiErrorResponse)
     )
 )]
@@ -155,7 +155,7 @@ pub async fn run_command(
 ) -> Result<Json<ExecResponse>, ApiError> {
     validate_command(&req.command)?;
 
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
 
     // Ensure sandbox is running and persist state to DB
     ensure_running_and_persist(&state, &id, &entry)
@@ -206,16 +206,16 @@ static LOG_FOLLOW_SEMAPHORE: std::sync::LazyLock<Semaphore> =
 /// Stream sandbox console logs via SSE.
 #[utoipa::path(
     get,
-    path = "/api/v1/sandboxes/{id}/logs",
+    path = "/api/v1/machines/{id}/logs",
     tag = "Logs",
     params(
-        ("id" = String, Path, description = "Sandbox name"),
+        ("id" = String, Path, description = "Machine name"),
         ("follow" = Option<bool>, Query, description = "Follow the logs (like tail -f)"),
         ("tail" = Option<usize>, Query, description = "Number of lines to show from the end")
     ),
     responses(
         (status = 200, description = "Log stream (SSE)", content_type = "text/event-stream"),
-        (status = 404, description = "Sandbox or log file not found", body = ApiErrorResponse)
+        (status = 404, description = "Machine or log file not found", body = ApiErrorResponse)
     )
 )]
 pub async fn stream_logs(
@@ -223,7 +223,7 @@ pub async fn stream_logs(
     Path(id): Path<String>,
     Query(query): Query<LogsQuery>,
 ) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
 
     // Get console log path
     let log_path: PathBuf = {
@@ -514,7 +514,7 @@ async fn handle_interactive_ws(state: Arc<ApiState>, id: String, socket: WebSock
     }
 
     // Get sandbox and ensure running
-    let entry = match state.get_sandbox(&id) {
+    let entry = match state.get_machine(&id) {
         Ok(e) => e,
         Err(e) => {
             let msg = WsExecMessage::Error {
@@ -704,7 +704,7 @@ async fn handle_exec_ws(state: Arc<ApiState>, id: String, mut socket: WebSocket)
     }
 
     // Get sandbox and ensure running
-    let entry = match state.get_sandbox(&id) {
+    let entry = match state.get_machine(&id) {
         Ok(e) => e,
         Err(e) => {
             let msg = WsExecMessage::Error {

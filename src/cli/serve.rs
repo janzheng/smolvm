@@ -19,13 +19,13 @@ Sandboxes persist independently of the server - they continue running even if th
 
 API ENDPOINTS:
   GET    /health                       Health check
-  POST   /api/v1/sandboxes             Create sandbox
-  GET    /api/v1/sandboxes             List sandboxes
-  GET    /api/v1/sandboxes/:id         Get sandbox status
-  POST   /api/v1/sandboxes/:id/start   Start sandbox
-  POST   /api/v1/sandboxes/:id/stop    Stop sandbox
-  POST   /api/v1/sandboxes/:id/exec    Execute command
-  DELETE /api/v1/sandboxes/:id         Delete sandbox
+  POST   /api/v1/machines             Create sandbox
+  GET    /api/v1/machines             List sandboxes
+  GET    /api/v1/machines/:id         Get sandbox status
+  POST   /api/v1/machines/:id/start   Start sandbox
+  POST   /api/v1/machines/:id/stop    Stop sandbox
+  POST   /api/v1/machines/:id/exec    Execute command
+  DELETE /api/v1/machines/:id         Delete sandbox
 
 EXAMPLES:
   smolvm serve start                         Listen on 127.0.0.1:9090 (default)
@@ -290,7 +290,7 @@ impl ServeStartCmd {
 
 /// Wait for shutdown signal.
 /// Note: VMs are NOT stopped on server shutdown - they run independently.
-/// Use DELETE /api/v1/sandboxes/:id to stop specific VMs.
+/// Use DELETE /api/v1/machines/:id to stop specific VMs.
 async fn shutdown_signal() {
     let ctrl_c = async {
         if let Err(e) = tokio::signal::ctrl_c().await {

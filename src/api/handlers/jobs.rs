@@ -33,7 +33,7 @@ fn now_secs() -> u64 {
     responses(
         (status = 201, description = "Job submitted", body = SubmitJobResponse),
         (status = 400, description = "Invalid request", body = ApiErrorResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse)
+        (status = 404, description = "Machine not found", body = ApiErrorResponse)
     )
 )]
 pub async fn submit_job(

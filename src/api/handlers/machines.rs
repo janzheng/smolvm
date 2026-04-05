@@ -12,17 +12,17 @@ use crate::agent::{vm_data_dir, AgentManager, HostMount};
 use crate::api::error::{classify_ensure_running_error, ApiError};
 use crate::api::state::{
     ensure_running_and_persist, ensure_sandbox_running, restart_spec_to_config, with_sandbox_client,
-    ApiState, ReservationGuard, SandboxRegistration,
+    ApiState, ReservationGuard, MachineRegistration,
 };
 use crate::api::types::{
-    ApiErrorResponse, CloneSandboxRequest, CreateSandboxRequest, DebugMountsResponse,
+    ApiErrorResponse, CloneMachineRequest, CreateMachineRequest, DebugMountsResponse,
     DebugNetworkResponse, DeleteQuery, DeleteResponse, DiffResponse, DnsFilterStatus,
-    ListSandboxesResponse, MergeResponse, MergeSandboxRequest, MergeStrategy, MountInfo,
-    MountSpec, ResourceSpec, SandboxInfo,
+    ListMachinesResponse, MergeResponse, MergeMachineRequest, MergeStrategy, MountInfo,
+    MountSpec, ResourceSpec, MachineInfo,
 };
 use crate::api::auth::{check_permission, extract_bearer_token, hash_token};
 use crate::api::validation::validate_resource_name;
-use crate::api::types::SandboxRole;
+use crate::api::types::MachineRole;
 use crate::config::RecordState;
 use crate::storage::{clone_or_copy_file, OverlayDisk, StorageDisk, OVERLAY_DISK_FILENAME, STORAGE_DISK_FILENAME};
 
@@ -45,13 +45,13 @@ pub(crate) fn mounts_to_info(mounts: &[MountSpec]) -> Vec<MountInfo> {
         .collect()
 }
 
-/// Build a SandboxInfo from a locked SandboxEntry.
-pub(crate) fn sandbox_entry_to_info(
+/// Build a MachineInfo from a locked MachineEntry.
+pub(crate) fn machine_entry_to_info(
     name: String,
-    entry: &crate::api::state::SandboxEntry,
-) -> SandboxInfo {
+    entry: &crate::api::state::MachineEntry,
+) -> MachineInfo {
     let (effective_state, pid) = entry.manager.effective_status();
-    SandboxInfo {
+    MachineInfo {
         name,
         state: effective_state.to_string(),
         pid,
@@ -70,27 +70,27 @@ pub(crate) fn sandbox_entry_to_info(
 /// Create a new sandbox.
 #[utoipa::path(
     post,
-    path = "/api/v1/sandboxes",
-    tag = "Sandboxes",
-    request_body = CreateSandboxRequest,
+    path = "/api/v1/machines",
+    tag = "Machinees",
+    request_body = CreateMachineRequest,
     responses(
-        (status = 200, description = "Sandbox created", body = SandboxInfo),
+        (status = 200, description = "Machine created", body = MachineInfo),
         (status = 400, description = "Invalid request", body = ApiErrorResponse),
-        (status = 409, description = "Sandbox already exists", body = ApiErrorResponse)
+        (status = 409, description = "Machine already exists", body = ApiErrorResponse)
     )
 )]
-pub async fn create_sandbox(
+pub async fn create_machine(
     State(state): State<Arc<ApiState>>,
     headers: axum::http::HeaderMap,
-    Json(req): Json<CreateSandboxRequest>,
-) -> Result<Json<SandboxInfo>, ApiError> {
+    Json(req): Json<CreateMachineRequest>,
+) -> Result<Json<MachineInfo>, ApiError> {
     let _create_start = std::time::Instant::now();
 
     // Extract owner token hash for RBAC (None if no auth configured)
     let owner_token_hash = extract_bearer_token(&headers).map(|t| hash_token(&t));
 
     // Validate name format
-    validate_resource_name(&req.name, "sandbox", MAX_NAME_LENGTH)?;
+    validate_resource_name(&req.name, "machine", MAX_NAME_LENGTH)?;
 
     // Validate mounts
     let mounts_result: Result<Vec<_>, _> = req.mounts.iter().map(HostMount::try_from).collect();
@@ -164,7 +164,7 @@ pub async fn create_sandbox(
     let network = network || !secrets.is_empty();
 
     // Complete registration - consumes the guard
-    guard.complete(SandboxRegistration {
+    guard.complete(MachineRegistration {
         manager,
         mounts: req.mounts.clone(),
         ports: req.ports.clone(),
@@ -205,7 +205,7 @@ pub async fn create_sandbox(
     // Create default user if requested
     let has_default_user = effective_default_user.is_some();
     if let Some(ref user) = effective_default_user {
-        let entry = state.get_sandbox(&req.name)?;
+        let entry = state.get_machine(&req.name)?;
         ensure_running_and_persist(&state, &req.name, &entry)
             .await
             .map_err(classify_ensure_running_error)?;
@@ -270,7 +270,7 @@ pub async fn create_sandbox(
 
     // Run init commands if any were provided
     if !all_init_commands.is_empty() {
-        let entry = state.get_sandbox(&req.name)?;
+        let entry = state.get_machine(&req.name)?;
         ensure_running_and_persist(&state, &req.name, &entry)
             .await
             .map_err(classify_ensure_running_error)?;
@@ -307,25 +307,25 @@ pub async fn create_sandbox(
         }
 
         // Re-read state after init commands (VM is now running)
-        let entry = state.get_sandbox(&req.name)?;
+        let entry = state.get_machine(&req.name)?;
         let entry_lock = entry.lock();
         crate::api::metrics::record_sandbox_created();
         crate::api::metrics::record_sandbox_boot_time(_create_start.elapsed().as_secs_f64());
-        return Ok(Json(sandbox_entry_to_info(req.name.clone(), &entry_lock)));
+        return Ok(Json(machine_entry_to_info(req.name.clone(), &entry_lock)));
     }
 
     // If default_user was set (VM started for user creation), return updated state
     if has_default_user {
-        let entry = state.get_sandbox(&req.name)?;
+        let entry = state.get_machine(&req.name)?;
         let entry_lock = entry.lock();
         crate::api::metrics::record_sandbox_created();
         crate::api::metrics::record_sandbox_boot_time(_create_start.elapsed().as_secs_f64());
-        return Ok(Json(sandbox_entry_to_info(req.name.clone(), &entry_lock)));
+        return Ok(Json(machine_entry_to_info(req.name.clone(), &entry_lock)));
     }
 
     crate::api::metrics::record_sandbox_created();
     crate::api::metrics::record_sandbox_boot_time(_create_start.elapsed().as_secs_f64());
-    Ok(Json(SandboxInfo {
+    Ok(Json(MachineInfo {
         name: req.name.clone(),
         state: agent_state,
         pid,
@@ -340,66 +340,66 @@ pub async fn create_sandbox(
 /// List all sandboxes.
 #[utoipa::path(
     get,
-    path = "/api/v1/sandboxes",
-    tag = "Sandboxes",
+    path = "/api/v1/machines",
+    tag = "Machinees",
     responses(
-        (status = 200, description = "List of sandboxes", body = ListSandboxesResponse)
+        (status = 200, description = "List of sandboxes", body = ListMachinesResponse)
     )
 )]
-pub async fn list_sandboxes(State(state): State<Arc<ApiState>>) -> Json<ListSandboxesResponse> {
-    let sandboxes = state.list_sandboxes();
-    Json(ListSandboxesResponse { sandboxes })
+pub async fn list_machines(State(state): State<Arc<ApiState>>) -> Json<ListMachinesResponse> {
+    let sandboxes = state.list_machines();
+    Json(ListMachinesResponse { sandboxes })
 }
 
 /// Get sandbox status.
 #[utoipa::path(
     get,
-    path = "/api/v1/sandboxes/{id}",
-    tag = "Sandboxes",
+    path = "/api/v1/machines/{id}",
+    tag = "Machinees",
     params(
-        ("id" = String, Path, description = "Sandbox name")
+        ("id" = String, Path, description = "Machine name")
     ),
     responses(
-        (status = 200, description = "Sandbox details", body = SandboxInfo),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse)
+        (status = 200, description = "Machine details", body = MachineInfo),
+        (status = 404, description = "Machine not found", body = ApiErrorResponse)
     )
 )]
-pub async fn get_sandbox(
+pub async fn get_machine(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
-) -> Result<Json<SandboxInfo>, ApiError> {
+) -> Result<Json<MachineInfo>, ApiError> {
     if let Some(token) = extract_bearer_token(&headers) {
-        check_permission(&state, &id, &token, SandboxRole::ReadOnly)?;
+        check_permission(&state, &id, &token, MachineRole::ReadOnly)?;
     }
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
     let entry = entry.lock();
-    Ok(Json(sandbox_entry_to_info(id, &entry)))
+    Ok(Json(machine_entry_to_info(id, &entry)))
 }
 
 /// Start a sandbox.
 #[utoipa::path(
     post,
-    path = "/api/v1/sandboxes/{id}/start",
-    tag = "Sandboxes",
+    path = "/api/v1/machines/{id}/start",
+    tag = "Machinees",
     params(
-        ("id" = String, Path, description = "Sandbox name")
+        ("id" = String, Path, description = "Machine name")
     ),
     responses(
-        (status = 200, description = "Sandbox started", body = SandboxInfo),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse),
+        (status = 200, description = "Machine started", body = MachineInfo),
+        (status = 404, description = "Machine not found", body = ApiErrorResponse),
         (status = 500, description = "Failed to start", body = ApiErrorResponse)
     )
 )]
-pub async fn start_sandbox(
+pub async fn start_machine(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
-) -> Result<Json<SandboxInfo>, ApiError> {
+) -> Result<Json<MachineInfo>, ApiError> {
     if let Some(token) = extract_bearer_token(&headers) {
-        check_permission(&state, &id, &token, SandboxRole::Operator)?;
+        check_permission(&state, &id, &token, MachineRole::Operator)?;
     }
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
 
     // Snapshot configuration for response
     let (mounts_spec, ports_spec, resources_spec, network) = {
@@ -436,7 +436,7 @@ pub async fn start_sandbox(
         .update_sandbox_state(&id, RecordState::Running, pid)
         .map_err(ApiError::database)?;
 
-    Ok(Json(SandboxInfo {
+    Ok(Json(MachineInfo {
         name: id,
         state: agent_state,
         pid,
@@ -451,26 +451,26 @@ pub async fn start_sandbox(
 /// Stop a sandbox.
 #[utoipa::path(
     post,
-    path = "/api/v1/sandboxes/{id}/stop",
-    tag = "Sandboxes",
+    path = "/api/v1/machines/{id}/stop",
+    tag = "Machinees",
     params(
-        ("id" = String, Path, description = "Sandbox name")
+        ("id" = String, Path, description = "Machine name")
     ),
     responses(
-        (status = 200, description = "Sandbox stopped", body = SandboxInfo),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse),
+        (status = 200, description = "Machine stopped", body = MachineInfo),
+        (status = 404, description = "Machine not found", body = ApiErrorResponse),
         (status = 500, description = "Failed to stop", body = ApiErrorResponse)
     )
 )]
-pub async fn stop_sandbox(
+pub async fn stop_machine(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
-) -> Result<Json<SandboxInfo>, ApiError> {
+) -> Result<Json<MachineInfo>, ApiError> {
     if let Some(token) = extract_bearer_token(&headers) {
-        check_permission(&state, &id, &token, SandboxRole::Operator)?;
+        check_permission(&state, &id, &token, MachineRole::Operator)?;
     }
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
 
     // Get config for response
     let (mounts_spec, ports_spec, resources_spec, network, restart_count) = {
@@ -520,7 +520,7 @@ pub async fn stop_sandbox(
         .update_sandbox_state(&id, RecordState::Stopped, None)
         .map_err(ApiError::database)?;
 
-    Ok(Json(SandboxInfo {
+    Ok(Json(MachineInfo {
         name: id,
         state: agent_state,
         pid,
@@ -535,19 +535,19 @@ pub async fn stop_sandbox(
 /// Delete a sandbox.
 #[utoipa::path(
     delete,
-    path = "/api/v1/sandboxes/{id}",
-    tag = "Sandboxes",
+    path = "/api/v1/machines/{id}",
+    tag = "Machinees",
     params(
-        ("id" = String, Path, description = "Sandbox name"),
+        ("id" = String, Path, description = "Machine name"),
         ("force" = Option<bool>, Query, description = "Force delete even if VM is still running")
     ),
     responses(
-        (status = 200, description = "Sandbox deleted", body = DeleteResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse),
+        (status = 200, description = "Machine deleted", body = DeleteResponse),
+        (status = 404, description = "Machine not found", body = ApiErrorResponse),
         (status = 409, description = "VM still running, use force=true", body = ApiErrorResponse)
     )
 )]
-pub async fn delete_sandbox(
+pub async fn delete_machine(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
@@ -555,10 +555,10 @@ pub async fn delete_sandbox(
 ) -> Result<Json<DeleteResponse>, ApiError> {
     // Owner-only operation
     if let Some(token) = extract_bearer_token(&headers) {
-        check_permission(&state, &id, &token, SandboxRole::Owner)?;
+        check_permission(&state, &id, &token, MachineRole::Owner)?;
     }
     // First, get the entry and stop the sandbox (before removing from registry).
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
 
     // Stop the sandbox if running (clone Arc<AgentManager> to avoid holding entry lock)
     let manager = {
@@ -628,30 +628,30 @@ pub async fn delete_sandbox(
 /// The source sandbox does not need to be stopped.
 #[utoipa::path(
     post,
-    path = "/api/v1/sandboxes/{id}/clone",
-    tag = "Sandboxes",
+    path = "/api/v1/machines/{id}/clone",
+    tag = "Machinees",
     params(
         ("id" = String, Path, description = "Source sandbox name")
     ),
-    request_body = CloneSandboxRequest,
+    request_body = CloneMachineRequest,
     responses(
-        (status = 200, description = "Sandbox cloned", body = SandboxInfo),
+        (status = 200, description = "Machine cloned", body = MachineInfo),
         (status = 400, description = "Invalid request", body = ApiErrorResponse),
         (status = 404, description = "Source sandbox not found", body = ApiErrorResponse),
         (status = 409, description = "Clone name already exists", body = ApiErrorResponse)
     )
 )]
-pub async fn clone_sandbox(
+pub async fn clone_machine(
     State(state): State<Arc<ApiState>>,
     Path(source_id): Path<String>,
-    Json(req): Json<CloneSandboxRequest>,
-) -> Result<Json<SandboxInfo>, ApiError> {
+    Json(req): Json<CloneMachineRequest>,
+) -> Result<Json<MachineInfo>, ApiError> {
     // Validate clone name
-    validate_resource_name(&req.name, "sandbox", MAX_NAME_LENGTH)?;
+    validate_resource_name(&req.name, "machine", MAX_NAME_LENGTH)?;
 
     // Verify source exists and snapshot its config
     let (source_resources, source_network) = {
-        let source_entry = state.get_sandbox(&source_id)?;
+        let source_entry = state.get_machine(&source_id)?;
         let entry = source_entry.lock();
         (entry.resources.clone(), entry.network)
     };
@@ -723,11 +723,11 @@ pub async fn clone_sandbox(
     // Register with same config as source (no mounts/ports since those are host-specific)
     let restart_config = crate::config::RestartConfig::default();
     let source_allowed_domains = {
-        let source_entry = state.get_sandbox(&source_id)?;
+        let source_entry = state.get_machine(&source_id)?;
         let entry = source_entry.lock();
         entry.allowed_domains.clone()
     };
-    guard.complete(SandboxRegistration {
+    guard.complete(MachineRegistration {
         manager,
         mounts: vec![],
         ports: vec![],
@@ -741,7 +741,7 @@ pub async fn clone_sandbox(
         mcp_servers: Vec::new(),
     })?;
 
-    Ok(Json(SandboxInfo {
+    Ok(Json(MachineInfo {
         name: req.name,
         state: agent_state,
         pid,
@@ -759,25 +759,25 @@ pub async fn clone_sandbox(
 /// inside each VM and comparing the results.
 #[utoipa::path(
     get,
-    path = "/api/v1/sandboxes/{id}/diff/{other}",
-    tag = "Sandboxes",
+    path = "/api/v1/machines/{id}/diff/{other}",
+    tag = "Machinees",
     params(
         ("id" = String, Path, description = "First sandbox name"),
         ("other" = String, Path, description = "Second sandbox name")
     ),
     responses(
         (status = 200, description = "Diff result", body = DiffResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse),
+        (status = 404, description = "Machine not found", body = ApiErrorResponse),
         (status = 500, description = "Diff failed", body = ApiErrorResponse)
     )
 )]
-pub async fn diff_sandboxes(
+pub async fn diff_machines(
     State(state): State<Arc<ApiState>>,
     Path((id, other)): Path<(String, String)>,
 ) -> Result<Json<DiffResponse>, ApiError> {
     // Get both sandbox entries
-    let entry_a = state.get_sandbox(&id)?;
-    let entry_b = state.get_sandbox(&other)?;
+    let entry_a = state.get_machine(&id)?;
+    let entry_b = state.get_machine(&other)?;
 
     // Ensure both are running
     ensure_running_and_persist(&state, &id, &entry_a)
@@ -855,27 +855,27 @@ pub async fn diff_sandboxes(
 /// base64-encoded exec channel.
 #[utoipa::path(
     post,
-    path = "/api/v1/sandboxes/{id}/merge/{target}",
-    tag = "Sandboxes",
+    path = "/api/v1/machines/{id}/merge/{target}",
+    tag = "Machinees",
     params(
         ("id" = String, Path, description = "Source sandbox name"),
         ("target" = String, Path, description = "Target sandbox name")
     ),
-    request_body = MergeSandboxRequest,
+    request_body = MergeMachineRequest,
     responses(
         (status = 200, description = "Merge result", body = MergeResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse),
+        (status = 404, description = "Machine not found", body = ApiErrorResponse),
         (status = 500, description = "Merge failed", body = ApiErrorResponse)
     )
 )]
-pub async fn merge_sandboxes(
+pub async fn merge_machines(
     State(state): State<Arc<ApiState>>,
     Path((source_id, target_id)): Path<(String, String)>,
-    Json(req): Json<MergeSandboxRequest>,
+    Json(req): Json<MergeMachineRequest>,
 ) -> Result<Json<MergeResponse>, ApiError> {
     // Get both sandbox entries
-    let entry_source = state.get_sandbox(&source_id)?;
-    let entry_target = state.get_sandbox(&target_id)?;
+    let entry_source = state.get_machine(&source_id)?;
+    let entry_target = state.get_machine(&target_id)?;
 
     // Ensure both are running
     ensure_running_and_persist(&state, &source_id, &entry_source)
@@ -1003,14 +1003,14 @@ pub async fn merge_sandboxes(
 /// virtiofs issues.
 #[utoipa::path(
     get,
-    path = "/api/v1/sandboxes/{id}/debug/mounts",
-    tag = "Sandboxes",
+    path = "/api/v1/machines/{id}/debug/mounts",
+    tag = "Machinees",
     params(
-        ("id" = String, Path, description = "Sandbox name")
+        ("id" = String, Path, description = "Machine name")
     ),
     responses(
         (status = 200, description = "Mount debug info", body = DebugMountsResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse),
+        (status = 404, description = "Machine not found", body = ApiErrorResponse),
         (status = 500, description = "Debug failed", body = ApiErrorResponse)
     )
 )]
@@ -1018,7 +1018,7 @@ pub async fn debug_mounts(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<String>,
 ) -> Result<Json<DebugMountsResponse>, ApiError> {
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
     ensure_running_and_persist(&state, &id, &entry)
         .await
         .map_err(classify_ensure_running_error)?;
@@ -1075,14 +1075,14 @@ pub async fn debug_mounts(
 /// port mapping issues.
 #[utoipa::path(
     get,
-    path = "/api/v1/sandboxes/{id}/debug/network",
-    tag = "Sandboxes",
+    path = "/api/v1/machines/{id}/debug/network",
+    tag = "Machinees",
     params(
-        ("id" = String, Path, description = "Sandbox name")
+        ("id" = String, Path, description = "Machine name")
     ),
     responses(
         (status = 200, description = "Network debug info", body = DebugNetworkResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse),
+        (status = 404, description = "Machine not found", body = ApiErrorResponse),
         (status = 500, description = "Debug failed", body = ApiErrorResponse)
     )
 )]
@@ -1090,7 +1090,7 @@ pub async fn debug_network(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<String>,
 ) -> Result<Json<DebugNetworkResponse>, ApiError> {
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
     ensure_running_and_persist(&state, &id, &entry)
         .await
         .map_err(classify_ensure_running_error)?;
@@ -1133,14 +1133,14 @@ pub async fn debug_network(
 /// Get DNS filter status for a sandbox.
 #[utoipa::path(
     get,
-    path = "/api/v1/sandboxes/{id}/dns",
-    tag = "Sandboxes",
+    path = "/api/v1/machines/{id}/dns",
+    tag = "Machinees",
     params(
-        ("id" = String, Path, description = "Sandbox name")
+        ("id" = String, Path, description = "Machine name")
     ),
     responses(
         (status = 200, description = "DNS filter status", body = DnsFilterStatus),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse)
+        (status = 404, description = "Machine not found", body = ApiErrorResponse)
     )
 )]
 pub async fn dns_filter_status(
@@ -1149,9 +1149,9 @@ pub async fn dns_filter_status(
     headers: axum::http::HeaderMap,
 ) -> Result<Json<DnsFilterStatus>, ApiError> {
     if let Some(token) = extract_bearer_token(&headers) {
-        check_permission(&state, &id, &token, SandboxRole::ReadOnly)?;
+        check_permission(&state, &id, &token, MachineRole::ReadOnly)?;
     }
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
     let lock = entry.lock();
     let (active, domains) = match &lock.allowed_domains {
         Some(d) if !d.is_empty() => (true, d.clone()),

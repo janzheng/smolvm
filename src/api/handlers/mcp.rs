@@ -121,14 +121,14 @@ fn parse_jsonrpc_responses(stdout: &str) -> Vec<serde_json::Value> {
 /// sends initialize + tools/list, and collects the discovered tools.
 #[utoipa::path(
     get,
-    path = "/api/v1/sandboxes/{id}/mcp/tools",
+    path = "/api/v1/machines/{id}/mcp/tools",
     tag = "MCP",
     params(
-        ("id" = String, Path, description = "Sandbox name")
+        ("id" = String, Path, description = "Machine name")
     ),
     responses(
         (status = 200, description = "MCP tools discovered", body = ListMcpToolsResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse),
+        (status = 404, description = "Machine not found", body = ApiErrorResponse),
         (status = 500, description = "Discovery failed", body = ApiErrorResponse)
     )
 )]
@@ -136,7 +136,7 @@ pub async fn list_mcp_tools(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ListMcpToolsResponse>, ApiError> {
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
 
     ensure_running_and_persist(&state, &id, &entry)
         .await
@@ -233,16 +233,16 @@ pub async fn list_mcp_tools(
 /// the result. The server runs ephemerally for each call.
 #[utoipa::path(
     post,
-    path = "/api/v1/sandboxes/{id}/mcp/call",
+    path = "/api/v1/machines/{id}/mcp/call",
     tag = "MCP",
     params(
-        ("id" = String, Path, description = "Sandbox name")
+        ("id" = String, Path, description = "Machine name")
     ),
     request_body = CallMcpToolRequest,
     responses(
         (status = 200, description = "Tool call result", body = CallMcpToolResponse),
         (status = 400, description = "Invalid request", body = ApiErrorResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse),
+        (status = 404, description = "Machine not found", body = ApiErrorResponse),
         (status = 500, description = "Tool call failed", body = ApiErrorResponse)
     )
 )]
@@ -251,7 +251,7 @@ pub async fn call_mcp_tool(
     Path(id): Path<String>,
     Json(req): Json<CallMcpToolRequest>,
 ) -> Result<Json<CallMcpToolResponse>, ApiError> {
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
 
     ensure_running_and_persist(&state, &id, &entry)
         .await
@@ -345,21 +345,21 @@ pub async fn call_mcp_tool(
 /// use the `/mcp/tools` endpoint instead.
 #[utoipa::path(
     get,
-    path = "/api/v1/sandboxes/{id}/mcp/servers",
+    path = "/api/v1/machines/{id}/mcp/servers",
     tag = "MCP",
     params(
-        ("id" = String, Path, description = "Sandbox name")
+        ("id" = String, Path, description = "Machine name")
     ),
     responses(
         (status = 200, description = "MCP server configurations", body = Vec<McpServerConfig>),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse)
+        (status = 404, description = "Machine not found", body = ApiErrorResponse)
     )
 )]
 pub async fn list_mcp_servers(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<McpServerConfig>>, ApiError> {
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
     let servers = {
         let entry_lock = entry.lock();
         entry_lock.mcp_servers.clone()
@@ -373,16 +373,16 @@ pub async fn list_mcp_servers(
 /// it responds correctly. Returns the server status.
 #[utoipa::path(
     post,
-    path = "/api/v1/sandboxes/{id}/mcp/start",
+    path = "/api/v1/machines/{id}/mcp/start",
     tag = "MCP",
     params(
-        ("id" = String, Path, description = "Sandbox name")
+        ("id" = String, Path, description = "Machine name")
     ),
     request_body = McpServerConfig,
     responses(
         (status = 200, description = "MCP server verified", body = McpServerStatus),
         (status = 400, description = "Invalid request", body = ApiErrorResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse),
+        (status = 404, description = "Machine not found", body = ApiErrorResponse),
         (status = 500, description = "Server start failed", body = ApiErrorResponse)
     )
 )]
@@ -391,7 +391,7 @@ pub async fn start_mcp_server(
     Path(id): Path<String>,
     Json(config): Json<McpServerConfig>,
 ) -> Result<Json<McpServerStatus>, ApiError> {
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
 
     ensure_running_and_persist(&state, &id, &entry)
         .await

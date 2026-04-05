@@ -16,21 +16,21 @@ use crate::api::types::{
 /// List images in a sandbox.
 #[utoipa::path(
     get,
-    path = "/api/v1/sandboxes/{id}/images",
+    path = "/api/v1/machines/{id}/images",
     tag = "Images",
     params(
-        ("id" = String, Path, description = "Sandbox name")
+        ("id" = String, Path, description = "Machine name")
     ),
     responses(
         (status = 200, description = "List of images", body = ListImagesResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse)
+        (status = 404, description = "Machine not found", body = ApiErrorResponse)
     )
 )]
 pub async fn list_images(
     State(state): State<Arc<ApiState>>,
     Path(sandbox_id): Path<String>,
 ) -> Result<Json<ListImagesResponse>, ApiError> {
-    let entry = state.get_sandbox(&sandbox_id)?;
+    let entry = state.get_machine(&sandbox_id)?;
 
     // Check if sandbox VM is actually alive, return empty list if not
     {
@@ -60,16 +60,16 @@ pub async fn list_images(
 /// Pull an image into a sandbox.
 #[utoipa::path(
     post,
-    path = "/api/v1/sandboxes/{id}/images/pull",
+    path = "/api/v1/machines/{id}/images/pull",
     tag = "Images",
     params(
-        ("id" = String, Path, description = "Sandbox name")
+        ("id" = String, Path, description = "Machine name")
     ),
     request_body = PullImageRequest,
     responses(
         (status = 200, description = "Image pulled", body = PullImageResponse),
         (status = 400, description = "Invalid request", body = ApiErrorResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse),
+        (status = 404, description = "Machine not found", body = ApiErrorResponse),
         (status = 500, description = "Failed to pull image", body = ApiErrorResponse)
     )
 )]
@@ -84,7 +84,7 @@ pub async fn pull_image(
         ));
     }
 
-    let entry = state.get_sandbox(&sandbox_id)?;
+    let entry = state.get_machine(&sandbox_id)?;
 
     // Ensure sandbox is running and persist state to DB
     ensure_running_and_persist(&state, &sandbox_id, &entry)

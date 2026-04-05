@@ -130,12 +130,12 @@ impl Supervisor {
         self.state.increment_restart_count(name);
 
         // Attempt restart
-        self.restart_sandbox(name).await
+        self.restart_machine(name).await
     }
 
     /// Attempt to restart a sandbox.
-    async fn restart_sandbox(&self, name: &str) -> crate::Result<()> {
-        let entry = match self.state.get_sandbox(name) {
+    async fn restart_machine(&self, name: &str) -> crate::Result<()> {
+        let entry = match self.state.get_machine(name) {
             Ok(entry) => entry,
             Err(_) => {
                 tracing::warn!(sandbox = %name, "sandbox no longer exists, skipping restart");
@@ -206,7 +206,7 @@ impl Supervisor {
         let sandbox_names = self.state.list_sandbox_names();
 
         for name in sandbox_names {
-            if let Some(log_path) = self.get_sandbox_log_path(&name) {
+            if let Some(log_path) = self.get_machine_log_path(&name) {
                 if let Err(e) = crate::log_rotation::rotate_if_needed(&log_path) {
                     tracing::debug!(sandbox = %name, error = %e, "failed to rotate logs");
                 }
@@ -215,7 +215,7 @@ impl Supervisor {
     }
 
     /// Get the console log path for a sandbox.
-    fn get_sandbox_log_path(&self, name: &str) -> Option<std::path::PathBuf> {
+    fn get_machine_log_path(&self, name: &str) -> Option<std::path::PathBuf> {
         let runtime_dir = dirs::runtime_dir()
             .or_else(dirs::cache_dir)
             .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));

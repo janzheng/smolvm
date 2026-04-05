@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use crate::api::types::{
-    CreateSandboxRequest, ExecRequest, ExecResponse, ListSandboxesResponse,
-    SandboxInfo,
+    CreateMachineRequest, ExecRequest, ExecResponse, ListMachinesResponse,
+    MachineInfo,
 };
 use crate::provider::{ProviderError, ProviderInfo, SandboxProvider};
 
@@ -94,9 +94,9 @@ impl SandboxProvider for RemoteProvider {
         }
     }
 
-    async fn create(&self, req: CreateSandboxRequest) -> Result<SandboxInfo, ProviderError> {
+    async fn create(&self, req: CreateMachineRequest) -> Result<MachineInfo, ProviderError> {
         let resp = self
-            .api_request(reqwest::Method::POST, "/sandboxes")
+            .api_request(reqwest::Method::POST, "/machines")
             .json(&req)
             .send()
             .await
@@ -107,9 +107,9 @@ impl SandboxProvider for RemoteProvider {
             .map_err(|e| ProviderError::Internal(format!("JSON decode: {}", e)))
     }
 
-    async fn start(&self, id: &str) -> Result<SandboxInfo, ProviderError> {
+    async fn start(&self, id: &str) -> Result<MachineInfo, ProviderError> {
         let resp = self
-            .api_request(reqwest::Method::POST, &format!("/sandboxes/{}/start", id))
+            .api_request(reqwest::Method::POST, &format!("/machines/{}/start", id))
             .send()
             .await
             .map_err(|e| ProviderError::Connection(e.to_string()))?;
@@ -121,7 +121,7 @@ impl SandboxProvider for RemoteProvider {
 
     async fn stop(&self, id: &str) -> Result<(), ProviderError> {
         let resp = self
-            .api_request(reqwest::Method::POST, &format!("/sandboxes/{}/stop", id))
+            .api_request(reqwest::Method::POST, &format!("/machines/{}/stop", id))
             .send()
             .await
             .map_err(|e| ProviderError::Connection(e.to_string()))?;
@@ -133,7 +133,7 @@ impl SandboxProvider for RemoteProvider {
         let resp = self
             .api_request(
                 reqwest::Method::DELETE,
-                &format!("/sandboxes/{}?force=true", id),
+                &format!("/machines/{}?force=true", id),
             )
             .send()
             .await
@@ -142,9 +142,9 @@ impl SandboxProvider for RemoteProvider {
         Ok(())
     }
 
-    async fn get(&self, id: &str) -> Result<SandboxInfo, ProviderError> {
+    async fn get(&self, id: &str) -> Result<MachineInfo, ProviderError> {
         let resp = self
-            .api_request(reqwest::Method::GET, &format!("/sandboxes/{}", id))
+            .api_request(reqwest::Method::GET, &format!("/machines/{}", id))
             .send()
             .await
             .map_err(|e| ProviderError::Connection(e.to_string()))?;
@@ -154,14 +154,14 @@ impl SandboxProvider for RemoteProvider {
             .map_err(|e| ProviderError::Internal(format!("JSON decode: {}", e)))
     }
 
-    async fn list(&self) -> Result<Vec<SandboxInfo>, ProviderError> {
+    async fn list(&self) -> Result<Vec<MachineInfo>, ProviderError> {
         let resp = self
-            .api_request(reqwest::Method::GET, "/sandboxes")
+            .api_request(reqwest::Method::GET, "/machines")
             .send()
             .await
             .map_err(|e| ProviderError::Connection(e.to_string()))?;
         let resp = Self::handle_response(resp).await?;
-        let body: ListSandboxesResponse = resp
+        let body: ListMachinesResponse = resp
             .json()
             .await
             .map_err(|e| ProviderError::Internal(format!("JSON decode: {}", e)))?;
@@ -174,7 +174,7 @@ impl SandboxProvider for RemoteProvider {
         req: ExecRequest,
     ) -> Result<ExecResponse, ProviderError> {
         let resp = self
-            .api_request(reqwest::Method::POST, &format!("/sandboxes/{}/exec", id))
+            .api_request(reqwest::Method::POST, &format!("/machines/{}/exec", id))
             .json(&req)
             .send()
             .await

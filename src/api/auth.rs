@@ -13,7 +13,7 @@ use std::hash::{Hash, Hasher};
 
 use crate::api::error::ApiError;
 use crate::api::state::ApiState;
-use crate::api::types::SandboxRole;
+use crate::api::types::MachineRole;
 
 #[derive(Serialize)]
 struct AuthErrorResponse {
@@ -110,9 +110,9 @@ pub fn check_permission(
     state: &ApiState,
     sandbox_name: &str,
     token: &str,
-    required: SandboxRole,
+    required: MachineRole,
 ) -> Result<(), ApiError> {
-    let entry = state.get_sandbox(sandbox_name)?;
+    let entry = state.get_machine(sandbox_name)?;
     let entry = entry.lock();
 
     // Backwards compatible: if no owner was set, RBAC is disabled for this sandbox
@@ -198,9 +198,9 @@ mod tests {
 
     #[test]
     fn test_sandbox_role_ordering() {
-        assert!(SandboxRole::Owner > SandboxRole::Operator);
-        assert!(SandboxRole::Operator > SandboxRole::ReadOnly);
-        assert!(SandboxRole::Owner >= SandboxRole::Owner);
-        assert!(SandboxRole::Owner >= SandboxRole::ReadOnly);
+        assert!(MachineRole::Owner > MachineRole::Operator);
+        assert!(MachineRole::Operator > MachineRole::ReadOnly);
+        assert!(MachineRole::Owner >= MachineRole::Owner);
+        assert!(MachineRole::Owner >= MachineRole::ReadOnly);
     }
 }

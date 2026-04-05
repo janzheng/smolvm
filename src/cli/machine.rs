@@ -22,11 +22,11 @@ use smolvm::{DEFAULT_IDLE_CMD, DEFAULT_SHELL_CMD};
 use std::path::PathBuf;
 use std::time::Duration;
 
-const KIND: VmKind = VmKind::Sandbox;
+const KIND: VmKind = VmKind::Machine;
 
 /// Quick sandbox commands for running containers
 #[derive(Subcommand, Debug)]
-pub enum SandboxCmd {
+pub enum MachineCmd {
     /// Run a container image (ephemeral by default, use -d to keep running)
     Run(RunCmd),
 
@@ -60,19 +60,19 @@ pub enum SandboxCmd {
     Prune(PruneCmd),
 }
 
-impl SandboxCmd {
+impl MachineCmd {
     pub fn run(self) -> smolvm::Result<()> {
         match self {
-            SandboxCmd::Run(cmd) => cmd.run(),
-            SandboxCmd::Create(cmd) => cmd.run(),
-            SandboxCmd::Start(cmd) => cmd.run(),
-            SandboxCmd::Exec(cmd) => cmd.run(),
-            SandboxCmd::Stop(cmd) => cmd.run(),
-            SandboxCmd::Delete(cmd) => cmd.run(),
-            SandboxCmd::Status(cmd) => cmd.run(),
-            SandboxCmd::Ls(cmd) => cmd.run(),
-            SandboxCmd::Images(cmd) => cmd.run(),
-            SandboxCmd::Prune(cmd) => cmd.run(),
+            MachineCmd::Run(cmd) => cmd.run(),
+            MachineCmd::Create(cmd) => cmd.run(),
+            MachineCmd::Start(cmd) => cmd.run(),
+            MachineCmd::Exec(cmd) => cmd.run(),
+            MachineCmd::Stop(cmd) => cmd.run(),
+            MachineCmd::Delete(cmd) => cmd.run(),
+            MachineCmd::Status(cmd) => cmd.run(),
+            MachineCmd::Ls(cmd) => cmd.run(),
+            MachineCmd::Images(cmd) => cmd.run(),
+            MachineCmd::Prune(cmd) => cmd.run(),
         }
     }
 }
@@ -118,7 +118,7 @@ impl ExecCmd {
         use smolvm::Error;
 
         let (manager, mut client) =
-            vm_common::ensure_running_and_connect(&self.name, vm_common::VmKind::Sandbox)?;
+            vm_common::ensure_running_and_connect(&self.name, vm_common::VmKind::Machine)?;
 
         // Find the running container in the sandbox
         let containers = client.list_containers()?;
@@ -482,7 +482,7 @@ impl RunCmd {
                 }
             }
 
-            println!("Sandbox running (container: {})", &info.id[..12]);
+            println!("Machine running (container: {})", &info.id[..12]);
             println!("\nTo interact with the sandbox:");
             println!(
                 "  smolvm container exec default {} -- <command>",

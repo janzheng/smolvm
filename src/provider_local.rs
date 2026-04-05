@@ -7,12 +7,12 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::api::error::ApiError;
-use crate::api::handlers::sandboxes::sandbox_entry_to_info;
+use crate::api::handlers::machines::machine_entry_to_info;
 use crate::api::state::{
     ensure_sandbox_running, with_sandbox_client, ApiState,
 };
 use crate::api::types::{
-    CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, SandboxInfo,
+    CreateMachineRequest, EnvVar, ExecRequest, ExecResponse, MachineInfo,
 };
 use crate::provider::{ProviderError, ProviderInfo, SandboxProvider};
 
@@ -59,7 +59,7 @@ impl SandboxProvider for LocalProvider {
         }
     }
 
-    async fn create(&self, _req: CreateSandboxRequest) -> Result<SandboxInfo, ProviderError> {
+    async fn create(&self, _req: CreateMachineRequest) -> Result<MachineInfo, ProviderError> {
         // Full sandbox creation involves RAII reservation guards, starter
         // configuration, init commands, DNS filtering, etc. — all tightly
         // coupled to the Axum handler pipeline. Instead of duplicating that
@@ -70,8 +70,8 @@ impl SandboxProvider for LocalProvider {
         ))
     }
 
-    async fn start(&self, id: &str) -> Result<SandboxInfo, ProviderError> {
-        let entry = self.state.get_sandbox(id).map_err(api_err_to_provider)?;
+    async fn start(&self, id: &str) -> Result<MachineInfo, ProviderError> {
+        let entry = self.state.get_machine(id).map_err(api_err_to_provider)?;
 
         ensure_sandbox_running(&entry)
             .await
@@ -88,11 +88,11 @@ impl SandboxProvider for LocalProvider {
 
         // Build response
         let entry = entry.lock();
-        Ok(sandbox_entry_to_info(id.to_string(), &entry))
+        Ok(machine_entry_to_info(id.to_string(), &entry))
     }
 
     async fn stop(&self, id: &str) -> Result<(), ProviderError> {
-        let entry = self.state.get_sandbox(id).map_err(api_err_to_provider)?;
+        let entry = self.state.get_machine(id).map_err(api_err_to_provider)?;
 
         let manager = {
             let entry = entry.lock();
@@ -130,14 +130,14 @@ impl SandboxProvider for LocalProvider {
         Ok(())
     }
 
-    async fn get(&self, id: &str) -> Result<SandboxInfo, ProviderError> {
-        let entry = self.state.get_sandbox(id).map_err(api_err_to_provider)?;
+    async fn get(&self, id: &str) -> Result<MachineInfo, ProviderError> {
+        let entry = self.state.get_machine(id).map_err(api_err_to_provider)?;
         let entry = entry.lock();
-        Ok(sandbox_entry_to_info(id.to_string(), &entry))
+        Ok(machine_entry_to_info(id.to_string(), &entry))
     }
 
-    async fn list(&self) -> Result<Vec<SandboxInfo>, ProviderError> {
-        Ok(self.state.list_sandboxes())
+    async fn list(&self) -> Result<Vec<MachineInfo>, ProviderError> {
+        Ok(self.state.list_machines())
     }
 
     async fn exec(
@@ -145,7 +145,7 @@ impl SandboxProvider for LocalProvider {
         id: &str,
         req: ExecRequest,
     ) -> Result<ExecResponse, ProviderError> {
-        let entry = self.state.get_sandbox(id).map_err(api_err_to_provider)?;
+        let entry = self.state.get_machine(id).map_err(api_err_to_provider)?;
 
         // Ensure running
         ensure_sandbox_running(&entry)

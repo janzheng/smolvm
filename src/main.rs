@@ -14,8 +14,8 @@ mod cli;
 It runs container images inside lightweight VMs using libkrun, providing \
 VM-level isolation with container-like UX.\n\n\
 Quick start:\n  \
-smolvm sandbox run alpine -- echo hello\n  \
-smolvm sandbox run -d nginx -p 8080:80\n\n\
+smolvm machine run alpine -- echo hello\n  \
+smolvm machine run -d nginx -p 8080:80\n\n\
 For programmatic access:\n  \
 smolvm serve"
 )]
@@ -29,7 +29,7 @@ struct Cli {
 enum Commands {
     /// Run containers quickly (ephemeral or detached)
     #[command(subcommand, visible_alias = "sb")]
-    Sandbox(cli::sandbox::SandboxCmd),
+    Machine(cli::machine::MachineCmd),
 
     /// Manage persistent microVMs
     #[command(subcommand, visible_alias = "vm")]
@@ -72,7 +72,7 @@ fn main() {
 
     // Execute command
     let result = match cli.command {
-        Commands::Sandbox(cmd) => cmd.run(),
+        Commands::Machine(cmd) => cmd.run(),
         Commands::Microvm(cmd) => cmd.run(),
         Commands::Container(cmd) => cmd.run(),
         Commands::Serve(cmd) => cmd.run(),

@@ -14,21 +14,21 @@ use crate::api::types::{ApiErrorResponse, DiskStats, ResourceStatsResponse};
 /// Get resource statistics for a sandbox.
 #[utoipa::path(
     get,
-    path = "/api/v1/sandboxes/{id}/stats",
-    tag = "Sandboxes",
+    path = "/api/v1/machines/{id}/stats",
+    tag = "Machinees",
     params(
-        ("id" = String, Path, description = "Sandbox name")
+        ("id" = String, Path, description = "Machine name")
     ),
     responses(
         (status = 200, description = "Resource statistics", body = ResourceStatsResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse)
+        (status = 404, description = "Machine not found", body = ApiErrorResponse)
     )
 )]
 pub async fn sandbox_stats(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ResourceStatsResponse>, ApiError> {
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
     let entry = entry.lock();
 
     let (effective_state, pid) = entry.manager.effective_status();

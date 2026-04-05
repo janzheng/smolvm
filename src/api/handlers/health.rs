@@ -27,7 +27,7 @@ pub async fn health() -> Json<HealthResponse> {
 /// Returns metrics in Prometheus text exposition format.
 pub async fn metrics(State(state): State<Arc<ApiState>>) -> String {
     // Update active sandbox gauge before rendering
-    let count = state.list_sandboxes().len() as u64;
+    let count = state.list_machines().len() as u64;
     crate::api::metrics::set_active_sandboxes(count);
     state.metrics_handle.render()
 }

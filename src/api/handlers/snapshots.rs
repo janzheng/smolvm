@@ -15,10 +15,10 @@ use tokio_util::io::ReaderStream;
 
 use crate::agent::{vm_data_dir, AgentManager};
 use crate::api::error::ApiError;
-use crate::api::state::{ApiState, ReservationGuard, SandboxRegistration};
+use crate::api::state::{ApiState, ReservationGuard, MachineRegistration};
 use crate::api::types::{
     ApiErrorResponse, ListSnapshotsResponse, PullSnapshotRequest, PushSnapshotRequest,
-    PushSnapshotResponse, ResourceSpec, RollbackRequest, RollbackResponse, SandboxInfo,
+    PushSnapshotResponse, ResourceSpec, RollbackRequest, RollbackResponse, MachineInfo,
     SnapshotHistoryResponse, SnapshotManifest, UploadSnapshotQuery, UploadSnapshotResponse,
 };
 use crate::storage::{
@@ -299,7 +299,7 @@ fn chain_depth(snap_dir: &std::path::Path, archive_path: &std::path::Path) -> us
 /// Helper to exec a command in a running sandbox and return trimmed stdout.
 /// Returns None if the sandbox is not running or the command fails.
 async fn try_exec_in_sandbox(
-    entry: &Arc<parking_lot::Mutex<crate::api::state::SandboxEntry>>,
+    entry: &Arc<parking_lot::Mutex<crate::api::state::MachineEntry>>,
     command: Vec<String>,
 ) -> Option<String> {
     use crate::api::state::with_sandbox_client;
@@ -316,15 +316,15 @@ async fn try_exec_in_sandbox(
 /// Push (export) a sandbox as a snapshot archive.
 #[utoipa::path(
     post,
-    path = "/api/v1/sandboxes/{id}/push",
-    tag = "Sandboxes",
+    path = "/api/v1/machines/{id}/push",
+    tag = "Machinees",
     params(
-        ("id" = String, Path, description = "Sandbox name to export")
+        ("id" = String, Path, description = "Machine name to export")
     ),
     request_body(content = Option<PushSnapshotRequest>, description = "Optional push metadata"),
     responses(
         (status = 200, description = "Snapshot created", body = PushSnapshotResponse),
-        (status = 404, description = "Sandbox not found", body = ApiErrorResponse),
+        (status = 404, description = "Machine not found", body = ApiErrorResponse),
         (status = 500, description = "Export failed", body = ApiErrorResponse)
     )
 )]
@@ -336,7 +336,7 @@ pub async fn push_sandbox(
     let req = body.map(|b| b.0).unwrap_or_default();
 
     // Verify sandbox exists
-    let entry = state.get_sandbox(&id)?;
+    let entry = state.get_machine(&id)?;
 
     let network = {
         let lock = entry.lock();
@@ -678,7 +678,7 @@ pub async fn push_sandbox(
 #[utoipa::path(
     get,
     path = "/api/v1/snapshots",
-    tag = "Sandboxes",
+    tag = "Machinees",
     responses(
         (status = 200, description = "List of snapshots", body = ListSnapshotsResponse)
     )
@@ -947,15 +947,15 @@ fn apply_delta_in_place(
 #[utoipa::path(
     post,
     path = "/api/v1/snapshots/{name}/pull",
-    tag = "Sandboxes",
+    tag = "Machinees",
     params(
         ("name" = String, Path, description = "Snapshot name to import")
     ),
     request_body = PullSnapshotRequest,
     responses(
-        (status = 200, description = "Sandbox created from snapshot", body = SandboxInfo),
+        (status = 200, description = "Machine created from snapshot", body = MachineInfo),
         (status = 404, description = "Snapshot not found", body = ApiErrorResponse),
-        (status = 409, description = "Sandbox name already exists", body = ApiErrorResponse),
+        (status = 409, description = "Machine name already exists", body = ApiErrorResponse),
         (status = 500, description = "Import failed", body = ApiErrorResponse)
     )
 )]
@@ -963,7 +963,7 @@ pub async fn pull_snapshot(
     State(state): State<Arc<ApiState>>,
     Path(snapshot_name): Path<String>,
     Json(req): Json<PullSnapshotRequest>,
-) -> Result<Json<SandboxInfo>, ApiError> {
+) -> Result<Json<MachineInfo>, ApiError> {
     let archive_path = snapshots_dir().join(format!("{}.smolvm", snapshot_name));
     if !archive_path.exists() {
         return Err(ApiError::NotFound(format!(
@@ -1048,7 +1048,7 @@ pub async fn pull_snapshot(
 
     // Register the sandbox with the server
     let resources = ResourceSpec::default();
-    guard.complete(SandboxRegistration {
+    guard.complete(MachineRegistration {
         manager,
         mounts: vec![],
         ports: vec![],
@@ -1062,7 +1062,7 @@ pub async fn pull_snapshot(
         mcp_servers: vec![],
     })?;
 
-    Ok(Json(SandboxInfo {
+    Ok(Json(MachineInfo {
         name: req.name,
         state: agent_state,
         pid,
@@ -1078,7 +1078,7 @@ pub async fn pull_snapshot(
 #[utoipa::path(
     delete,
     path = "/api/v1/snapshots/{name}",
-    tag = "Sandboxes",
+    tag = "Machinees",
     params(
         ("name" = String, Path, description = "Snapshot name to delete")
     ),
@@ -1112,7 +1112,7 @@ pub async fn delete_snapshot(
 #[utoipa::path(
     get,
     path = "/api/v1/snapshots/{name}/download",
-    tag = "Sandboxes",
+    tag = "Machinees",
     params(
         ("name" = String, Path, description = "Snapshot name to download")
     ),
@@ -1174,7 +1174,7 @@ pub async fn download_snapshot(
 #[utoipa::path(
     post,
     path = "/api/v1/snapshots/upload",
-    tag = "Sandboxes",
+    tag = "Machinees",
     params(
         ("name" = String, Query, description = "Name for the uploaded snapshot")
     ),
@@ -1266,7 +1266,7 @@ pub async fn upload_snapshot(
 #[utoipa::path(
     get,
     path = "/api/v1/snapshots/{name}/history",
-    tag = "Sandboxes",
+    tag = "Machinees",
     params(
         ("name" = String, Path, description = "Snapshot name")
     ),
@@ -1349,13 +1349,13 @@ pub async fn snapshot_history(
 #[utoipa::path(
     post,
     path = "/api/v1/snapshots/{name}/rollback",
-    tag = "Sandboxes",
+    tag = "Machinees",
     params(
         ("name" = String, Path, description = "Snapshot name")
     ),
     request_body = RollbackRequest,
     responses(
-        (status = 200, description = "Sandbox rolled back", body = RollbackResponse),
+        (status = 200, description = "Machine rolled back", body = RollbackResponse),
         (status = 404, description = "Snapshot or sandbox not found", body = ApiErrorResponse),
         (status = 500, description = "Rollback failed", body = ApiErrorResponse)
     )
@@ -1392,7 +1392,7 @@ pub async fn snapshot_rollback(
 
     // Stop sandbox if running
     let sandbox_name = req.sandbox_name.clone();
-    let entry = state.get_sandbox(&sandbox_name)?;
+    let entry = state.get_machine(&sandbox_name)?;
     {
         let lock = entry.lock();
         if lock.manager.state().to_string() == "running" {

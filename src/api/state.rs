@@ -2,7 +2,7 @@
 
 use crate::agent::{AgentManager, HostMount, PortMapping, VmResources};
 use crate::api::error::ApiError;
-use crate::api::types::{ExecResponse, JobInfo, JobStatus, McpServerConfig, MountSpec, PortSpec, ResourceSpec, RestartSpec, SandboxInfo, SandboxPermission, SandboxRole};
+use crate::api::types::{ExecResponse, JobInfo, JobStatus, McpServerConfig, MountSpec, PortSpec, ResourceSpec, RestartSpec, MachineInfo, MachinePermission, MachineRole};
 use crate::config::{RecordState, RestartConfig, RestartPolicy, VmRecord};
 use crate::data::resources::{DEFAULT_MICROVM_CPU_COUNT, DEFAULT_MICROVM_MEMORY_MIB};
 use crate::db::SmolvmDb;
@@ -16,7 +16,7 @@ use std::sync::Arc;
 /// Shared API server state.
 pub struct ApiState {
     /// Registry of sandbox managers by name.
-    sandboxes: RwLock<HashMap<String, Arc<parking_lot::Mutex<SandboxEntry>>>>,
+    sandboxes: RwLock<HashMap<String, Arc<parking_lot::Mutex<MachineEntry>>>>,
     /// Reserved sandbox names (creation in progress).
     /// This prevents race conditions during sandbox creation.
     reserved_names: RwLock<HashSet<String>>,
@@ -35,9 +35,9 @@ pub struct ApiState {
 }
 
 /// Internal sandbox entry with manager and configuration.
-pub struct SandboxEntry {
+pub struct MachineEntry {
     /// The agent manager for this sandbox.
-    /// Wrapped in Arc so it can be used without holding the SandboxEntry lock
+    /// Wrapped in Arc so it can be used without holding the MachineEntry lock
     /// (AgentManager has its own internal locking via Arc<Mutex<AgentInner>>).
     pub manager: Arc<AgentManager>,
     /// Host mounts configured for this sandbox.
@@ -59,13 +59,13 @@ pub struct SandboxEntry {
     /// Hash of the token that created this sandbox (Owner).
     pub owner_token_hash: Option<String>,
     /// Additional permission grants for this sandbox.
-    pub permissions: Vec<SandboxPermission>,
+    pub permissions: Vec<MachinePermission>,
     /// MCP server configurations for this sandbox.
     pub mcp_servers: Vec<McpServerConfig>,
 }
 
 /// Parameters for registering a new sandbox.
-pub struct SandboxRegistration {
+pub struct MachineRegistration {
     /// The agent manager for this sandbox.
     pub manager: AgentManager,
     /// Host mounts to configure.
@@ -104,7 +104,7 @@ pub struct SandboxRegistration {
 /// let manager = AgentManager::for_vm(guard.name())?;
 ///
 /// // Complete registration, consuming the guard
-/// guard.complete(SandboxRegistration { manager, mounts, ports, resources, restart, network })?;
+/// guard.complete(MachineRegistration { manager, mounts, ports, resources, restart, network })?;
 /// ```
 pub struct ReservationGuard<'a> {
     state: &'a ApiState,
@@ -131,7 +131,7 @@ impl<'a> ReservationGuard<'a> {
     /// Complete registration, consuming the guard without releasing.
     ///
     /// This transfers ownership of the name to the sandbox registry.
-    pub fn complete(mut self, registration: SandboxRegistration) -> Result<(), ApiError> {
+    pub fn complete(mut self, registration: MachineRegistration) -> Result<(), ApiError> {
         // Mark as completed before calling complete_sandbox_registration
         // (which will remove from reservations internally)
         self.completed = true;
@@ -284,7 +284,7 @@ impl ApiState {
                 continue;
             }
 
-            // Convert VmRecord to SandboxEntry
+            // Convert VmRecord to MachineEntry
             let mounts: Vec<MountSpec> = record
                 .mounts
                 .iter()
@@ -337,7 +337,7 @@ impl ApiState {
                     let mut sandboxes = self.sandboxes.write();
                     sandboxes.insert(
                         name.clone(),
-                        Arc::new(parking_lot::Mutex::new(SandboxEntry {
+                        Arc::new(parking_lot::Mutex::new(MachineEntry {
                             manager: Arc::new(manager),
                             mounts,
                             ports,
@@ -367,10 +367,10 @@ impl ApiState {
     }
 
     /// Get a sandbox entry by name.
-    pub fn get_sandbox(
+    pub fn get_machine(
         &self,
         name: &str,
-    ) -> Result<Arc<parking_lot::Mutex<SandboxEntry>>, ApiError> {
+    ) -> Result<Arc<parking_lot::Mutex<MachineEntry>>, ApiError> {
         let sandboxes = self.sandboxes.read();
         sandboxes
             .get(name)
@@ -382,7 +382,7 @@ impl ApiState {
     pub fn remove_sandbox(
         &self,
         name: &str,
-    ) -> Result<Arc<parking_lot::Mutex<SandboxEntry>>, ApiError> {
+    ) -> Result<Arc<parking_lot::Mutex<MachineEntry>>, ApiError> {
         // Quick existence check with read lock (fast path for 404).
         if !self.sandboxes.read().contains_key(name) {
             return Err(ApiError::NotFound(format!("sandbox '{}' not found", name)));
@@ -442,13 +442,13 @@ impl ApiState {
     }
 
     /// List all sandboxes.
-    pub fn list_sandboxes(&self) -> Vec<SandboxInfo> {
+    pub fn list_machines(&self) -> Vec<MachineInfo> {
         let sandboxes = self.sandboxes.read();
         sandboxes
             .iter()
             .map(|(name, entry)| {
                 let entry = entry.lock();
-                crate::api::handlers::sandboxes::sandbox_entry_to_info(name.clone(), &entry)
+                crate::api::handlers::machines::machine_entry_to_info(name.clone(), &entry)
             })
             .collect()
     }
@@ -531,7 +531,7 @@ impl ApiState {
     pub fn complete_sandbox_registration(
         &self,
         name: String,
-        reg: SandboxRegistration,
+        reg: MachineRegistration,
     ) -> Result<(), ApiError> {
         // Remove from reservations
         {
@@ -567,7 +567,7 @@ impl ApiState {
                 let mut sandboxes = self.sandboxes.write();
                 sandboxes.insert(
                     name,
-                    Arc::new(parking_lot::Mutex::new(SandboxEntry {
+                    Arc::new(parking_lot::Mutex::new(MachineEntry {
                         manager: Arc::new(reg.manager),
                         mounts: reg.mounts,
                         ports: reg.ports,
@@ -579,9 +579,9 @@ impl ApiState {
                         default_env: reg.default_env,
                         owner_token_hash: reg.owner_token_hash.clone(),
                         permissions: reg.owner_token_hash.map(|h| {
-                            vec![SandboxPermission {
+                            vec![MachinePermission {
                                 token_hash: h,
-                                role: SandboxRole::Owner,
+                                role: MachineRole::Owner,
                             }]
                         }).unwrap_or_default(),
                         mcp_servers: reg.mcp_servers,
@@ -820,7 +820,7 @@ impl ApiState {
 ///
 /// Handles the common pattern: clone entry → spawn_blocking → lock → connect → op → map errors.
 pub async fn with_sandbox_client<T, F>(
-    entry: &Arc<parking_lot::Mutex<SandboxEntry>>,
+    entry: &Arc<parking_lot::Mutex<MachineEntry>>,
     op: F,
 ) -> Result<T, ApiError>
 where
@@ -829,7 +829,7 @@ where
 {
     // Clone the Arc<AgentManager> and release the entry lock immediately.
     // AgentManager has its own internal locking, so we don't need to hold
-    // the SandboxEntry lock during the (potentially slow) VM operation.
+    // the MachineEntry lock during the (potentially slow) VM operation.
     let manager = {
         let entry = entry.lock();
         Arc::clone(&entry.manager)
@@ -852,10 +852,10 @@ where
 /// It converts the sandbox's mount/port/resource config and calls
 /// `ensure_running_with_full_config` in a blocking task.
 pub async fn ensure_sandbox_running(
-    entry: &Arc<parking_lot::Mutex<SandboxEntry>>,
+    entry: &Arc<parking_lot::Mutex<MachineEntry>>,
 ) -> crate::Result<()> {
     // Snapshot config and clone manager reference, then release entry lock.
-    // The VM boot (5-30s) runs without holding the SandboxEntry lock.
+    // The VM boot (5-30s) runs without holding the MachineEntry lock.
     let (manager, mounts, ports, resources) = {
         let entry = entry.lock();
         let mounts: Vec<_> = entry
@@ -880,7 +880,7 @@ pub async fn ensure_sandbox_running(
 /// Called after the VM is started. Spawns a host-side proxy thread that
 /// listens on a Unix socket (mapped to vsock port 6100 in the VM).
 pub fn start_secret_proxy_if_needed(
-    entry: &parking_lot::Mutex<SandboxEntry>,
+    entry: &parking_lot::Mutex<MachineEntry>,
     proxy_config: &RwLock<Option<ProxyConfig>>,
     service_registry: &RwLock<HashMap<String, SecretService>>,
 ) {
@@ -927,7 +927,7 @@ pub fn start_secret_proxy_if_needed(
 pub async fn ensure_running_and_persist(
     state: &ApiState,
     name: &str,
-    entry: &Arc<parking_lot::Mutex<SandboxEntry>>,
+    entry: &Arc<parking_lot::Mutex<MachineEntry>>,
 ) -> crate::Result<()> {
     ensure_sandbox_running(entry).await?;
 
@@ -1100,7 +1100,7 @@ mod tests {
     fn test_sandbox_not_found() {
         let (_dir, state) = temp_api_state();
         assert!(matches!(
-            state.get_sandbox("nope"),
+            state.get_machine("nope"),
             Err(ApiError::NotFound(_))
         ));
         assert!(matches!(

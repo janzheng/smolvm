@@ -10,7 +10,7 @@
 //! smolvm serve --listen 127.0.0.1:9090
 //!
 //! # Create a sandbox
-//! curl -X POST http://localhost:9090/api/v1/sandboxes \
+//! curl -X POST http://localhost:9090/api/v1/machines \
 //!   -H "Content-Type: application/json" \
 //!   -d '{"name": "test"}'
 //! ```
@@ -54,7 +54,7 @@ use state::ApiState;
     ),
     tags(
         (name = "Health", description = "Health check endpoints"),
-        (name = "Sandboxes", description = "Sandbox lifecycle management"),
+        (name = "Machines", description = "Machine lifecycle management"),
         (name = "Execution", description = "Command execution in sandboxes"),
         (name = "Logs", description = "Log streaming"),
         (name = "Files", description = "File CRUD operations in sandboxes"),
@@ -64,7 +64,7 @@ use state::ApiState;
         (name = "Jobs", description = "Work queue and job dispatch"),
         (name = "Secrets", description = "Secret management and hot-reload"),
         (name = "Services", description = "Proxy service definition management"),
-        (name = "Permissions", description = "Sandbox RBAC permission management"),
+        (name = "Permissions", description = "Machine RBAC permission management"),
         (name = "MCP", description = "Model Context Protocol server management and tool discovery"),
         (name = "Provider", description = "Provider information and capabilities")
     ),
@@ -72,18 +72,18 @@ use state::ApiState;
         // Health
         handlers::health::health,
         // Sandboxes
-        handlers::sandboxes::create_sandbox,
-        handlers::sandboxes::list_sandboxes,
-        handlers::sandboxes::get_sandbox,
-        handlers::sandboxes::start_sandbox,
-        handlers::sandboxes::stop_sandbox,
-        handlers::sandboxes::delete_sandbox,
-        handlers::sandboxes::clone_sandbox,
-        handlers::sandboxes::diff_sandboxes,
-        handlers::sandboxes::merge_sandboxes,
-        handlers::sandboxes::debug_mounts,
-        handlers::sandboxes::debug_network,
-        handlers::sandboxes::dns_filter_status,
+        handlers::machines::create_machine,
+        handlers::machines::list_machines,
+        handlers::machines::get_machine,
+        handlers::machines::start_machine,
+        handlers::machines::stop_machine,
+        handlers::machines::delete_machine,
+        handlers::machines::clone_machine,
+        handlers::machines::diff_machines,
+        handlers::machines::merge_machines,
+        handlers::machines::debug_mounts,
+        handlers::machines::debug_network,
+        handlers::machines::dns_filter_status,
         // Files
         handlers::files::read_file,
         handlers::files::write_file,
@@ -154,7 +154,7 @@ use state::ApiState;
     ),
     components(schemas(
         // Request types
-        types::CreateSandboxRequest,
+        types::CreateMachineRequest,
         types::RestartSpec,
         types::MountSpec,
         types::PortSpec,
@@ -168,9 +168,9 @@ use state::ApiState;
         types::StopContainerRequest,
         types::DeleteContainerRequest,
         types::PullImageRequest,
-        types::CloneSandboxRequest,
+        types::CloneMachineRequest,
         types::DiffResponse,
-        types::MergeSandboxRequest,
+        types::MergeMachineRequest,
         types::MergeStrategy,
         types::MergeResponse,
         types::DeleteQuery,
@@ -180,9 +180,9 @@ use state::ApiState;
         types::ResizeMicrovmRequest,
         // Response types
         types::HealthResponse,
-        types::SandboxInfo,
+        types::MachineInfo,
         types::MountInfo,
-        types::ListSandboxesResponse,
+        types::ListMachinesResponse,
         types::ExecResponse,
         types::ContainerInfo,
         types::ListContainersResponse,
@@ -238,8 +238,8 @@ use state::ApiState;
         // Proxy service definition
         crate::proxy::SecretService,
         // Permission / RBAC types
-        types::SandboxRole,
-        types::SandboxPermission,
+        types::MachineRole,
+        types::MachinePermission,
         types::GrantPermissionRequest,
         types::ListPermissionsResponse,
         types::PermissionResponse,
@@ -280,16 +280,16 @@ pub fn create_router(state: Arc<ApiState>, cors_origins: Vec<String>, api_token:
 
     // Sandbox routes with timeout
     let sandbox_routes_with_timeout = Router::new()
-        .route("/", post(handlers::sandboxes::create_sandbox))
-        .route("/", get(handlers::sandboxes::list_sandboxes))
-        .route("/:id", get(handlers::sandboxes::get_sandbox))
-        .route("/:id/start", post(handlers::sandboxes::start_sandbox))
-        .route("/:id/stop", post(handlers::sandboxes::stop_sandbox))
-        .route("/:id", delete(handlers::sandboxes::delete_sandbox))
+        .route("/", post(handlers::machines::create_machine))
+        .route("/", get(handlers::machines::list_machines))
+        .route("/:id", get(handlers::machines::get_machine))
+        .route("/:id/start", post(handlers::machines::start_machine))
+        .route("/:id/stop", post(handlers::machines::stop_machine))
+        .route("/:id", delete(handlers::machines::delete_machine))
         // Clone and diff routes
-        .route("/:id/clone", post(handlers::sandboxes::clone_sandbox))
-        .route("/:id/diff/:other", get(handlers::sandboxes::diff_sandboxes))
-        .route("/:id/merge/:target", post(handlers::sandboxes::merge_sandboxes))
+        .route("/:id/clone", post(handlers::machines::clone_machine))
+        .route("/:id/diff/:other", get(handlers::machines::diff_machines))
+        .route("/:id/merge/:target", post(handlers::machines::merge_machines))
         // Exec routes
         .route("/:id/exec", post(handlers::exec::exec_command))
         .route("/:id/run", post(handlers::exec::run_command))
@@ -331,14 +331,14 @@ pub fn create_router(state: Arc<ApiState>, cors_origins: Vec<String>, api_token:
         // Debug routes
         .route(
             "/:id/debug/mounts",
-            get(handlers::sandboxes::debug_mounts),
+            get(handlers::machines::debug_mounts),
         )
         .route(
             "/:id/debug/network",
-            get(handlers::sandboxes::debug_network),
+            get(handlers::machines::debug_network),
         )
         // DNS filter status
-        .route("/:id/dns", get(handlers::sandboxes::dns_filter_status))
+        .route("/:id/dns", get(handlers::machines::dns_filter_status))
         // Snapshot push
         .route("/:id/push", post(handlers::snapshots::push_sandbox))
         // Image routes
@@ -456,7 +456,7 @@ pub fn create_router(state: Arc<ApiState>, cors_origins: Vec<String>, api_token:
 
     // API v1 routes
     let api_v1 = Router::new()
-        .nest("/sandboxes", sandbox_routes)
+        .nest("/machines", sandbox_routes)
         .nest("/microvms", microvm_routes)
         .nest("/snapshots", snapshot_routes)
         .nest("/starters", starters_route)
