@@ -110,7 +110,7 @@ pub async fn create_sandbox(
     let has_allowed_domains = resources
         .allowed_domains
         .as_ref()
-        .map_or(false, |d| !d.is_empty());
+        .is_some_and(|d| !d.is_empty());
     let network = resources.network.unwrap_or(false) || has_allowed_domains;
 
     // Parse restart configuration

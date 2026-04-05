@@ -128,7 +128,7 @@ pub async fn read_file(
         // Large files: read in 32KB chunks via dd, base64 each chunk,
         // then reassemble on the server side.
         let chunk_size: u64 = 32 * 1024;
-        let num_chunks = (file_size + chunk_size - 1) / chunk_size;
+        let num_chunks = file_size.div_ceil(chunk_size);
         let mut b64_parts: Vec<String> = Vec::new();
 
         for i in 0..num_chunks {
@@ -838,7 +838,7 @@ pub async fn download_archive(
 
     // Read archive in 32KB chunks
     let chunk_size: u64 = 32 * 1024;
-    let num_chunks = (archive_size + chunk_size - 1) / chunk_size;
+    let num_chunks = archive_size.div_ceil(chunk_size);
     let mut archive_bytes: Vec<u8> = Vec::with_capacity(archive_size as usize);
 
     for i in 0..num_chunks {

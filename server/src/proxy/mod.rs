@@ -120,9 +120,7 @@ pub fn parse_secrets(secret_args: &[String]) -> Result<HashMap<String, String>, 
     for (key, value) in std::env::vars() {
         if let Some(name) = key.strip_prefix("SMOLVM_SECRET_") {
             let name = name.to_lowercase();
-            if !secrets.contains_key(&name) {
-                secrets.insert(name, value);
-            }
+            secrets.entry(name).or_insert(value);
         }
     }
 

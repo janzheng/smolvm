@@ -32,7 +32,6 @@ impl ProxyConfig {
         let services: HashMap<String, SecretService> = all_services
             .into_iter()
             .filter(|(name, _)| secrets.contains_key(name))
-            .map(|(name, svc)| (name, svc))
             .collect();
         Self { secrets, services }
     }

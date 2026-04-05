@@ -218,7 +218,7 @@ fn find_latest_archive(snap_dir: &std::path::Path, name: &str) -> Option<std::pa
             if let Some(rest) = fname_str.strip_prefix(&prefix) {
                 if let Some(seq_str) = rest.strip_suffix(".smolvm") {
                     if let Ok(seq) = seq_str.parse::<u32>() {
-                        if best.as_ref().map_or(true, |(s, _)| seq > *s) {
+                        if best.as_ref().is_none_or(|(s, _)| seq > *s) {
                             best = Some((seq, entry.path()));
                         }
                     }
@@ -246,11 +246,10 @@ fn find_latest_full_archive(snap_dir: &std::path::Path, name: &str) -> Option<st
                     if let Ok(seq) = seq_str.parse::<u32>() {
                         // Check if this is a full archive (version 1)
                         if let Ok(manifest) = read_manifest_from_archive(&entry.path()) {
-                            if manifest.snapshot_version <= 1 {
-                                if best.as_ref().map_or(true, |(s, _)| seq > *s) {
+                            if manifest.snapshot_version <= 1
+                                && best.as_ref().is_none_or(|(s, _)| seq > *s) {
                                     best = Some((seq, entry.path()));
                                 }
-                            }
                         }
                     }
                 }
@@ -455,7 +454,7 @@ pub async fn push_sandbox(
     });
 
     // Check delta chain depth — auto-consolidate if > 5
-    let force_full = parent_archive.as_ref().map_or(false, |parent_path| {
+    let force_full = parent_archive.as_ref().is_some_and(|parent_path| {
         chain_depth(&snap_dir, parent_path) >= 5
     });
 
@@ -1395,7 +1394,7 @@ pub async fn snapshot_rollback(
     let sandbox_name = req.sandbox_name.clone();
     let entry = state.get_sandbox(&sandbox_name)?;
     {
-        let mut lock = entry.lock();
+        let lock = entry.lock();
         if lock.manager.state().to_string() == "running" {
             let _ = lock.manager.stop();
         }

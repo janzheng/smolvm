@@ -487,7 +487,7 @@ async fn handle_interactive_ws(state: Arc<ApiState>, id: String, socket: WebSock
                     message: format!("invalid request: {}", e),
                 };
                 let _ = ws_sender
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                     .await;
                 return;
             }
@@ -497,7 +497,7 @@ async fn handle_interactive_ws(state: Arc<ApiState>, id: String, socket: WebSock
                 message: "expected JSON text message with ExecRequest".into(),
             };
             let _ = ws_sender
-                .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                 .await;
             return;
         }
@@ -508,7 +508,7 @@ async fn handle_interactive_ws(state: Arc<ApiState>, id: String, socket: WebSock
             message: "command cannot be empty".into(),
         };
         let _ = ws_sender
-            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
             .await;
         return;
     }
@@ -521,7 +521,7 @@ async fn handle_interactive_ws(state: Arc<ApiState>, id: String, socket: WebSock
                 message: format!("{:?}", e),
             };
             let _ = ws_sender
-                .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                 .await;
             return;
         }
@@ -535,7 +535,7 @@ async fn handle_interactive_ws(state: Arc<ApiState>, id: String, socket: WebSock
             message: format!("{:?}", e),
         };
         let _ = ws_sender
-            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
             .await;
         return;
     }
@@ -640,7 +640,7 @@ async fn handle_interactive_ws(state: Arc<ApiState>, id: String, socket: WebSock
             AgentResponse::Exited { exit_code } => {
                 let msg = WsExecMessage::Exit { code: exit_code };
                 let _ = ws_sender
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                     .await;
                 break;
             }
@@ -649,7 +649,7 @@ async fn handle_interactive_ws(state: Arc<ApiState>, id: String, socket: WebSock
         };
 
         if ws_sender
-            .send(Message::Text(serde_json::to_string(&ws_msg).unwrap().into()))
+            .send(Message::Text(serde_json::to_string(&ws_msg).unwrap()))
             .await
             .is_err()
         {
@@ -676,7 +676,7 @@ async fn handle_exec_ws(state: Arc<ApiState>, id: String, mut socket: WebSocket)
                     message: format!("invalid request: {}", e),
                 };
                 let _ = socket
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                     .await;
                 return;
             }
@@ -686,7 +686,7 @@ async fn handle_exec_ws(state: Arc<ApiState>, id: String, mut socket: WebSocket)
                 message: "expected JSON text message with ExecRequest".into(),
             };
             let _ = socket
-                .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                 .await;
             return;
         }
@@ -698,7 +698,7 @@ async fn handle_exec_ws(state: Arc<ApiState>, id: String, mut socket: WebSocket)
             message: "command cannot be empty".into(),
         };
         let _ = socket
-            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
             .await;
         return;
     }
@@ -711,7 +711,7 @@ async fn handle_exec_ws(state: Arc<ApiState>, id: String, mut socket: WebSocket)
                 message: format!("{:?}", e),
             };
             let _ = socket
-                .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                 .await;
             return;
         }
@@ -725,7 +725,7 @@ async fn handle_exec_ws(state: Arc<ApiState>, id: String, mut socket: WebSocket)
             message: format!("{:?}", e),
         };
         let _ = socket
-            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
             .await;
         return;
     }
@@ -800,7 +800,7 @@ async fn handle_exec_ws(state: Arc<ApiState>, id: String, mut socket: WebSocket)
             AgentResponse::Exited { exit_code } => {
                 let msg = WsExecMessage::Exit { code: exit_code };
                 let _ = socket
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                     .await;
                 break;
             }
@@ -809,7 +809,7 @@ async fn handle_exec_ws(state: Arc<ApiState>, id: String, mut socket: WebSocket)
         };
 
         if socket
-            .send(Message::Text(serde_json::to_string(&ws_msg).unwrap().into()))
+            .send(Message::Text(serde_json::to_string(&ws_msg).unwrap()))
             .await
             .is_err()
         {

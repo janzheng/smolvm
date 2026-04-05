@@ -203,12 +203,11 @@ fn signal_ready_to_host() {
     ];
 
     for path in &paths {
-        if Path::new(path).parent().map_or(false, |p| p.exists()) {
-            if std::fs::write(path, content.as_bytes()).is_ok() {
+        if Path::new(path).parent().is_some_and(|p| p.exists())
+            && std::fs::write(path, content.as_bytes()).is_ok() {
                 debug!(path = path, "ready marker written");
                 return;
             }
-        }
     }
 }
 
