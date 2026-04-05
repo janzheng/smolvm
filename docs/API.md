@@ -1,6 +1,6 @@
 # smolvm API Reference
 
-Base URL: `http://localhost:8080` (default when running `smolvm serve start`)
+Base URL: `http://localhost:9090` (default when running `smolvm serve start`)
 
 Swagger UI available at `/swagger-ui` when the server is running.
 
@@ -16,9 +16,9 @@ Prometheus-format metrics (VM count, boot times, exec latency, disk usage).
 
 ---
 
-## Machinees
+## Machines
 
-Machinees are lightweight VMs with an overlay filesystem.
+Machines are lightweight VMs with an overlay filesystem.
 
 ### `POST /api/v1/machines`
 Create a new machine.
@@ -32,6 +32,7 @@ Create a new machine.
     "network": true,
     "storageGb": 20,
     "overlayGb": 2,
+    "allowedCidrs": ["10.0.0.0/8", "1.1.1.1/32"],
     "allowedDomains": ["api.anthropic.com"]
   },
   "init_commands": ["apk add nodejs npm"],
@@ -42,6 +43,12 @@ Create a new machine.
 
 All fields except `name` are optional. `from_starter` pulls a pre-built image
 and applies its defaults (see Starters below).
+
+**Network filtering:**
+- `allowedCidrs`: CIDR-based egress filtering at the VMM level. Only these IP
+  ranges are reachable. Omit for unrestricted. Empty list denies all egress.
+  DNS (1.1.1.1) is auto-added if not covered.
+- `allowedDomains`: Domain-based filtering (future — enforcement pending).
 
 ### `GET /api/v1/machines`
 List all machines.
@@ -70,8 +77,7 @@ Run a command synchronously.
   "command": ["echo", "hello"],
   "env": [{"name": "MY_VAR", "value": "val"}],
   "workdir": "/workspace",
-  "timeoutSecs": 30,
-  "user": "agent"
+  "timeoutSecs": 30
 }
 ```
 
@@ -90,16 +96,12 @@ Run a command in a temporary OCI container (one-shot).
 ```json
 {
   "image": "python:3.12-alpine",
-  "command": ["python", "-c", "print('hello')"],
-  "user": "agent"
+  "command": ["python", "-c", "print('hello')"]
 }
 ```
 
 ### `GET /api/v1/machines/:id/logs?follow=true&tail=100`
 Stream machine logs (SSE). `follow=true` for tail-like behavior.
-
-### `GET /api/v1/machines/:id/exec/stream`
-WebSocket streaming exec for long-running commands.
 
 ---
 
@@ -194,7 +196,7 @@ Run OCI containers inside a machine.
 }
 ```
 
-Mount `source` is a virtiofs tag — check `GET /machines/:id` for tag mappings.
+Mount `source` is a virtiofs tag -- check `GET /machines/:id` for tag mappings.
 
 ### `GET /api/v1/machines/:id/containers`
 ### `POST /api/v1/machines/:id/containers/:cid/start`
@@ -216,31 +218,6 @@ List pulled OCI images in a machine.
   "ociPlatform": "linux/arm64"
 }
 ```
-
----
-
-## MicroVMs
-
-Persistent VMs with more control (separate from machines).
-
-### `POST /api/v1/microvms`
-```json
-{
-  "name": "my-vm",
-  "cpus": 2,
-  "memoryMb": 1024,
-  "network": true,
-  "storageGb": 20,
-  "overlayGb": 2
-}
-```
-
-### `GET /api/v1/microvms`
-### `GET /api/v1/microvms/:name`
-### `POST /api/v1/microvms/:name/start`
-### `POST /api/v1/microvms/:name/stop`
-### `DELETE /api/v1/microvms/:name`
-### `POST /api/v1/microvms/:name/exec`
 
 ---
 
@@ -272,11 +249,45 @@ Diagnose networking (listening ports, interfaces, port mappings).
 
 ---
 
+## CLI Egress Filtering
+
+The `smolvm machine` CLI supports egress filtering:
+
+```bash
+# Allow only specific CIDRs
+smolvm machine run --allow-cidr 10.0.0.0/8 --allow-cidr 1.1.1.1/32 alpine -- wget ...
+
+# Allow only specific hostnames (resolves to CIDRs at VM start)
+smolvm machine run --allow-host api.anthropic.com --allow-host github.com alpine -- wget ...
+
+# Restrict to localhost only
+smolvm machine run --outbound-localhost-only alpine -- echo isolated
+```
+
+These flags imply `--net`. DNS (1.1.1.1) is automatically included in CIDR allowlists.
+
+---
+
+## Authentication
+
+When the server is started with `--api-token TOKEN` (or `SMOLVM_API_TOKEN` env var),
+all API requests must include:
+
+```
+Authorization: Bearer <token>
+```
+
+Health and metrics endpoints remain public.
+
+---
+
 ## Known Limitations
 
-- **Volume mounts**: Files written via virtiofs may not be visible inside the
-  guest (alpha bug). Workaround: write via `exec`.
-- **Port mapping**: Connections refused from host side (alpha bug).
+- **Overlay writes**: The virtiofs overlay filesystem has write bugs in libkrun
+  v1.17. Writes to `/tmp` (tmpfs) and `/storage` (ext4) work. Writes to
+  overlay paths (`/root`, `/etc`) may fail. Workaround: use `/storage` or
+  write via `exec`.
+- **Port mapping**: Connections refused from host side (upstream libkrun bug).
 - **Container-in-machine**: `crun` storage path error for nested containers.
 - **macOS UID leak**: Host UID 501 leaks into guest. Workaround: use
   `default_user` to create a non-root user.

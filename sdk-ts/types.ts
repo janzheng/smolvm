@@ -60,6 +60,10 @@ export interface CreateMachineOptions {
   init_commands?: string[];
   /** Allowed domains for egress filtering. Implies network: true. */
   allowed_domains?: string[];
+  /** Allowed egress CIDR ranges. Only these IP ranges are reachable.
+   *  Omit for unrestricted. Empty list denies all egress. Implies network: true.
+   *  DNS (1.1.1.1) auto-added if not covered. */
+  allowed_cidrs?: string[];
   /** Create a non-root user and use it for subsequent exec calls. */
   default_user?: string;
   /** Create machine from a starter template. */
@@ -85,7 +89,9 @@ export interface CreateMachineRequest {
     overlay_gb?: number;
     storage_gb?: number;
     allowed_domains?: string[];
+    allowed_cidrs?: string[];
   };
+  allowed_cidrs?: string[];
   init_commands?: string[];
   default_user?: string;
   from_starter?: string;

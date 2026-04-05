@@ -110,6 +110,7 @@ export async function createFleet(
         overlay_gb: opts?.overlay_gb,
         storage_gb: opts?.storage_gb,
         allowed_domains: opts?.allowed_domains,
+        allowed_cidrs: opts?.allowed_cidrs,
       },
       init_commands: opts?.init_commands,
       default_user: opts?.default_user,

@@ -1386,7 +1386,7 @@ async function cmdList() {
 }
 
 async function cmdCreate(name: string, args: string[]) {
-  const { flags } = parseFlags(args, ["cpus", "memory", "no-network", "init", "user", "starter", "secret", "label", "owner", "description", "setup", "allowed-domains", "mcp", "with-mcp", "pool", "node"]);
+  const { flags } = parseFlags(args, ["cpus", "memory", "no-network", "init", "user", "starter", "secret", "label", "owner", "description", "setup", "allowed-domains", "allow-cidr", "allow-host", "mcp", "with-mcp", "pool", "node"]);
   const resources: Record<string, unknown> = {
     cpus: parseInt(flag(flags, "cpus") ?? "2"),
     memory_mb: parseInt(flag(flags, "memory") ?? "1024"),
@@ -1397,6 +1397,34 @@ async function cmdCreate(name: string, args: string[]) {
   const allowedDomains = allowedDomainsRaw.flatMap((d: string) => d.split(",").map((s: string) => s.trim()).filter(Boolean));
   if (allowedDomains.length > 0) {
     resources.allowed_domains = allowedDomains;
+  }
+  // Parse --allow-cidr (CIDR-based egress filtering, implies network)
+  const allowedCidrsRaw = flagAll(flags, "allow-cidr");
+  const allowedCidrs = allowedCidrsRaw.flatMap((c: string) => c.split(",").map((s: string) => s.trim()).filter(Boolean));
+  if (allowedCidrs.length > 0) {
+    resources.allowed_cidrs = allowedCidrs;
+    resources.network = true;
+  }
+  // Parse --allow-host (resolve hostnames to CIDRs via DNS)
+  const allowedHostsRaw = flagAll(flags, "allow-host");
+  const allowedHosts = allowedHostsRaw.flatMap((h: string) => h.split(",").map((s: string) => s.trim()).filter(Boolean));
+  if (allowedHosts.length > 0) {
+    // Resolve hostnames to IP addresses and add as CIDRs
+    const resolvedCidrs: string[] = resources.allowed_cidrs as string[] ?? [];
+    for (const host of allowedHosts) {
+      try {
+        const ips = await Deno.resolveDns(host, "A");
+        for (const ip of ips) resolvedCidrs.push(`${ip}/32`);
+        const ips6 = await Deno.resolveDns(host, "AAAA").catch(() => [] as string[]);
+        for (const ip of ips6) resolvedCidrs.push(`${ip}/128`);
+      } catch {
+        console.error(`warning: could not resolve ${host}, skipping`);
+      }
+    }
+    if (resolvedCidrs.length > 0) {
+      resources.allowed_cidrs = resolvedCidrs;
+      resources.network = true;
+    }
   }
   const opts: Record<string, unknown> = { name, resources };
   const initCmds = flagAll(flags, "init");
@@ -4992,14 +5020,17 @@ async function cmdAgentWorker(args: string[]) {
 
 /** Build create-machine request body from parsed flags. Reused by fleet up. */
 function buildCreateOpts(name: string, flags: Record<string, string[]>): Record<string, unknown> {
-  const opts: Record<string, unknown> = {
-    name,
-    resources: {
-      cpus: parseInt(flag(flags, "cpus") ?? "2"),
-      memory_mb: parseInt(flag(flags, "memory") ?? "1024"),
-      network: !hasFlag(flags, "no-network"),
-    },
+  const resources: Record<string, unknown> = {
+    cpus: parseInt(flag(flags, "cpus") ?? "2"),
+    memory_mb: parseInt(flag(flags, "memory") ?? "1024"),
+    network: !hasFlag(flags, "no-network"),
   };
+  const allowedCidrs = flagAll(flags, "allow-cidr").flatMap((c: string) => c.split(",").map((s: string) => s.trim()).filter(Boolean));
+  if (allowedCidrs.length > 0) {
+    resources.allowed_cidrs = allowedCidrs;
+    resources.network = true;
+  }
+  const opts: Record<string, unknown> = { name, resources };
   const initCmds = flagAll(flags, "init");
   if (initCmds.length > 0) opts.init_commands = initCmds;
   if (flag(flags, "user")) opts.default_user = flag(flags, "user");
