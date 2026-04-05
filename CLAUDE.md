@@ -6,31 +6,39 @@ Micro VM platform for agent isolation. Each sandbox is an Alpine Linux VM with i
 
 | Directory | What | Language |
 |-----------|------|----------|
-| `server/` | The smolvm server (our fork of upstream) | Rust |
+| `src/` | smolvm server (Rust, forked from smol-machines/smolvm) | Rust |
+| `crates/` | Agent binary, protocol, pack, napi crates | Rust |
 | `sdk-ts/` | TypeScript SDK (used by Brigade + smolctl) | TypeScript |
 | `cli/smolctl.ts` | CLI wrapper over HTTP API | TypeScript |
-| `tests/` | SDK test suites | TypeScript |
+| `tests/` | SDK test suites (TS) + shell integration tests (sh) | TypeScript, Bash |
 | `playtests/` | E2E playtest scripts | Bash |
 | `starters/` | Smolfile templates (node, python, openclaw) | TOML |
 | `docs/` | All project documentation | Markdown |
 | `mcp-servers/` | MCP server configs for sandboxed tools | TypeScript |
-| `deploy/` | Deployment configs (systemd, etc.) | — |
+| `deploy/` | Deployment configs (systemd, etc.) | -- |
+| `lib/` | Bundled libkrun/libkrunfw dylibs | Binary |
 
 ## Legacy (do not modify)
 
-`.references/` — contains smolvm-experimental, smolvm-manager, web-ui, smolvm-web, smolvm-repo, sdk-py. All superseded. Gitignored, local-only reference.
+`.references/` -- contains smolvm-experimental, smolvm-manager, web-ui, smolvm-web, smolvm-repo, sdk-py. All superseded. Gitignored, local-only reference.
+
+## Upstream Tracking
+
+Fork of `smol-machines/smolvm`. Upstream remote configured as `upstream`.
+Repo root matches upstream's file layout (`src/`, `crates/`, `Cargo.toml` at root) so `git merge upstream/main` works directly.
+
+Our additions on top of upstream: snapshot system, file CRUD API, MCP handlers, jobs queue, auth, starters registry, TypeScript SDK, CLI, test suite.
 
 ## Building
 
-Always use `cargo make` in `server/` — handles DYLD_LIBRARY_PATH, SMOLVM_AGENT_ROOTFS, and codesigning:
+Use `cargo make` at repo root -- handles DYLD_LIBRARY_PATH, SMOLVM_AGENT_ROOTFS, and codesigning:
 
 ```bash
-cd server
 cargo make dev                    # build + codesign
 cargo make smolvm serve start     # run with correct env vars
 ```
 
-Do NOT use `cargo run` — it doesn't set the library path.
+Do NOT use `cargo run` -- it doesn't set the library path.
 
 ## Key Env Vars
 
@@ -44,10 +52,10 @@ Do NOT use `cargo run` — it doesn't set the library path.
 
 ```bash
 # Rust unit tests (no server needed)
-cd server && cargo test
+cargo test
 
 # Shell integration tests (no server needed, needs Hypervisor.framework)
-cd server && ./tests/run_all.sh
+./tests/run_all.sh
 
 # E2E playtests (need running server)
 bash playtests/e2e-playtest.sh
@@ -61,11 +69,11 @@ deno task test-all
 All routes under `/api/v1/`. See `docs/` for full reference.
 
 Key endpoints:
-- `POST /api/v1/sandboxes` — create sandbox
-- `POST /api/v1/sandboxes/:name/exec` — execute command
-- `GET /api/v1/sandboxes/:name/files/*path` — read file
-- `PUT /api/v1/sandboxes/:name/files/*path` — write file
-- `POST /api/v1/sandboxes/:name/snapshots` — push snapshot
+- `POST /api/v1/sandboxes` -- create sandbox
+- `POST /api/v1/sandboxes/:name/exec` -- execute command
+- `GET /api/v1/sandboxes/:name/files/*path` -- read file
+- `PUT /api/v1/sandboxes/:name/files/*path` -- write file
+- `POST /api/v1/sandboxes/:name/snapshots` -- push snapshot
 
 ## Known Issues
 

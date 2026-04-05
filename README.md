@@ -36,10 +36,12 @@ deno task ctl down my-vm
 ## What's Here
 
 ```
-server/            The smolvm server (our fork — security hardening, auth, snapshots)
+src/               Rust server source (forked from smol-machines/smolvm)
+crates/            Agent binary, protocol, pack, napi crates
+lib/               Bundled libkrun/libkrunfw dylibs
 sdk-ts/            TypeScript SDK (used by Brigade, smolctl, tests)
 cli/smolctl.ts     CLI for managing sandboxes (deno task ctl)
-tests/             TypeScript SDK test suites (deno task test-*)
+tests/             SDK tests (*.ts) + shell integration tests (*.sh)
 playtests/         Agentic playtest scripts (e2e-playtest.sh)
 starters/          Smolfile templates (node, python, openclaw)
 docs/              API reference, security docs, research
@@ -194,15 +196,14 @@ Common pitfalls when working on this project:
 
 ### Directory layout
 
-- **`server/`** — Our fork of smolvm. This is where you build, test, and modify the Rust source. Synced with upstream + our extensions (API server, auth, snapshots, etc.)
+- **`src/`** + **`crates/`** — Our fork of smol-machines/smolvm. Rust server source + agent/protocol/pack crates. Synced with upstream + our extensions (API server, auth, snapshots, etc.)
 - **`cli/smolctl.ts`** — The TypeScript CLI that wraps the HTTP API. Run with `deno run -A cli/smolctl.ts`.
 - **`.references/`** — Legacy/experimental code (gitignored). Upstream reference copy, old prototypes. Do NOT modify.
 
 ### Building server
 
-Always use `cargo make` — it handles `DYLD_LIBRARY_PATH`, `SMOLVM_AGENT_ROOTFS`, and codesigning automatically:
+Always use `cargo make` at repo root — it handles `DYLD_LIBRARY_PATH`, `SMOLVM_AGENT_ROOTFS`, and codesigning automatically:
 ```bash
-cd server
 cargo make dev                    # build + codesign
 cargo make smolvm serve start     # run with correct env vars
 cargo make smolvm sandbox run --net alpine -- echo hello
