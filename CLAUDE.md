@@ -14,7 +14,7 @@ Micro VM platform for agent isolation. Each sandbox is an Alpine Linux VM with i
 
 ## Legacy (do not modify)
 
-`smolvm-experimental/`, `smolvm-manager/`, `web-ui/`, `smolvm-web/` — all superseded by smolvm-plus + sdk-ts + cli. `smolvm-repo/` is a read-only upstream reference.
+`.references/` — contains smolvm-experimental, smolvm-manager, web-ui, smolvm-web, smolvm-repo. All superseded by smolvm-plus + sdk-ts + cli. Gitignored, local-only reference.
 
 ## Building
 

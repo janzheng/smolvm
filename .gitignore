@@ -13,11 +13,7 @@
 *~
 
 # Legacy / experimental (kept locally for reference, not in repo)
-smolvm-experimental/
-smolvm-manager/
-smolvm-repo/
-smolvm-web/
-web-ui/
+.references/
 
 # Task files (local working docs)
 TASKS*.md
