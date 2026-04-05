@@ -4,7 +4,7 @@ A small computer for agents. Each sandbox is an isolated micro VM with its own f
 
 Built on [smolvm](https://smolmachines.com) (libkrun micro VMs). Runs locally on macOS (Apple Silicon) or Linux (KVM). Access remotely via Cloudflare tunnel + bearer token auth.
 
-See [TASKS-DESIGN.md](TASKS-DESIGN.md) for the full design philosophy.
+See [docs/](docs/) for architecture and design documentation.
 
 ## Quick Start
 
@@ -35,38 +35,17 @@ deno task ctl down my-vm
 
 ## What's Here
 
-### Active
-
 ```
-smolvm-plus/       The smolvm server (our fork — security hardening, auth, snapshots)
+server/            The smolvm server (our fork — security hardening, auth, snapshots)
 sdk-ts/            TypeScript SDK (used by Brigade, smolctl, tests)
 cli/smolctl.ts     CLI for managing sandboxes (deno task ctl)
 tests/             TypeScript SDK test suites (deno task test-*)
 playtests/         Agentic playtest scripts (e2e-playtest.sh)
+starters/          Smolfile templates (node, python, openclaw)
 docs/              API reference, security docs, research
+mcp-servers/       MCP server configs for sandboxed tools
 deploy/            Deployment configs
-starters/          Starter template definitions
-```
-
-### Reference / Docs
-
-```
-smolvm-repo/       Read-only upstream smolvm copy (for diffing, never modify)
-TASKS-DESIGN.md    Design philosophy and roadmap
-TASKS-MAP.md       Architecture, phases, dependencies
-TASKS-SECURITY.md  Security threat model and backlog
-TASKS.md           Current work items (mxit format)
-```
-
-### Legacy (not actively maintained)
-
-```
-smolvm-experimental/  Old Rust fork (predates smolvm-plus, superseded)
-smolvm-manager/       FastHTML web UI for VM provisioning (Python, experimental)
-web-ui/               Basic HTML dashboard (3 files, prototype)
-smolvm-web/           Deno web server for VM management (prototype)
-sdk-py/               Python SDK (functional but not actively used)
-mcp-servers/          MCP server experiments
+.references/       Legacy code (gitignored, local-only)
 ```
 
 ## smolctl CLI
@@ -124,19 +103,19 @@ Requires `cloudflared` (`brew install cloudflared`). See [docs/TUNNEL.md](docs/T
 
 ## Running Tests
 
-### smolvm-plus integration tests (shell scripts, no server needed)
+### server integration tests (shell scripts, no server needed)
 
 ```bash
-cd smolvm-plus && ./tests/run_all.sh          # All 125 tests (6 suites)
-cd smolvm-plus && ./tests/run_all.sh sandbox   # Individual suite
-cd smolvm-plus && cargo test                   # Rust unit tests (200+)
+cd server && ./tests/run_all.sh          # All 125 tests (6 suites)
+cd server && ./tests/run_all.sh sandbox   # Individual suite
+cd server && cargo test                   # Rust unit tests (200+)
 ```
 
 ### E2E playtests (need running server + smolctl)
 
 ```bash
 # Start server first (use cargo-make for correct env vars)
-cd smolvm-plus && cargo make smolvm serve start
+cd server && cargo make smolvm serve start
 # Or manually: DYLD_LIBRARY_PATH=./lib ./target/release/smolvm serve start
 
 # Run playtests (in a separate terminal)
@@ -215,16 +194,15 @@ Common pitfalls when working on this project:
 
 ### Directory layout
 
-- **`smolvm-plus/`** — Our fork of smolvm. This is where you build, test, and modify the Rust source. Synced with upstream + our extensions (API server, auth, snapshots, etc.)
-- **`smolvm-repo/`** — Read-only reference copy of upstream smolvm. Do NOT build or modify this. Used for diffing against upstream.
+- **`server/`** — Our fork of smolvm. This is where you build, test, and modify the Rust source. Synced with upstream + our extensions (API server, auth, snapshots, etc.)
 - **`cli/smolctl.ts`** — The TypeScript CLI that wraps the HTTP API. Run with `deno run -A cli/smolctl.ts`.
-- **`smolvm-experimental/`**, **`smolvm-manager/`**, **`web-ui/`**, **`smolvm-web/`** — Legacy/experimental. Do NOT modify or build these. They are superseded by smolvm-plus + sdk-ts + cli.
+- **`.references/`** — Legacy/experimental code (gitignored). Upstream reference copy, old prototypes. Do NOT modify.
 
-### Building smolvm-plus
+### Building server
 
 Always use `cargo make` — it handles `DYLD_LIBRARY_PATH`, `SMOLVM_AGENT_ROOTFS`, and codesigning automatically:
 ```bash
-cd smolvm-plus
+cd server
 cargo make dev                    # build + codesign
 cargo make smolvm serve start     # run with correct env vars
 cargo make smolvm sandbox run --net alpine -- echo hello
@@ -236,8 +214,8 @@ Running the binary directly without `DYLD_LIBRARY_PATH=./lib` will fail silently
 
 | Layer | Command | Needs server? | Needs VM env? | Count |
 |-------|---------|---------------|---------------|-------|
-| Rust unit tests | `cd smolvm-plus && cargo test` | No | No | 200+ |
-| Shell integration | `cd smolvm-plus && ./tests/run_all.sh` | No | Yes (Hypervisor.framework / KVM) | 125 |
+| Rust unit tests | `cd server && cargo test` | No | No | 200+ |
+| Shell integration | `cd server && ./tests/run_all.sh` | No | Yes (Hypervisor.framework / KVM) | 125 |
 | E2E playtests | `bash playtests/e2e-playtest.sh` | **Yes** (server must be running) | Yes | 73 |
 
 For the E2E playtests, start the server in one terminal, run playtests in another.
