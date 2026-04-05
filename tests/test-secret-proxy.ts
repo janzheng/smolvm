@@ -41,7 +41,7 @@ await cleanup(SANDBOX);
 {
   const resp = await apiPost("/machines", {
     name: SANDBOX,
-    resources: { cpus: 2, memory_mb: 1024, network: true },
+    resources: { cpus: 2, memoryMb: 1024, network: true },
     secrets: ["anthropic"],
   });
   if (!resp.ok) {
@@ -154,7 +154,7 @@ console.log("\nValidation:");
 {
   const resp = await apiPost("/machines", {
     name: "cx04-proxy-bad-secret",
-    resources: { cpus: 2, memory_mb: 1024 },
+    resources: { cpus: 2, memoryMb: 1024 },
     secrets: ["nonexistent-provider"],
   });
   const rejected = !resp.ok;
@@ -178,7 +178,7 @@ await cleanup(SANDBOX_NOSECRET);
 {
   const createResp = await apiPost("/machines", {
     name: SANDBOX_NOSECRET,
-    resources: { cpus: 2, memory_mb: 1024, network: true },
+    resources: { cpus: 2, memoryMb: 1024, network: true },
     // no secrets field
   });
   if (createResp.ok) {

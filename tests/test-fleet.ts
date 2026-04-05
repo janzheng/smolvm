@@ -37,7 +37,7 @@ for (let i = 0; i < FLEET_SIZE; i++) {
   const name = `${PREFIX}-${i}`;
   const createResp = await apiPost("/machines", {
     name,
-    resources: { cpus: 1, memory_mb: 512, network: true },
+    resources: { cpus: 1, memoryMb: 512, network: true },
   });
   if (createResp.ok) {
     names.push(name);

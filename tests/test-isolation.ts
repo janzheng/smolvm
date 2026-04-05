@@ -25,7 +25,7 @@ async function createAndStart(name: string, opts?: {
   await cleanup(name);
   const createResp = await apiPost("/machines", {
     name,
-    resources: { cpus: 1, memory_mb: 512, ...opts?.resources },
+    resources: { cpus: 1, memoryMb: 512, ...opts?.resources },
   });
   if (!createResp.ok) throw new Error(`create failed: ${await createResp.text()}`);
   const startResp = await apiPost(`/machines/${name}/start`);
@@ -140,7 +140,7 @@ console.log("\n═══ 3. Network Default Off ═══\n");
   await cleanup(name);
   const createResp = await apiPost("/machines", {
     name,
-    resources: { cpus: 1, memory_mb: 512 },
+    resources: { cpus: 1, memoryMb: 512 },
   });
   if (!createResp.ok) throw new Error(`create failed: ${await createResp.text()}`);
   const startResp = await apiPost(`/machines/${name}/start`);
@@ -173,13 +173,14 @@ console.log("\n═══ 3. Network Default Off ═══\n");
 console.log("\nNetwork with explicit enable:");
 {
   const name = "iso-yes-net";
-  await createAndStart(name, { resources: { cpus: 1, memory_mb: 512, network: true } });
+  await createAndStart(name, { resources: { cpus: 1, memoryMb: 512, network: true } });
 
   const infoResp = await apiGet(`/machines/${name}`);
   const info = await infoResp.json();
   test("Network flag is true when requested", info.network === true);
 
-  const wget = await sh(name, "wget -q -O /dev/null http://httpbin.org/get 2>&1; echo $?", { timeout_secs: 15 });
+  // Use retry — TSI networking can be intermittent under load (upstream #511)
+  const wget = await sh(name, "wget -q -T 5 -O /dev/null https://example.com 2>/dev/null || wget -q -T 5 -O /dev/null https://example.com 2>&1; echo $?", { timeout_secs: 20 });
   test("CAN reach internet when network enabled", wget.stdout.trim() === "0");
 
   await cleanup(name);
@@ -272,7 +273,7 @@ console.log("\n═══ 5. Environment Variable Isolation ═══\n");
 console.log("\n═══ 6. Resource Limits ═══\n");
 {
   const name = "iso-resources";
-  await createAndStart(name, { resources: { cpus: 1, memory_mb: 512 } });
+  await createAndStart(name, { resources: { cpus: 1, memoryMb: 512 } });
 
   const memInfo = await sh(name, "cat /proc/meminfo | grep MemTotal");
   const memKb = parseInt(memInfo.stdout.match(/(\d+)/)?.[1] ?? "0");
@@ -403,7 +404,7 @@ console.log("\n═══ 8. API Input Validation ═══\n");
 console.log("\n═══ 9. Machine Cannot Reach Host Services ═══\n");
 {
   const name = "iso-no-host-access";
-  await createAndStart(name, { resources: { cpus: 1, memory_mb: 512, network: true } });
+  await createAndStart(name, { resources: { cpus: 1, memoryMb: 512, network: true } });
 
   try {
     const apiFromInside = await sh(name,

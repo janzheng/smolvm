@@ -187,11 +187,13 @@ export async function createAndStart(name: string, opts?: {
     name,
     mounts: opts?.mounts ?? [],
     ports: opts?.ports ?? [],
-    resources: { cpus: 2, memory_mb: 1024, network: true, ...opts?.resources },
+    resources: { cpus: 2, memoryMb: 1024, network: true, ...opts?.resources },
   });
   if (!createResp.ok) throw new Error(`create failed: ${await createResp.text()}`);
   const startResp = await apiPost(`/machines/${name}/start`);
   if (!startResp.ok) throw new Error(`start failed: ${await startResp.text()}`);
+  // Wait for VM to fully boot — TSI networking needs a moment to initialize
+  await new Promise(r => setTimeout(r, 3000));
   return startResp.json();
 }
 

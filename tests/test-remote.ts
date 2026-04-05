@@ -116,7 +116,7 @@ await cleanup(SANDBOX);
 {
   const resp = await apiPost("/machines", {
     name: SANDBOX,
-    resources: { cpus: 2, memory_mb: 1024, network: true },
+    resources: { cpus: 2, memoryMb: 1024, network: true },
   });
   test("Create machine (authed)", resp.ok, `status=${resp.status}`);
 }

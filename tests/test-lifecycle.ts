@@ -34,7 +34,7 @@ const tCreate = performance.now();
 {
   const resp = await apiPost("/machines", {
     name: MACHINE_NAME,
-    resources: { cpus: 2, memory_mb: 2048, network: true },
+    resources: { cpus: 2, memoryMb: 2048, network: true },
   });
   if (!resp.ok) throw new Error(`Create failed: ${await resp.text()}`);
 
