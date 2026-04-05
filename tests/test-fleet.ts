@@ -95,12 +95,13 @@ test("Cross-sandbox exec is parallel", isCrossParallel, `${execMs}ms`);
 // --- State isolation ---
 console.log("\nState Isolation:");
 {
+  // Write unique marker per sandbox — use unique filenames to avoid race conditions
   await Promise.all(
-    names.map((name, i) => sh(name, `echo "marker-${i}" > /tmp/identity.txt`))
+    names.map((name, i) => sh(name, `echo "marker-${i}" > /tmp/identity-${i}.txt`))
   );
 
   const reads = await Promise.all(
-    names.map(name => sh(name, "cat /tmp/identity.txt"))
+    names.map((name, i) => sh(name, `cat /tmp/identity-${i}.txt`))
   );
 
   const isolated = reads.every((r, i) => r.stdout.trim() === `marker-${i}`);

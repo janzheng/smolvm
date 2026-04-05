@@ -1757,40 +1757,30 @@ pub fn run_command(
             );
         }
 
-    // Set user if specified (lookup uid/gid from /etc/passwd in the rootfs)
-    if let Some(username) = user {
-        let passwd_path = format!("{}/etc/passwd", overlay.rootfs_path);
-        if let Ok(passwd) = std::fs::read_to_string(&passwd_path) {
-            let mut found = false;
-            for line in passwd.lines() {
-                let fields: Vec<&str> = line.split(':').collect();
-                if fields.len() >= 6 && fields[0] == username {
-                    if let (Ok(uid), Ok(gid)) = (fields[2].parse::<u32>(), fields[3].parse::<u32>()) {
-                        spec.process.user.uid = uid;
-                        spec.process.user.gid = gid;
-                        // Set HOME and USER env vars
-                        spec.process.env.push(format!("HOME={}", fields[5]));
-                        spec.process.env.push(format!("USER={}", username));
-                        found = true;
+        // Set user if specified (lookup uid/gid from /etc/passwd in the rootfs)
+        if let Some(username) = user {
+            let passwd_path = format!("{}/etc/passwd", prepared.rootfs_path);
+            if let Ok(passwd) = std::fs::read_to_string(&passwd_path) {
+                let mut found = false;
+                for line in passwd.lines() {
+                    let fields: Vec<&str> = line.split(':').collect();
+                    if fields.len() >= 6 && fields[0] == username {
+                        if let (Ok(uid), Ok(gid)) = (fields[2].parse::<u32>(), fields[3].parse::<u32>()) {
+                            spec.process.user.uid = uid;
+                            spec.process.user.gid = gid;
+                            // Set HOME and USER env vars
+                            spec.process.env.push(format!("HOME={}", fields[5]));
+                            spec.process.env.push(format!("USER={}", username));
+                            found = true;
+                        }
+                        break;
                     }
-                    break;
+                }
+                if !found {
+                    return Err(StorageError::new(format!("user '{}' not found in container /etc/passwd", username)));
                 }
             }
-            if !found {
-                return Err(StorageError::new(format!("user '{}' not found in container /etc/passwd", username)));
-            }
         }
-    }
-
-    // Add virtiofs bind mounts to OCI spec
-    for (tag, container_path, read_only) in mounts {
-        let virtiofs_mount = Path::new(paths::VIRTIOFS_MOUNT_ROOT).join(tag);
-        spec.add_bind_mount(
-            &virtiofs_mount.to_string_lossy(),
-            container_path,
-            *read_only,
-        );
-    }
 
         // Write config.json to bundle
         spec.write_to(&bundle_path)

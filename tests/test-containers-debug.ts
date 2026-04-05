@@ -14,7 +14,7 @@ import {
   createReporter,
 } from "./_helpers.ts";
 
-const SANDBOX_NAME = "cx04-container-debug-test";
+const SANDBOX_NAME = `cx04-container-debug-${Date.now()}`;
 const { test, skip, summary } = createReporter();
 
 // ============================================================================
@@ -45,14 +45,20 @@ console.log("\nContainer Lifecycle:");
 
 let containerId = "";
 
-// --- List containers (empty) ---
+// --- Record baseline containers (may include stale from previous runs) ---
+let baselineContainerIds: string[] = [];
 {
   const resp = await apiGet(`/sandboxes/${SANDBOX_NAME}/containers`);
   if (resp.ok) {
     const data = await resp.json();
-    test("List containers (empty)", Array.isArray(data.containers) && data.containers.length === 0);
+    baselineContainerIds = (data.containers ?? []).map((c: { id: string }) => c.id);
+    test("List containers (baseline)", Array.isArray(data.containers));
+    if (baselineContainerIds.length > 0) {
+      console.log(`     ⚠️  ${baselineContainerIds.length} stale container(s) from previous runs`);
+    }
   } else {
-    test("List containers (empty)", false, `status=${resp.status}`);
+    const body = await resp.text();
+    test("List containers (baseline)", false, `status=${resp.status}: ${body}`);
   }
 }
 
@@ -79,11 +85,13 @@ if (containerId) {
   const resp = await apiGet(`/sandboxes/${SANDBOX_NAME}/containers`);
   if (resp.ok) {
     const data = await resp.json();
-    test("List containers (has one)", data.containers.length === 1);
-    const found = data.containers.find((c: { id: string }) => c.id === containerId);
+    const newContainers = (data.containers ?? []).filter((c: { id: string }) => !baselineContainerIds.includes(c.id));
+    test("List containers (has one new)", newContainers.length === 1, `got ${newContainers.length} new (${data.containers.length} total)`);
+    const found = newContainers.find((c: { id: string }) => c.id === containerId);
     test("Our container in list", !!found);
   } else {
-    test("List containers (has one)", false, `status=${resp.status}`);
+    const body = await resp.text();
+    test("List containers (has one)", false, `status=${resp.status}: ${body}`);
   }
 }
 
