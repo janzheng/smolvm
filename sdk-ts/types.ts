@@ -141,7 +141,7 @@ export interface MachineInfo {
   ports: PortSpec[];
   resources: Record<string, unknown>;
   network: boolean;
-  restart_count?: number;
+  restartCount?: number;
 }
 
 // ============================================================================
@@ -179,7 +179,7 @@ export interface MicroVMInfo {
   network: boolean;
   mounts: number;
   ports: number;
-  created_at: string;
+  createdAt: string;
 }
 
 // ============================================================================
@@ -210,7 +210,7 @@ export interface DiskStats {
 export interface CheckpointMetadata {
   id: string;
   source_machine: string;
-  created_at: string;
+  createdAt: string;
   resources: Record<string, unknown>;
   network: boolean;
   overlay_size_bytes: number;
@@ -220,7 +220,7 @@ export interface CheckpointMetadata {
 export interface CreateCheckpointResponse {
   id: string;
   source_machine: string;
-  created_at: string;
+  createdAt: string;
   overlay_size_bytes: number;
   storage_size_bytes: number;
 }
@@ -240,7 +240,7 @@ export interface ImageInfo {
   size: number;
   architecture: string;
   os: string;
-  layer_count: number;
+  layerCount: number;
 }
 
 // ============================================================================
@@ -259,7 +259,7 @@ export interface ContainerInfo {
   image: string;
   state: "created" | "running" | "stopped";
   command: string[];
-  created_at: number;
+  createdAt: number;
 }
 
 // ============================================================================
@@ -373,7 +373,7 @@ export interface JobInfo {
   attempts: number;
   priority: number;
   labels: Record<string, string>;
-  created_at: number;
+  createdAt: number;
   started_at?: number;
   completed_at?: number;
   result?: ExecResult;

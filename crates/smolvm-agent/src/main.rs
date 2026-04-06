@@ -399,9 +399,15 @@ fn setup_persistent_rootfs() {
         );
     }
 
+    // Overlay disk is DISABLED — virtiofs+overlayfs causes write failures
+    // ("Connection reset by network"). Even if /dev/vdb exists (e.g., upstream
+    // re-enables it), skip the overlay setup. Remove this guard when the
+    // virtiofs fix lands (libkrun PR #542).
+    if std::env::var("SMOLVM_ENABLE_OVERLAY").as_deref() != Ok("1") {
+        return;
+    }
+
     // If overlay device doesn't exist, no overlay disk attached — skip.
-    // On devtmpfs, the kernel creates /dev/vdb automatically when libkrun
-    // attaches a second virtio-blk disk. No mknod needed.
     if !Path::new(OVERLAY_DEVICE).exists() {
         return;
     }
@@ -538,14 +544,17 @@ fn setup_persistent_rootfs() {
         let src = cstr(&format!("/{}", dir));
         let dst = cstr(&format!("{}/{}", NEWROOT, dir));
         // SAFETY: mount --move for each special filesystem
-        unsafe {
+        let ret = unsafe {
             libc::mount(
                 src.as_ptr(),
                 dst.as_ptr(),
                 std::ptr::null(),
                 libc::MS_MOVE,
                 std::ptr::null(),
-            );
+            )
+        };
+        if ret != 0 {
+            eprintln!("smolvm-agent: CRITICAL: failed to move /{} into new root (errno={})", dir, ret);
         }
     }
 
@@ -805,8 +814,12 @@ fn mount_storage_disk() {
         let _ = Command::new("mkfs.ext4")
             .args(["-F", "-q", "-O", "^has_journal", STORAGE_DEVICE])
             .status();
-        let _ = try_mount_ext4();
-        create_dirs();
+        if try_mount_ext4() {
+            info!("storage disk mounted after format");
+            create_dirs();
+        } else {
+            error!("storage disk mount failed even after format — storage unavailable");
+        }
     }
 }
 

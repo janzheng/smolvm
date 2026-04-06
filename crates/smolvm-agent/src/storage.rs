@@ -1855,7 +1855,7 @@ fn setup_volume_mounts(rootfs: &str, mounts: &[(String, String, bool)]) -> Resul
             };
             if rc != 0 {
                 let err = std::io::Error::last_os_error();
-                warn!(error = %err, tag = %tag, "failed to mount virtiofs device");
+                warn!(error = %err, tag = %tag, target = %container_path, "failed to mount virtiofs device — volume will be empty");
                 continue;
             }
         }

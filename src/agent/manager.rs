@@ -834,28 +834,10 @@ impl AgentManager {
             ));
         }
 
-        // Pre-format storage and overlay disks in parallel
-        {
-            let storage_disk = &self.storage_disk;
-            let overlay_disk = &self.overlay_disk;
-            std::thread::scope(|s| {
-                let storage_handle = s.spawn(|| storage_disk.ensure_formatted());
-                let overlay_result = overlay_disk.ensure_formatted();
-                if let Err(e) = storage_handle.join().unwrap_or_else(|_| {
-                    Err(crate::Error::storage("format storage", "thread panicked"))
-                }) {
-                    tracing::warn!(
-                        error = %e,
-                        "failed to pre-format disk on host"
-                    );
-                }
-                if let Err(e) = overlay_result {
-                    tracing::warn!(
-                        error = %e,
-                        "failed to pre-format overlay disk on host"
-                    );
-                }
-            });
+        // Pre-format storage disk only. Overlay disk is disabled in the launcher
+        // (virtiofs+overlayfs write bug) — skip formatting to avoid wasting I/O.
+        if let Err(e) = self.storage_disk.ensure_formatted() {
+            tracing::warn!(error = %e, "failed to pre-format storage disk");
         }
 
         // Clean up old socket and stale markers

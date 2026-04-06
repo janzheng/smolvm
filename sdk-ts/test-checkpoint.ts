@@ -53,7 +53,7 @@ test("Machine stopped", true);
 const ckpt = await machine.checkpoint();
 test("Checkpoint created", !!ckpt.id);
 test("Has source_machine", ckpt.source_machine === "ckpt-test");
-test("Has created_at", !!ckpt.created_at);
+test("Has created_at", !!ckpt.createdAt);
 test("Has overlay_size_bytes", ckpt.overlay_size_bytes > 0);
 console.log(`     Checkpoint ID: ${ckpt.id}`);
 console.log(`     Overlay: ${(ckpt.overlay_size_bytes / 1024 / 1024).toFixed(1)} MB`);

@@ -317,11 +317,14 @@ pub fn launch_agent_vm_dynamic(
         // Set egress policy if CIDRs are specified
         if let Some(ref cidrs) = config.resources.allowed_cidrs {
             if !cidrs.is_empty() {
-                let set_egress = krun.set_egress_policy.ok_or_else(|| {
-                    "libkrun does not support egress policy (krun_set_egress_policy not found). \
-                     Update libkrun or remove --allow-cidr flags."
-                        .to_string()
-                })?;
+                let set_egress = match krun.set_egress_policy {
+                    Some(f) => f,
+                    None => {
+                        free_ctx_on_err!(
+                            "libkrun does not support egress policy (krun_set_egress_policy not found)"
+                        );
+                    }
+                };
 
                 let mut all_cidrs = cidrs.clone();
                 crate::data::network::ensure_dns_in_cidrs(&mut all_cidrs);
