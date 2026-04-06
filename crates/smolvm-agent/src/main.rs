@@ -764,8 +764,19 @@ fn mount_storage_disk() {
         resize_fs();
         create_dirs();
     } else {
-        // Mount failed - try fsck to repair filesystem first
-        warn!("mount failed, attempting filesystem repair with fsck");
+        // Mount failed - try resize2fs first (handles "block count exceeds device size"
+        // which happens when the ext4 FS was formatted for a slightly larger disk)
+        warn!("mount failed, attempting resize2fs to fit device");
+        let _ = Command::new("e2fsck").args(["-y", "-f", STORAGE_DEVICE]).status();
+        let _ = Command::new("resize2fs").arg(STORAGE_DEVICE).output();
+        if try_mount_ext4() {
+            info!("storage disk mounted after resize2fs");
+            create_dirs();
+            return;
+        }
+
+        // Still failed - try fsck to repair filesystem
+        warn!("mount still failed, attempting filesystem repair with fsck");
         let fsck_result = Command::new("fsck.ext4")
             .args(["-y", "-f", STORAGE_DEVICE])
             .status();
