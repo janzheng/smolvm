@@ -28,7 +28,7 @@ async function exec(
     body: JSON.stringify({
       command: ["sh", "-c", cmd],
       ...(opts?.env ? { env: opts.env } : {}),
-      timeout_secs: opts?.timeout_secs ?? 30,
+      timeoutSecs: opts?.timeout_secs ?? 30,
     }),
   });
 }
@@ -82,7 +82,7 @@ async function testClaudeCode() {
   const simple = await exec(
     "claude-vm",
     'su - agent -c "/tmp/run.sh Say hello world"',
-    { timeout_secs: 60 },
+    { timeoutSecs: 60 },
   );
   console.log(`  Exit: ${simple.exit_code} (${((Date.now() - t1) / 1000).toFixed(1)}s)`);
   console.log(`  Output: ${simple.stdout?.trim().slice(0, 500)}`);
@@ -99,7 +99,7 @@ async function testClaudeCode() {
   const coding = await exec(
     "claude-vm",
     'su - agent -c "/tmp/run.sh Create a file called /tmp/fizzbuzz.js with a Node.js FizzBuzz for 1-15 then run it"',
-    { timeout_secs: 120 },
+    { timeoutSecs: 120 },
   );
   console.log(`  Exit: ${coding.exit_code} (${((Date.now() - t2) / 1000).toFixed(1)}s)`);
   console.log(`  Output:\n${coding.stdout?.slice(0, 2000)}`);
@@ -154,7 +154,7 @@ chmod 755 /tmp/run.sh`);
   const result = await exec(
     "codex-vm",
     'su - agent -c "/tmp/run.sh Create hello.js that prints hello world"',
-    { timeout_secs: 60 },
+    { timeoutSecs: 60 },
   );
   console.log(`  Exit: ${result.exit_code} (${((Date.now() - t1) / 1000).toFixed(1)}s)`);
   console.log(`  Output: ${result.stdout?.slice(0, 1000)}`);
@@ -164,7 +164,7 @@ chmod 755 /tmp/run.sh`);
   if (result.stdout?.includes("not a terminal")) {
     console.log("\n  --- Codex requires TTY. Trying script(1) wrapper ---");
 
-    await exec("codex-vm", "apk add --no-cache util-linux-misc 2>/dev/null || true", { timeout_secs: 30 });
+    await exec("codex-vm", "apk add --no-cache util-linux-misc 2>/dev/null || true", { timeoutSecs: 30 });
 
     await exec("codex-vm", `cat > /tmp/run-pty.sh << 'HEREDOC'
 #!/bin/sh
@@ -179,7 +179,7 @@ chmod 755 /tmp/run-pty.sh`);
     const ptyResult = await exec(
       "codex-vm",
       'su - agent -c "/tmp/run-pty.sh \\"Create hello.js that prints hello world\\""',
-      { timeout_secs: 90 },
+      { timeoutSecs: 90 },
     );
     console.log(`  PTY Exit: ${ptyResult.exit_code} (${((Date.now() - t2) / 1000).toFixed(1)}s)`);
     console.log(`  PTY Output: ${ptyResult.stdout?.slice(0, 1500)}`);
@@ -232,7 +232,7 @@ chmod 755 /tmp/run.sh`);
   const simple = await exec(
     "agents",
     'su - agent -c "/tmp/run.sh Say hello"',
-    { timeout_secs: 60 },
+    { timeoutSecs: 60 },
   );
   console.log(`  Exit: ${simple.exit_code} (${((Date.now() - t1) / 1000).toFixed(1)}s)`);
   console.log(`  Output: ${simple.stdout?.slice(0, 1000)}`);
@@ -245,7 +245,7 @@ chmod 755 /tmp/run.sh`);
     const coding = await exec(
       "agents",
       'su - agent -c "/tmp/run.sh Create a file /tmp/hello-pi.js that prints Hello from Pi-Mono then run it with node"',
-      { timeout_secs: 90 },
+      { timeoutSecs: 90 },
     );
     console.log(`  Exit: ${coding.exit_code} (${((Date.now() - t2) / 1000).toFixed(1)}s)`);
     console.log(`  Output:\n${coding.stdout?.slice(0, 2000)}`);

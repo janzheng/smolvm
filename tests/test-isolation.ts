@@ -125,7 +125,7 @@ console.log("\n═══ 2. Host Filesystem Isolation ═══\n");
     test("File created in VM does NOT appear on host", true);
   }
 
-  const metadata = await sh(name, "wget -q -O - http://169.254.169.254/latest/meta-data/ 2>&1 || echo 'UNREACHABLE'", { timeout_secs: 5 });
+  const metadata = await sh(name, "wget -q -O - http://169.254.169.254/latest/meta-data/ 2>&1 || echo 'UNREACHABLE'", { timeoutSecs: 5 });
   test("Cloud metadata endpoint unreachable", metadata.stdout.includes("UNREACHABLE") || metadata.exit_code !== 0);
 
   await cleanup(name);
@@ -151,17 +151,17 @@ console.log("\n═══ 3. Network Default Off ═══\n");
   const info = await infoResp.json();
   test("Network flag is false by default", info.network === false);
 
-  const ping = await sh(name, "ping -c 1 -W 2 8.8.8.8 2>&1 || echo 'NETWORK_BLOCKED'", { timeout_secs: 10 });
+  const ping = await sh(name, "ping -c 1 -W 2 8.8.8.8 2>&1 || echo 'NETWORK_BLOCKED'", { timeoutSecs: 10 });
   test("Cannot ping external host (no network)",
     ping.stdout.includes("NETWORK_BLOCKED") || ping.exit_code !== 0,
     `stdout: ${ping.stdout.trim().slice(0, 100)}`);
 
-  const wget = await sh(name, "wget -q -O - http://httpbin.org/get 2>&1 || echo 'NETWORK_BLOCKED'", { timeout_secs: 10 });
+  const wget = await sh(name, "wget -q -O - http://httpbin.org/get 2>&1 || echo 'NETWORK_BLOCKED'", { timeoutSecs: 10 });
   test("Cannot HTTP to external host (no network)",
     wget.stdout.includes("NETWORK_BLOCKED") || wget.exit_code !== 0,
     `stdout: ${wget.stdout.trim().slice(0, 100)}`);
 
-  const dns = await sh(name, "nslookup google.com 2>&1 || echo 'DNS_BLOCKED'", { timeout_secs: 5 });
+  const dns = await sh(name, "nslookup google.com 2>&1 || echo 'DNS_BLOCKED'", { timeoutSecs: 5 });
   test("DNS resolution fails (no network)",
     dns.stdout.includes("DNS_BLOCKED") || dns.exit_code !== 0,
     `stdout: ${dns.stdout.trim().slice(0, 100)}`);
@@ -181,7 +181,7 @@ console.log("\nNetwork with explicit enable:");
 
   // TSI networking can degrade after many VM create/destroy cycles (upstream #511).
   // Use retry with backoff, and skip (not fail) if genuinely unreachable.
-  const wget = await sh(name, "for i in 1 2 3; do wget -q -T 3 -O /dev/null https://example.com 2>/dev/null && echo OK && exit 0; sleep 2; done; echo FAIL", { timeout_secs: 25 });
+  const wget = await sh(name, "for i in 1 2 3; do wget -q -T 3 -O /dev/null https://example.com 2>/dev/null && echo OK && exit 0; sleep 2; done; echo FAIL", { timeoutSecs: 25 });
   if (wget.stdout.includes("OK")) {
     test("CAN reach internet when network enabled", true);
   } else {
@@ -291,7 +291,7 @@ console.log("\n═══ 6. Resource Limits ═══\n");
   console.log("  Testing memory overcommit (may take a moment)...");
   const memBomb = await sh(name,
     "python3 -c \"x = bytearray(800 * 1024 * 1024)\" 2>&1 || echo 'OOM'",
-    { timeout_secs: 10 });
+    { timeoutSecs: 10 });
   const oomTriggered = memBomb.exit_code !== 0 || memBomb.stdout.includes("OOM") ||
     memBomb.stderr.includes("MemoryError") || memBomb.stderr.includes("Cannot allocate");
   test("Memory overcommit handled", oomTriggered,
@@ -414,7 +414,7 @@ console.log("\n═══ 9. Machine Cannot Reach Host Services ═══\n");
   try {
     const apiFromInside = await sh(name,
       "wget -q -T 2 -O - http://127.0.0.1:8080/health 2>&1 || echo 'UNREACHABLE'",
-      { timeout_secs: 5 });
+      { timeoutSecs: 5 });
     const hostBlocked = apiFromInside.stdout.includes("UNREACHABLE") || !apiFromInside.stdout.includes('"status"');
     if (hostBlocked) {
       test("Cannot reach host API from machine", true);
@@ -429,7 +429,7 @@ console.log("\n═══ 9. Machine Cannot Reach Host Services ═══\n");
   try {
     const hostSSH = await sh(name,
       "wget -q -T 2 -O - http://127.0.0.1:22/ 2>&1 || echo 'UNREACHABLE'",
-      { timeout_secs: 5 });
+      { timeoutSecs: 5 });
     test("Cannot reach host SSH from machine",
       hostSSH.stdout.includes("UNREACHABLE") || hostSSH.exit_code !== 0);
   } catch {

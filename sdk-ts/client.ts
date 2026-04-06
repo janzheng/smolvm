@@ -170,7 +170,7 @@ export class SmolvmHttpClient {
       command,
       env: opts?.env,
       workdir: opts?.workdir,
-      timeout_secs: opts?.timeout_secs ?? 30,
+      timeoutSecs: opts?.timeout_secs ?? 30,
     };
     if (opts?.user) body.user = opts.user;
     const resp = await this.request("POST", `/machines/${name}/exec`, body);
@@ -372,7 +372,7 @@ export class SmolvmHttpClient {
       command,
       env: opts?.env,
       workdir: opts?.workdir,
-      timeout_secs: opts?.timeout_secs ?? 30,
+      timeoutSecs: opts?.timeout_secs ?? 30,
     };
     if (opts?.user) body.user = opts.user;
     const resp = await this.request("POST", `/machines/${machineName}/run`, body);
@@ -450,7 +450,7 @@ export class SmolvmHttpClient {
         command,
         env: opts?.env,
         workdir: opts?.workdir,
-        timeout_secs: opts?.timeout_secs ?? 30,
+        timeoutSecs: opts?.timeout_secs ?? 30,
       },
     );
     return this.json(resp);
@@ -460,7 +460,7 @@ export class SmolvmHttpClient {
     const resp = await this.request(
       "POST",
       `/machines/${machineName}/containers/${containerId}/stop`,
-      { timeout_secs: 10 },
+      { timeoutSecs: 10 },
     );
     if (!resp.ok) {
       const text = await resp.text();
@@ -587,7 +587,7 @@ export class SmolvmHttpClient {
       command,
       env: opts?.env,
       workdir: opts?.workdir,
-      timeout_secs: opts?.timeout_secs ?? 30,
+      timeoutSecs: opts?.timeout_secs ?? 30,
     });
     return this.json(resp);
   }

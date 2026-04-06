@@ -52,11 +52,11 @@ console.log("\nMachine Lifecycle:");
 
   // exec
   const result = await machine.exec(["echo", "hello-sdk"]);
-  test("exec() works", result.exit_code === 0 && result.stdout.trim() === "hello-sdk");
+  test("exec() works", result.exitCode === 0 && result.stdout.trim() === "hello-sdk");
 
   // sh
   const shResult = await machine.sh("echo hello && echo world");
-  test("sh() works", shResult.exit_code === 0 && shResult.stdout.includes("hello") && shResult.stdout.includes("world"));
+  test("sh() works", shResult.exitCode === 0 && shResult.stdout.includes("hello") && shResult.stdout.includes("world"));
 
   // runCommand (just-bash compat)
   const runResult = await machine.runCommand("echo just-bash-compat");
@@ -125,7 +125,7 @@ console.log("\nFleet Operations:");
 
   // execAll
   const results = await fleet.execAll("echo hello");
-  const allOk = results.every((r) => r.exit_code === 0 && r.stdout.trim() === "hello");
+  const allOk = results.every((r) => r.exitCode === 0 && r.stdout.trim() === "hello");
   test("execAll (same command)", allOk);
 
   // execEach

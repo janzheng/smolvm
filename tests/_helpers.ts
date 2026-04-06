@@ -117,7 +117,7 @@ export async function exec(
   const resp = await fetch(`${API}/machines/${machine}/exec`, {
     method: "POST",
     headers: apiHeaders("application/json"),
-    body: JSON.stringify({ command, timeout_secs: timeoutSecs, ...opts }),
+    body: JSON.stringify({ command, timeoutSecs: timeoutSecs, ...opts }),
     signal: AbortSignal.timeout(clientTimeoutMs),
   });
   if (!resp.ok) {
@@ -137,7 +137,7 @@ export async function run(
   const resp = await fetch(`${API}/machines/${machine}/run`, {
     method: "POST",
     headers: apiHeaders("application/json"),
-    body: JSON.stringify({ image, command, timeout_secs: 30, ...opts }),
+    body: JSON.stringify({ image, command, timeoutSecs: 30, ...opts }),
     signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
   });
   if (!resp.ok) {
@@ -163,7 +163,7 @@ export async function sh(
   cmd: string,
   opts?: ExecOpts,
 ): Promise<ExecResult> {
-  return exec(machine, ["sh", "-c", cmd], { timeout_secs: 30, ...opts });
+  return exec(machine, ["sh", "-c", cmd], { timeoutSecs: 30, ...opts });
 }
 
 // ============================================================================

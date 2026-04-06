@@ -215,7 +215,7 @@ console.log("\n═══ 4. Networking ═══\n");
   await createAndStart(name);
 
   // TSI networking is intermittent under load (upstream #511). Use retry with backoff.
-  const netCheck = await sh(name, "for i in 1 2 3; do wget -q -T 3 -O /dev/null https://example.com 2>/dev/null && echo OK && break; sleep 2; done", { timeout_secs: 20 });
+  const netCheck = await sh(name, "for i in 1 2 3; do wget -q -T 3 -O /dev/null https://example.com 2>/dev/null && echo OK && break; sleep 2; done", { timeoutSecs: 20 });
   const netOk = netCheck.stdout.includes("OK");
 
   if (!netOk) {
@@ -225,10 +225,10 @@ console.log("\n═══ 4. Networking ═══\n");
   } else {
     test("Outbound HTTPS", true);
 
-    const dns = await sh(name, "wget -q -T 5 -O /dev/null https://example.com 2>/dev/null || wget -q -T 5 -O /dev/null https://example.com 2>&1; echo $?", { timeout_secs: 15 });
+    const dns = await sh(name, "wget -q -T 5 -O /dev/null https://example.com 2>/dev/null || wget -q -T 5 -O /dev/null https://example.com 2>&1; echo $?", { timeoutSecs: 15 });
     test("DNS resolution", dns.stdout.trim() === "0");
 
-    const download = await sh(name, "wget -q -T 5 -O /dev/null https://example.com 2>/dev/null || wget -q -T 5 -O /dev/null https://example.com 2>&1; echo $?", { timeout_secs: 15 });
+    const download = await sh(name, "wget -q -T 5 -O /dev/null https://example.com 2>/dev/null || wget -q -T 5 -O /dev/null https://example.com 2>&1; echo $?", { timeoutSecs: 15 });
     test("Download file from internet", download.stdout.trim() === "0");
   }
 
@@ -252,7 +252,7 @@ console.log("\nPort Mapping:");
     await apiPost(`/machines/${name}/start`);
 
     await sh(name, "mkdir -p /tmp/www && echo 'smolvm-port-test' > /tmp/www/index.html");
-    await sh(name, "httpd -p 8080 -h /tmp/www &", { timeout_secs: 5 });
+    await sh(name, "httpd -p 8080 -h /tmp/www &", { timeoutSecs: 5 });
     await new Promise(r => setTimeout(r, 1000));
 
     try {
@@ -281,9 +281,9 @@ console.log("\n═══ 5. Process Management ═══\n");
 
   const t0 = performance.now();
   const [r1, r2, r3] = await Promise.all([
-    sh(name, "sleep 1 && echo done1", { timeout_secs: 10 }),
-    sh(name, "sleep 1 && echo done2", { timeout_secs: 10 }),
-    sh(name, "sleep 1 && echo done3", { timeout_secs: 10 }),
+    sh(name, "sleep 1 && echo done1", { timeoutSecs: 10 }),
+    sh(name, "sleep 1 && echo done2", { timeoutSecs: 10 }),
+    sh(name, "sleep 1 && echo done3", { timeoutSecs: 10 }),
   ]);
   const concurrentMs = Math.round(performance.now() - t0);
   const allDone = r1.stdout.includes("done1") && r2.stdout.includes("done2") && r3.stdout.includes("done3");
@@ -299,7 +299,7 @@ console.log("\n═══ 5. Process Management ═══\n");
 
   // Exec timeout
   try {
-    const timeout = await exec(name, ["sh", "-c", "sleep 30"], { timeout_secs: 2 });
+    const timeout = await exec(name, ["sh", "-c", "sleep 30"], { timeoutSecs: 2 });
     // If it returns quickly, timeout worked if exit code is non-zero
     if (timeout.exit_code !== 0) {
       test("Exec timeout works", true);
@@ -454,7 +454,7 @@ console.log("\n═══ 9. Containers in Machine ═══\n");
       if (startResp.ok) {
         const execResp = await apiPost(`/machines/${name}/containers/${container.id}/exec`, {
           command: ["echo", "container-exec-works"],
-          timeout_secs: 10,
+          timeoutSecs: 10,
         });
         if (execResp.ok) {
           const result: ExecResult = await execResp.json();
@@ -463,7 +463,7 @@ console.log("\n═══ 9. Containers in Machine ═══\n");
           test("Exec in container", false, `${execResp.status}`);
         }
 
-        const stopResp = await apiPost(`/machines/${name}/containers/${container.id}/stop`, { timeout_secs: 5 });
+        const stopResp = await apiPost(`/machines/${name}/containers/${container.id}/stop`, { timeoutSecs: 5 });
         test("Stop container", stopResp.ok);
       }
 

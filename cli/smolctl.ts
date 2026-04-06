@@ -1048,7 +1048,7 @@ function emitStatus(event: StatusEvent): void {
 /** Run a command inside a machine with short timeout, swallowing errors. */
 async function safeExec(name: string, cmd: string[]): Promise<{ exit_code: number; stdout: string; stderr: string } | null> {
   try {
-    const resp = await apiCall("POST", `/machines/${name}/exec`, { command: cmd, timeout_secs: 5 }, 10_000);
+    const resp = await apiCall("POST", `/machines/${name}/exec`, { command: cmd, timeoutSecs: 5 }, 10_000);
     if (!resp.ok) return null;
     return await resp.json();
   } catch { return null; }
@@ -1389,20 +1389,20 @@ async function cmdCreate(name: string, args: string[]) {
   const { flags } = parseFlags(args, ["cpus", "memory", "no-network", "init", "user", "starter", "secret", "label", "owner", "description", "setup", "allowed-domains", "allow-cidr", "allow-host", "mcp", "with-mcp", "pool", "node"]);
   const resources: Record<string, unknown> = {
     cpus: parseInt(flag(flags, "cpus") ?? "2"),
-    memory_mb: parseInt(flag(flags, "memory") ?? "1024"),
+    memoryMb: parseInt(flag(flags, "memory") ?? "1024"),
     network: !hasFlag(flags, "no-network"),
   };
   // Parse allowed domains (comma-separated or repeated flags)
   const allowedDomainsRaw = flagAll(flags, "allowed-domains");
   const allowedDomains = allowedDomainsRaw.flatMap((d: string) => d.split(",").map((s: string) => s.trim()).filter(Boolean));
   if (allowedDomains.length > 0) {
-    resources.allowed_domains = allowedDomains;
+    resources.allowedDomains = allowedDomains;
   }
   // Parse --allow-cidr (CIDR-based egress filtering, implies network)
   const allowedCidrsRaw = flagAll(flags, "allow-cidr");
   const allowedCidrs = allowedCidrsRaw.flatMap((c: string) => c.split(",").map((s: string) => s.trim()).filter(Boolean));
   if (allowedCidrs.length > 0) {
-    resources.allowed_cidrs = allowedCidrs;
+    resources.allowedCidrs = allowedCidrs;
     resources.network = true;
   }
   // Parse --allow-host (resolve hostnames to CIDRs via DNS)
@@ -1410,7 +1410,7 @@ async function cmdCreate(name: string, args: string[]) {
   const allowedHosts = allowedHostsRaw.flatMap((h: string) => h.split(",").map((s: string) => s.trim()).filter(Boolean));
   if (allowedHosts.length > 0) {
     // Resolve hostnames to IP addresses and add as CIDRs
-    const resolvedCidrs: string[] = resources.allowed_cidrs as string[] ?? [];
+    const resolvedCidrs: string[] = resources.allowedCidrs as string[] ?? [];
     for (const host of allowedHosts) {
       try {
         const ips = await Deno.resolveDns(host, "A");
@@ -1422,7 +1422,7 @@ async function cmdCreate(name: string, args: string[]) {
       }
     }
     if (resolvedCidrs.length > 0) {
-      resources.allowed_cidrs = resolvedCidrs;
+      resources.allowedCidrs = resolvedCidrs;
       resources.network = true;
     }
   }
@@ -1582,7 +1582,7 @@ async function cmdExec(name: string, command: string[], args: string[]) {
 
   const body: Record<string, unknown> = {
     command,
-    timeout_secs: parseInt(flag(flags, "timeout") ?? "30"),
+    timeoutSecs: parseInt(flag(flags, "timeout") ?? "30"),
   };
   const envPairs = flagAll(flags, "env").map((e) => {
     const [n, ...v] = e.split("=");
@@ -1626,7 +1626,7 @@ async function cmdUp(name: string, args: string[]) {
     console.log(`[setup] ${cmd}`);
     const resp = await apiCall("POST", `/machines/${name}/exec`, {
       command: ["sh", "-c", cmd],
-      timeout_secs: 120,
+      timeoutSecs: 120,
     }, 130_000);
     const data = await jsonResult<{ exit_code?: number; exitCode?: number; stdout: string; stderr: string }>(resp);
     const code = data.exit_code ?? data.exitCode ?? -1;
@@ -1692,7 +1692,7 @@ async function cmdResume(name: string, args: string[]) {
     name,
     resources: {
       cpus: 2,
-      memory_mb: 1024,
+      memoryMb: 1024,
       network: true,
     },
   };
@@ -1712,7 +1712,7 @@ async function cmdResume(name: string, args: string[]) {
   for (const cmd of flagAll(flags, "setup")) {
     console.log(`[setup] ${cmd}`);
     const resp = await apiCall("POST", `/machines/${name}/exec`, {
-      command: ["sh", "-c", cmd], timeout_secs: 120,
+      command: ["sh", "-c", cmd], timeoutSecs: 120,
     }, 130_000);
     const data = await jsonResult<{ exit_code?: number; exitCode?: number }>(resp);
     if ((data.exit_code ?? data.exitCode ?? -1) !== 0) die(`Setup command failed: ${cmd}`);
@@ -1748,7 +1748,7 @@ async function cmdStats(name: string) {
   const data = await jsonResult<Record<string, unknown>>(resp);
   console.log(`Machine: ${data.name} (${data.state})`);
   console.log(`  CPUs:     ${data.cpus}`);
-  console.log(`  Memory:   ${data.memory_mb} MB`);
+  console.log(`  Memory:   ${data.memoryMb} MB`);
   console.log(`  Network:  ${data.network}`);
   if (data.pid) console.log(`  PID:      ${data.pid}`);
   const overlay = data.overlay_disk as Record<string, unknown> | undefined;
@@ -2564,7 +2564,7 @@ async function cmdWorkspaceExport(machine: string, destPath?: string) {
   // Resolve workspace path inside VM
   const wsCheck = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", "test -d /storage/workspace/.git && echo /storage/workspace || (test -d /workspace/.git && echo /workspace || echo none)"],
-    timeout_secs: 5,
+    timeoutSecs: 5,
   });
   const wsData = await jsonResult<{ stdout: string }>(wsCheck);
   const wsPath = wsData.stdout.trim();
@@ -2573,7 +2573,7 @@ async function cmdWorkspaceExport(machine: string, destPath?: string) {
   // Capture git info for the filename/metadata
   const gitInfoResp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", `cd ${wsPath} && echo "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)|$(git rev-parse --short HEAD 2>/dev/null || echo unknown)|$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"`],
-    timeout_secs: 5,
+    timeoutSecs: 5,
   });
   const gitInfo = await jsonResult<{ stdout: string }>(gitInfoResp);
   const [branch, commit, dirtyCount] = gitInfo.stdout.trim().split("|");
@@ -2582,7 +2582,7 @@ async function cmdWorkspaceExport(machine: string, destPath?: string) {
   const tarCmd = `cd ${wsPath} && tar czf - . 2>/dev/null | base64`;
   const resp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", tarCmd],
-    timeout_secs: 120,
+    timeoutSecs: 120,
   }, LONG_TIMEOUT_MS);
   const data = await jsonResult<{ exitCode?: number; exit_code?: number; stdout: string; stderr: string }>(resp);
   const code = data.exit_code ?? data.exitCode ?? -1;
@@ -2624,7 +2624,7 @@ async function cmdWorkspaceImport(filePath: string, machine: string) {
   // Ensure workspace directory exists and has git
   await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", "mkdir -p /storage/workspace && test -L /workspace || ln -sfn /storage/workspace /workspace 2>/dev/null || true"],
-    timeout_secs: 5,
+    timeoutSecs: 5,
   });
 
   // Upload the tar.gz via archive endpoint to /storage/workspace
@@ -2644,13 +2644,13 @@ async function cmdWorkspaceImport(filePath: string, machine: string) {
   // Mark safe.directory so git works
   await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", "git config --global --add safe.directory /storage/workspace 2>/dev/null || true"],
-    timeout_secs: 5,
+    timeoutSecs: 5,
   });
 
   // Verify git history survived
   const verifyResp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", "cd /storage/workspace && git log --oneline -3 2>/dev/null || echo '(no git history)'"],
-    timeout_secs: 5,
+    timeoutSecs: 5,
   });
   const verifyData = await jsonResult<{ stdout: string }>(verifyResp);
 
@@ -2681,7 +2681,7 @@ async function cmdToDocker(machine: string, args: string[]) {
   // Resolve workspace path
   const wsCheck = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", "test -d /storage/workspace/.git && echo /storage/workspace || (test -d /workspace/.git && echo /workspace || echo none)"],
-    timeout_secs: 5,
+    timeoutSecs: 5,
   });
   const wsData = await jsonResult<{ stdout: string }>(wsCheck);
   const wsPath = wsData.stdout.trim();
@@ -2690,7 +2690,7 @@ async function cmdToDocker(machine: string, args: string[]) {
   // Get git info
   const gitResp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", `cd ${wsPath} && echo "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)|$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"`],
-    timeout_secs: 5,
+    timeoutSecs: 5,
   });
   const gitInfo = await jsonResult<{ stdout: string }>(gitResp);
   const [branch, commit] = gitInfo.stdout.trim().split("|");
@@ -2698,7 +2698,7 @@ async function cmdToDocker(machine: string, args: string[]) {
   // Detect installed packages (best-effort)
   const pkgResp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", "apk info -q 2>/dev/null | sort | tr '\\n' ' '"],
-    timeout_secs: 5,
+    timeoutSecs: 5,
   });
   const pkgData = await jsonResult<{ stdout: string }>(pkgResp);
   const packages = pkgData.stdout.trim();
@@ -2710,7 +2710,7 @@ async function cmdToDocker(machine: string, args: string[]) {
   const tarCmd = `cd ${wsPath} && tar czf - . 2>/dev/null | base64`;
   const resp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", tarCmd],
-    timeout_secs: 120,
+    timeoutSecs: 120,
   }, LONG_TIMEOUT_MS);
   const data = await jsonResult<{ exitCode?: number; exit_code?: number; stdout: string; stderr: string }>(resp);
   const code = data.exit_code ?? data.exitCode ?? -1;
@@ -2903,7 +2903,7 @@ async function cmdSnapshotLsFiles(snapName: string, path?: string, args: string[
       : `ls -la ${targetPath} 2>/dev/null`;
     const resp = await apiCall("POST", `/machines/${tempName}/exec`, {
       command: ["sh", "-c", cmd],
-      timeout_secs: 15,
+      timeoutSecs: 15,
     }, LONG_TIMEOUT_MS);
     const result = await jsonResult<{ stdout?: string; stderr?: string; exit_code?: number }>(resp);
     if (result.stdout) {
@@ -3130,7 +3130,7 @@ async function cmdRun(machine: string, image: string, command: string[], args: s
   const body: Record<string, unknown> = {
     image,
     command,
-    timeout_secs: parseInt(flag(flags, "timeout") ?? "30"),
+    timeoutSecs: parseInt(flag(flags, "timeout") ?? "30"),
   };
   if (flag(flags, "user")) body.user = flag(flags, "user");
   if (flag(flags, "workdir")) body.workdir = flag(flags, "workdir");
@@ -3156,7 +3156,7 @@ async function cmdFilesLs(name: string, dir?: string) {
   const script = `ls -1a '${esc}' 2>/dev/null | while read f; do [ "$f" = "." ] || [ "$f" = ".." ] && continue; if [ -d "${esc}/$f" ]; then t=dir; else t=file; fi; s=$(stat -c '%s' "${esc}/$f" 2>/dev/null || echo 0); p=$(stat -c '%a' "${esc}/$f" 2>/dev/null || echo 644); echo "$s|$p|$t|$f"; done`;
   const resp = await apiCall("POST", `/machines/${name}/exec`, {
     command: ["sh", "-c", script],
-    timeout_secs: 15,
+    timeoutSecs: 15,
   });
   const data = await jsonResult<{ stdout: string; stderr: string; exit_code?: number; exitCode?: number }>(resp);
   const stdout = data.stdout ?? "";
@@ -3300,7 +3300,7 @@ async function cpMachineToLocal(machine: string, remotePath: string, localPath: 
   // Check if remote path is a file or directory
   const checkResp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", `test -f '${remotePath}' && echo FILE || echo DIR`],
-    timeout_secs: 5,
+    timeoutSecs: 5,
   });
   const checkData = await jsonResult<{ stdout: string }>(checkResp);
   const isFile = checkData.stdout.trim() === "FILE";
@@ -3327,7 +3327,7 @@ async function cpMachineToLocal(machine: string, remotePath: string, localPath: 
   // Create tar.gz inside VM, base64 encode for transport
   const resp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", tarCmd],
-    timeout_secs: 120,
+    timeoutSecs: 120,
   }, LONG_TIMEOUT_MS);
   const data = await jsonResult<{ exitCode?: number; exit_code?: number; stdout: string; stderr: string }>(resp);
   const code = data.exit_code ?? data.exitCode ?? -1;
@@ -3449,7 +3449,7 @@ async function cmdSyncPull(machine: string, args: string[]) {
     // Show what's in the remote directory
     const resp = await apiCall("POST", `/machines/${machine}/exec`, {
       command: ["sh", "-c", `ls -la '${remoteDir}' 2>&1`],
-      timeout_secs: 15,
+      timeoutSecs: 15,
     });
     const data = await jsonResult<{ exit_code?: number; exitCode?: number; stdout: string; stderr: string }>(resp);
     console.log(`[dry-run] Would pull ${machine}:${remoteDir} → ${localDir}`);
@@ -3811,7 +3811,7 @@ async function gitExec(
   const resp = await apiCall(
     "POST",
     `/machines/${machine}/exec`,
-    { command: ["sh", "-c", shellCmd], timeout_secs: timeoutSecs },
+    { command: ["sh", "-c", shellCmd], timeoutSecs: timeoutSecs },
     (timeoutSecs + 10) * 1000,
   );
   // deno-lint-ignore no-explicit-any
@@ -4209,7 +4209,7 @@ async function cmdContainerStart(machine: string, containerId: string) {
 }
 
 async function cmdContainerStop(machine: string, containerId: string) {
-  const resp = await apiCall("POST", `/machines/${machine}/containers/${containerId}/stop`, { timeout_secs: 10 });
+  const resp = await apiCall("POST", `/machines/${machine}/containers/${containerId}/stop`, { timeoutSecs: 10 });
   await okOrDie(resp, "container stop");
   console.log(`Stopped: ${containerId}`);
 }
@@ -4225,7 +4225,7 @@ async function cmdContainerExec(machine: string, containerId: string, command: s
   const { flags } = parseFlags(args, ["env", "workdir", "timeout"]);
   const body: Record<string, unknown> = {
     command,
-    timeout_secs: parseInt(flag(flags, "timeout") ?? "30"),
+    timeoutSecs: parseInt(flag(flags, "timeout") ?? "30"),
   };
   const envPairs = flagAll(flags, "env").map((e) => {
     const [n, ...v] = e.split("=");
@@ -4270,7 +4270,7 @@ async function cmdMcpTools(machine: string) {
     try {
       const execResp = await apiCall("POST", `/machines/${machine}/exec`, {
         command: ["sh", "-c", shellCmd],
-        timeout_secs: 35,
+        timeoutSecs: 35,
       }, 40_000);
       const execData = await jsonResult<{ exit_code?: number; exitCode?: number; stdout: string; stderr: string }>(execResp);
       const stdout = execData.stdout || "";
@@ -4332,7 +4332,7 @@ async function cmdMcpCall(machine: string, server: string, tool: string, argsJso
 
   const execResp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["sh", "-c", shellCmd],
-    timeout_secs: 65,
+    timeoutSecs: 65,
   }, 70_000);
   const execData = await jsonResult<{ exit_code?: number; exitCode?: number; stdout: string; stderr: string }>(execResp);
 
@@ -4394,7 +4394,7 @@ async function cmdMcpInstall(machine: string) {
   // Create target directory in the machine
   const mkdirResp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["mkdir", "-p", "/opt/smolvm/mcp-servers"],
-    timeout_secs: 10,
+    timeoutSecs: 10,
   });
   await okOrDie(mkdirResp, "mkdir");
 
@@ -4413,7 +4413,7 @@ async function cmdMcpInstall(machine: string) {
   // Make scripts executable
   const chmodResp = await apiCall("POST", `/machines/${machine}/exec`, {
     command: ["chmod", "+x", ...mcpFiles.map((s) => `/opt/smolvm/mcp-servers/${s}`)],
-    timeout_secs: 10,
+    timeoutSecs: 10,
   });
   await okOrDie(chmodResp, "chmod");
 
@@ -4542,7 +4542,7 @@ async function cmdAgentRun(prompt: string, args: string[]) {
     from_starter: starter,
     resources: {
       cpus: parseInt(flag(flags, "cpus") ?? "4"),
-      memory_mb: parseInt(flag(flags, "memory") ?? "2048"),
+      memoryMb: parseInt(flag(flags, "memory") ?? "2048"),
       network: true,
     },
     secrets,
@@ -4578,7 +4578,7 @@ async function cmdAgentRun(prompt: string, args: string[]) {
   for (const cmd of setupCmds) {
     if (!outputJson) console.log(`[setup] ${cmd}`);
     const setupResp = await apiCall("POST", `/machines/${name}/exec`, {
-      command: ["sh", "-c", cmd], timeout_secs: 120,
+      command: ["sh", "-c", cmd], timeoutSecs: 120,
     }, 130_000);
     const setupResult = await jsonResult<{ exit_code?: number; exitCode?: number; stdout: string; stderr: string }>(setupResp);
     if ((setupResult.exit_code ?? setupResult.exitCode ?? -1) !== 0) {
@@ -4592,11 +4592,11 @@ async function cmdAgentRun(prompt: string, args: string[]) {
   const settingsPath = await writeAgentSettings(name, machineConfig);
   if (!outputJson) console.log(`Machine: ${SANDBOX_PRESETS[machinePreset] ? machinePreset : "custom"} (${machineConfig.allow.length} allow rules)`);
 
-  if (streaming) emitStatus({ status: "running", timestamp: ts(), machine: name, details: { timeout_secs: timeoutSecs } });
+  if (streaming) emitStatus({ status: "running", timestamp: ts(), machine: name, details: { timeoutSecs: timeoutSecs } });
   if (!outputJson) console.log(`Running agent (timeout: ${timeoutSecs}s)...\n`);
   const execBody: Record<string, unknown> = {
     command: ["claude", "-p", "--settings", settingsPath, "--output-format", "text", prompt],
-    timeout_secs: timeoutSecs,
+    timeoutSecs: timeoutSecs,
   };
   // Inject OAuth token for subscription auth (no API key needed)
   if (oauthToken) {
@@ -4678,7 +4678,7 @@ async function cmdAgentFleet(prefix: string, promptsFile: string, args: string[]
       from_starter: starter,
       resources: {
         cpus: parseInt(flag(flags, "cpus") ?? "2"),
-        memory_mb: parseInt(flag(flags, "memory") ?? "2048"),
+        memoryMb: parseInt(flag(flags, "memory") ?? "2048"),
         network: true,
       },
       secrets,
@@ -4712,7 +4712,7 @@ async function cmdAgentFleet(prefix: string, promptsFile: string, args: string[]
     names.map(async (name, i) => {
       const execBody: Record<string, unknown> = {
         command: ["claude", "-p", "--settings", settingsPaths[name], "--output-format", "text", prompts[i]],
-        timeout_secs: timeoutSecs,
+        timeoutSecs: timeoutSecs,
       };
       if (oauthToken) execBody.env = [{ name: "CLAUDE_CODE_OAUTH_TOKEN", value: oauthToken }];
       if (flag(flags, "workdir")) execBody.workdir = flag(flags, "workdir");
@@ -4806,7 +4806,7 @@ async function cmdAgentCollect(prefix: string, args: string[]) {
       console.log(`  ${s.name}: using exec fallback...`);
       const tarResp = await apiCall("POST", `/machines/${s.name}/exec`, {
         command: ["sh", "-c", `tar czf - -C ${dir} . | base64`],
-        timeout_secs: 60,
+        timeoutSecs: 60,
       }, 70_000);
       const tarData = await jsonResult<{ stdout: string; stderr: string }>(tarResp);
       // Save base64-encoded tar
@@ -4878,7 +4878,7 @@ async function cmdAgentWorker(args: string[]) {
       from_starter: starter,
       resources: {
         cpus: parseInt(flag(flags, "cpus") ?? "4"),
-        memory_mb: parseInt(flag(flags, "memory") ?? "2048"),
+        memoryMb: parseInt(flag(flags, "memory") ?? "2048"),
         network: true,
       },
       secrets,
@@ -4896,7 +4896,7 @@ async function cmdAgentWorker(args: string[]) {
     for (const cmd of flagAll(flags, "setup")) {
       console.log(`[setup] ${cmd}`);
       const setupResp = await apiCall("POST", `/machines/${name}/exec`, {
-        command: ["sh", "-c", cmd], timeout_secs: 120,
+        command: ["sh", "-c", cmd], timeoutSecs: 120,
       }, 130_000);
       const setupResult = await jsonResult<{ exit_code?: number; exitCode?: number }>(setupResp);
       if ((setupResult.exit_code ?? setupResult.exitCode ?? -1) !== 0) die(`Setup failed: ${cmd}`);
@@ -4939,7 +4939,7 @@ async function cmdAgentWorker(args: string[]) {
 
     const job = await jsonResult<{
       id: string; machine: string; command: string[]; workdir?: string;
-      timeout_secs: number; env?: { name: string; value: string }[];
+      timeoutSecs: number; env?: { name: string; value: string }[];
     }>(pollResp);
 
     // Check if job targets this machine (or any)
@@ -4963,7 +4963,7 @@ async function cmdAgentWorker(args: string[]) {
     }
     const execBody: Record<string, unknown> = {
       command: jobCmd,
-      timeout_secs: job.timeout_secs,
+      timeoutSecs: job.timeout_secs,
     };
     if (job.workdir) execBody.workdir = job.workdir;
     if (job.env && job.env.length > 0) execBody.env = job.env;
@@ -5022,12 +5022,12 @@ async function cmdAgentWorker(args: string[]) {
 function buildCreateOpts(name: string, flags: Record<string, string[]>): Record<string, unknown> {
   const resources: Record<string, unknown> = {
     cpus: parseInt(flag(flags, "cpus") ?? "2"),
-    memory_mb: parseInt(flag(flags, "memory") ?? "1024"),
+    memoryMb: parseInt(flag(flags, "memory") ?? "1024"),
     network: !hasFlag(flags, "no-network"),
   };
   const allowedCidrs = flagAll(flags, "allow-cidr").flatMap((c: string) => c.split(",").map((s: string) => s.trim()).filter(Boolean));
   if (allowedCidrs.length > 0) {
-    resources.allowed_cidrs = allowedCidrs;
+    resources.allowedCidrs = allowedCidrs;
     resources.network = true;
   }
   const opts: Record<string, unknown> = { name, resources };
@@ -5133,7 +5133,7 @@ async function cmdFleetExec(prefix: string, cmd: string, args: string[]) {
   // Build exec body
   const body: Record<string, unknown> = {
     command: ["sh", "-c", cmd],
-    timeout_secs: parseInt(flag(flags, "timeout") ?? "30"),
+    timeoutSecs: parseInt(flag(flags, "timeout") ?? "30"),
   };
   const envPairs = flagAll(flags, "env").map((e) => {
     const [n, ...v] = e.split("=");
@@ -6039,7 +6039,7 @@ try {
           // Write identity to machine
           const identResp = await apiCall("POST", `/machines/${rest[0]}/exec`, {
             command: ["sh", "-c", `cat /etc/smolvm.json 2>/dev/null || echo '${JSON.stringify(meta).replace(/'/g, "'\\''")}'`],
-            timeout_secs: 5,
+            timeoutSecs: 5,
           }, 10_000);
           const data = await jsonResult<{ stdout: string }>(identResp);
           console.log(data.stdout.trim());
@@ -6498,7 +6498,7 @@ try {
             machine,
             command,
             env: [],
-            timeout_secs: timeoutSecs,
+            timeoutSecs: timeoutSecs,
             max_retries: maxRetries,
             priority,
             labels,

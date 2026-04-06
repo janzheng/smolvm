@@ -164,7 +164,7 @@ console.log("\nRuntime Detection:");
     deno: "deno --version | head -1",
   })) {
     try {
-      const r = await exec(MACHINE_NAME, ["sh", "-c", cmd], { timeout_secs: 5 });
+      const r = await exec(MACHINE_NAME, ["sh", "-c", cmd], { timeoutSecs: 5 });
       tools[name] = r.exit_code === 0 && r.stdout.trim() ? r.stdout.trim().split("\n")[0] : null;
     } catch {
       tools[name] = null;

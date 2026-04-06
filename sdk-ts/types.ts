@@ -10,9 +10,12 @@
 // ============================================================================
 
 export interface ExecResult {
-  exit_code: number;
+  /** Exit code. Wire format is camelCase (exitCode from Rust serde). */
+  exitCode: number;
   stdout: string;
   stderr: string;
+  /** @deprecated Use exitCode. Kept for backwards compat during transition. */
+  exit_code?: number;
 }
 
 export interface ExecOptions {
@@ -77,21 +80,22 @@ export interface CreateMachineOptions {
   secrets?: string[];
 }
 
-/** Wire format for POST /machines */
+/** Wire format for POST /machines.
+ *  IMPORTANT: ResourceSpec uses serde rename_all="camelCase" on the Rust side.
+ *  All resource fields MUST be camelCase in the JSON body. */
 export interface CreateMachineRequest {
   name: string;
   mounts?: MountSpec[];
   ports?: PortSpec[];
   resources?: {
     cpus?: number;
-    memory_mb?: number;
+    memoryMb?: number;
     network?: boolean;
-    overlay_gb?: number;
-    storage_gb?: number;
-    allowed_domains?: string[];
-    allowed_cidrs?: string[];
+    overlayGb?: number;
+    storageGb?: number;
+    allowedDomains?: string[];
+    allowedCidrs?: string[];
   };
-  allowed_cidrs?: string[];
   init_commands?: string[];
   default_user?: string;
   from_starter?: string;

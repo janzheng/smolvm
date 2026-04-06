@@ -79,14 +79,14 @@ export class MicroVM {
       await this.sh(`mkdir -p '${dir}'`);
     }
     const result = await this.sh(`echo '${encoded}' | base64 -d > '${path}'`);
-    if (result.exit_code !== 0) {
+    if (result.exitCode !== 0) {
       throw new Error(`writeFile failed: ${result.stderr}`);
     }
   }
 
   async readFile(path: string): Promise<string> {
     const result = await this.sh(`base64 '${path}'`);
-    if (result.exit_code !== 0) {
+    if (result.exitCode !== 0) {
       throw new Error(`readFile failed: ${result.stderr}`);
     }
     return atob(result.stdout.trim());

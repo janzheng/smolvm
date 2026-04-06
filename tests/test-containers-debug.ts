@@ -112,7 +112,7 @@ if (containerId) {
 if (containerId) {
   const resp = await apiPost(`/machines/${MACHINE_NAME}/containers/${containerId}/exec`, {
     command: ["echo", "hello-from-container"],
-    timeout_secs: 15,
+    timeoutSecs: 15,
   });
   if (resp.ok) {
     const data = await resp.json();
@@ -131,7 +131,7 @@ if (containerId) {
   const resp = await apiPost(`/machines/${MACHINE_NAME}/containers/${containerId}/exec`, {
     command: ["sh", "-c", "echo $TEST_VAR"],
     env: [{ name: "TEST_VAR", value: "container-env-test" }],
-    timeout_secs: 15,
+    timeoutSecs: 15,
   });
   if (resp.ok) {
     const data = await resp.json();
@@ -146,7 +146,7 @@ if (containerId) {
 // --- Stop container ---
 if (containerId) {
   const resp = await apiPost(`/machines/${MACHINE_NAME}/containers/${containerId}/stop`, {
-    timeout_secs: 10,
+    timeoutSecs: 10,
   });
   if (resp.ok) {
     test("Stop container", true);

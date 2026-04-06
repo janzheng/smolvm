@@ -54,7 +54,7 @@ console.log("Phase 2: BOOTSTRAP");
 const tBootstrap = performance.now();
 {
   console.log("  Installing git, curl, nodejs, npm...");
-  const install = await sh(MACHINE_NAME, "apk add --no-cache git curl nodejs npm 2>&1 | tail -1", { timeout_secs: 120 });
+  const install = await sh(MACHINE_NAME, "apk add --no-cache git curl nodejs npm 2>&1 | tail -1", { timeoutSecs: 120 });
   console.log(`  apk: ${install.stdout.trim()}`);
 
   const gitV = await sh(MACHINE_NAME, "git --version");

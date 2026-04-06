@@ -119,7 +119,7 @@ console.log("\nProxy Reachability:");
 
 {
   // Check if the proxy port is listening inside the VM
-  const result = await sh(SANDBOX, "curl -s -o /dev/null -w '%{http_code}' http://localhost:9800/anthropic/v1/messages -X POST -H 'Content-Type: application/json' -d '{}' 2>/dev/null || echo 'CURL_FAILED'", { timeout_secs: 15 });
+  const result = await sh(SANDBOX, "curl -s -o /dev/null -w '%{http_code}' http://localhost:9800/anthropic/v1/messages -X POST -H 'Content-Type: application/json' -d '{}' 2>/dev/null || echo 'CURL_FAILED'", { timeoutSecs: 15 });
   const output = result.stdout.trim();
   // Any HTTP response (even 400/401) means the proxy is reachable and forwarding
   const isReachable = /^\d{3}$/.test(output) && output !== "000";
