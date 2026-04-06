@@ -11,6 +11,7 @@
     "test-sync": "deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-sync.ts",
     "test-proxy": "deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-secret-proxy.ts",
     "test-remote": "deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-remote.ts",
+    "test-audit": "deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-audit-fixes.ts",
     "test-all": "deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-machine.ts && deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-capabilities.ts && deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-fleet.ts && deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-isolation.ts && deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-containers-debug.ts && deno run --allow-net --allow-env --allow-read --allow-run --allow-write tests/test-sync.ts"
   }
 }
