@@ -921,6 +921,34 @@ pub struct SnapshotManifest {
     /// Sequence number within a machine's snapshot history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sequence: Option<u32>,
+    /// Machine configuration at time of snapshot (resources, secrets, MCP, etc.).
+    /// Restored automatically on pull so the new machine matches the source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine_config: Option<SnapshotMachineConfig>,
+}
+
+/// Machine configuration stored in snapshot manifests for round-trip preservation.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotMachineConfig {
+    /// Resource spec (cpus, memory, storage, overlay, cidrs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resources: Option<ResourceSpec>,
+    /// Secret names.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secrets: Vec<String>,
+    /// MCP server configurations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<McpServerConfig>,
+    /// Allowed domains for DNS filtering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_domains: Option<Vec<String>>,
+    /// Init commands.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub init_commands: Vec<String>,
+    /// Default user.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_user: Option<String>,
 }
 
 /// List snapshots response.

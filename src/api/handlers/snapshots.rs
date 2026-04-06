@@ -338,9 +338,17 @@ pub async fn push_machine(
     // Verify machine exists
     let entry = state.get_machine(&id)?;
 
-    let network = {
+    let (network, machine_config) = {
         let lock = entry.lock();
-        lock.network
+        let config = crate::api::types::SnapshotMachineConfig {
+            resources: Some(lock.resources.clone()),
+            secrets: lock.secrets.clone(),
+            mcp_servers: lock.mcp_servers.clone(),
+            allowed_domains: lock.allowed_domains.clone(),
+            init_commands: Vec::new(), // init commands are in VmRecord, not MachineEntry
+            default_user: None,
+        };
+        (lock.network, config)
     };
 
     // Get disk paths
@@ -491,6 +499,7 @@ pub async fn push_machine(
         overlay_changed_blocks: None,
         storage_changed_blocks: None,
         sequence: Some(sequence),
+        machine_config: Some(machine_config),
     };
 
     // Create tar.gz archive in a blocking task
@@ -1046,23 +1055,26 @@ pub async fn pull_snapshot(
     let pid = manager.child_pid();
     let network = manifest.network;
 
-    // Register the machine with the server.
-    // Note: snapshot manifests don't store full machine config (secrets, MCP,
-    // RBAC, egress filters). These default to empty. The user can reconfigure
-    // after pull via the API if needed.
-    let resources = ResourceSpec::default();
+    // Restore machine config from snapshot manifest (if available).
+    // Manifests created before this feature will have machine_config: None,
+    // in which case we fall back to defaults.
+    let config = manifest.machine_config.as_ref();
+    let resources = config
+        .and_then(|c| c.resources.clone())
+        .unwrap_or_default();
+    let resources_for_info = resources.clone();
     guard.complete(MachineRegistration {
         manager,
         mounts: vec![],
         ports: vec![],
-        resources: resources.clone(),
+        resources,
         restart: crate::config::RestartConfig::default(),
         network,
-        allowed_domains: None,
-        secrets: vec![],
+        allowed_domains: config.and_then(|c| c.allowed_domains.clone()),
+        secrets: config.map(|c| c.secrets.clone()).unwrap_or_default(),
         default_env: vec![],
         owner_token_hash: None,
-        mcp_servers: vec![],
+        mcp_servers: config.map(|c| c.mcp_servers.clone()).unwrap_or_default(),
     })?;
 
     Ok(Json(MachineInfo {
@@ -1071,7 +1083,7 @@ pub async fn pull_snapshot(
         pid,
         mounts: vec![],
         ports: vec![],
-        resources,
+        resources: resources_for_info,
         network,
         restart_count: None,
     }))
