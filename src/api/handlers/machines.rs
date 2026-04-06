@@ -959,7 +959,9 @@ pub async fn merge_machines(
         }
 
         // Read file from source (base64-encoded)
-        let read_cmd = format!("base64 '{}'", file_path);
+        // Escape single quotes in path to prevent shell injection
+        let escaped_path = file_path.replace('\'', "'\\''");
+        let read_cmd = format!("base64 '{}'", escaped_path);
         let cmd = vec!["sh".into(), "-c".into(), read_cmd];
         let (exit_code, b64_content, _) =
             with_machine_client(&entry_source, move |c| {

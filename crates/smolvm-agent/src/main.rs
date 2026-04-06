@@ -2303,11 +2303,14 @@ fn handle_vm_exec_background(
     cmd.stdin(Stdio::null());
 
     match cmd.spawn() {
-        Ok(child) => {
+        Ok(mut child) => {
             let pid = child.id();
-            // Don't wait — let the child run independently.
-            // reap_background_children() in the accept loop collects the exit status.
-            std::mem::forget(child);
+            // Spawn a detached thread to wait for the child, preventing zombie
+            // accumulation without blocking the agent or leaking the Child struct.
+            std::thread::Builder::new()
+                .name(format!("bg-wait-{}", pid))
+                .spawn(move || { let _ = child.wait(); })
+                .ok();
             info!(pid = pid, "background process started");
             AgentResponse::Completed {
                 exit_code: 0,

@@ -561,9 +561,19 @@ fn cstr(s: &str) -> CString {
 }
 
 /// Convert a Path to a CString.
+/// Uses raw OS bytes on Unix to avoid silent corruption of non-UTF8 paths.
 fn path_to_cstring(path: &Path) -> Result<CString> {
-    CString::new(path.to_string_lossy().as_bytes())
-        .map_err(|_| Error::agent("convert path", "path contains null byte"))
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        CString::new(path.as_os_str().as_bytes())
+            .map_err(|_| Error::agent("convert path", "path contains null byte"))
+    }
+    #[cfg(not(unix))]
+    {
+        CString::new(path.to_string_lossy().as_bytes())
+            .map_err(|_| Error::agent("convert path", "path contains null byte"))
+    }
 }
 
 /// Raise file descriptor limits (required by libkrun).
