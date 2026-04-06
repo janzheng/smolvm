@@ -1046,7 +1046,10 @@ pub async fn pull_snapshot(
     let pid = manager.child_pid();
     let network = manifest.network;
 
-    // Register the machine with the server
+    // Register the machine with the server.
+    // Note: snapshot manifests don't store full machine config (secrets, MCP,
+    // RBAC, egress filters). These default to empty. The user can reconfigure
+    // after pull via the API if needed.
     let resources = ResourceSpec::default();
     guard.complete(MachineRegistration {
         manager,

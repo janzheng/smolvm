@@ -426,6 +426,26 @@ pub struct VmRecord {
     /// queries against this allowlist.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dns_filter_hosts: Option<Vec<String>>,
+
+    /// Allowed domains for egress filtering (host-level DNS filter).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_domains: Option<Vec<String>>,
+
+    /// Secret names enabled for this machine (e.g., ["anthropic", "openai"]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secrets: Vec<String>,
+
+    /// MCP server configurations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<crate::api::types::McpServerConfig>,
+
+    /// Hash of the token that created this machine (Owner).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_token_hash: Option<String>,
+
+    /// Default user for exec calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_user: Option<String>,
 }
 
 fn default_cpus() -> u8 {
@@ -475,6 +495,11 @@ impl VmRecord {
             health_startup_grace_secs: None,
             ssh_agent: false,
             dns_filter_hosts: None,
+            allowed_domains: None,
+            secrets: Vec::new(),
+            mcp_servers: Vec::new(),
+            owner_token_hash: None,
+            default_user: None,
         }
     }
 
@@ -517,6 +542,11 @@ impl VmRecord {
             health_startup_grace_secs: None,
             ssh_agent: false,
             dns_filter_hosts: None,
+            allowed_domains: None,
+            secrets: Vec::new(),
+            mcp_servers: Vec::new(),
+            owner_token_hash: None,
+            default_user: None,
         }
     }
 

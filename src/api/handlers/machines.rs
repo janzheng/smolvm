@@ -727,10 +727,16 @@ pub async fn clone_machine(
 
     // Register with same config as source (no mounts/ports since those are host-specific)
     let restart_config = crate::config::RestartConfig::default();
-    let source_allowed_domains = {
+    let (source_allowed_domains, source_secrets, source_default_env, source_owner_hash, source_mcp) = {
         let source_entry = state.get_machine(&source_id)?;
         let entry = source_entry.lock();
-        entry.allowed_domains.clone()
+        (
+            entry.allowed_domains.clone(),
+            entry.secrets.clone(),
+            entry.default_env.clone(),
+            entry.owner_token_hash.clone(),
+            entry.mcp_servers.clone(),
+        )
     };
     guard.complete(MachineRegistration {
         manager,
@@ -740,10 +746,10 @@ pub async fn clone_machine(
         restart: restart_config,
         network: source_network,
         allowed_domains: source_allowed_domains,
-        secrets: Vec::new(),
-        default_env: Vec::new(),
-        owner_token_hash: None,
-        mcp_servers: Vec::new(),
+        secrets: source_secrets,
+        default_env: source_default_env,
+        owner_token_hash: source_owner_hash,
+        mcp_servers: source_mcp,
     })?;
 
     Ok(Json(MachineInfo {

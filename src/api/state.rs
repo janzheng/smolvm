@@ -310,7 +310,7 @@ impl ApiState {
                 network: Some(record.network),
                 storage_gb: record.storage_gb,
                 overlay_gb: record.overlay_gb,
-                allowed_domains: None,
+                allowed_domains: record.allowed_domains.clone(),
                 allowed_cidrs: record.allowed_cidrs.clone(),
             };
 
@@ -345,12 +345,17 @@ impl ApiState {
                             resources,
                             restart: record.restart.clone(),
                             network: record.network,
-                            allowed_domains: None, // Not persisted in DB yet
-                            secrets: Vec::new(),
+                            allowed_domains: record.allowed_domains.clone(),
+                            secrets: record.secrets.clone(),
                             default_env: Vec::new(),
-                            owner_token_hash: None, // Legacy machines have no RBAC
-                            permissions: Vec::new(),
-                            mcp_servers: Vec::new(),
+                            owner_token_hash: record.owner_token_hash.clone(),
+                            permissions: record.owner_token_hash.as_ref().map(|h| {
+                                vec![MachinePermission {
+                                    token_hash: h.clone(),
+                                    role: MachineRole::Owner,
+                                }]
+                            }).unwrap_or_default(),
+                            mcp_servers: record.mcp_servers.clone(),
                         })),
                     );
                     loaded.push(name.clone());
@@ -560,6 +565,11 @@ impl ApiState {
         );
         record.storage_gb = reg.resources.storage_gb;
         record.overlay_gb = reg.resources.overlay_gb;
+        record.allowed_cidrs = reg.resources.allowed_cidrs.clone();
+        record.allowed_domains = reg.allowed_domains.clone();
+        record.secrets = reg.secrets.clone();
+        record.mcp_servers = reg.mcp_servers.clone();
+        record.owner_token_hash = reg.owner_token_hash.clone();
 
         // Use insert_vm_if_not_exists for atomic database insert
         match self.db.insert_vm_if_not_exists(&name, &record) {
