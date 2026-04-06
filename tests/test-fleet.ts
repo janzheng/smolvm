@@ -69,9 +69,9 @@ console.log("\nFleet Status:");
 {
   const listResp = await apiGet("/machines");
   const data = await listResp.json();
-  const fleetMachinees = data.machines.filter((s: { name: string }) => s.name.startsWith(PREFIX));
-  const allRunning = fleetMachinees.every((s: { state: string }) => s.state === "running");
-  test(`All ${FLEET_SIZE} in list`, fleetMachinees.length === FLEET_SIZE);
+  const fleetMachines = data.machines.filter((s: { name: string }) => s.name.startsWith(PREFIX));
+  const allRunning = fleetMachines.every((s: { state: string }) => s.state === "running");
+  test(`All ${FLEET_SIZE} in list`, fleetMachines.length === FLEET_SIZE);
   test("All state=running", allRunning);
 }
 

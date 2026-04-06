@@ -2,7 +2,7 @@
  * smolvm TypeScript SDK — MicroVM
  *
  * High-level wrapper for persistent MicroVMs.
- * MicroVMs differ from Machinees: different REST schema, persistent by design,
+ * MicroVMs differ from Machines: different REST schema, persistent by design,
  * no image/container management.
  */
 

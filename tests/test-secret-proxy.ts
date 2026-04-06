@@ -205,7 +205,7 @@ console.log("\nCleanup:");
   await cleanup(SANDBOX_NOSECRET);
   const resp1 = await apiGet(`/machines/${SANDBOX}`);
   const resp2 = await apiGet(`/machines/${SANDBOX_NOSECRET}`);
-  test("Machinees cleaned up", resp1.status === 404 && resp2.status === 404);
+  test("Machines cleaned up", resp1.status === 404 && resp2.status === 404);
 }
 
 summary();

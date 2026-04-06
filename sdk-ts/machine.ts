@@ -88,7 +88,7 @@ export class Machine {
    * Both machines must be running (will be auto-started).
    */
   async diff(other: string): Promise<DiffResult> {
-    return this.http.diffMachinees(this.name, other);
+    return this.http.diffMachines(this.name, other);
   }
 
   /**
@@ -97,7 +97,7 @@ export class Machine {
    * via the exec channel.
    */
   async merge(target: string, opts?: MergeMachineRequest): Promise<MergeResponse> {
-    return this.http.mergeMachinees(this.name, target, opts);
+    return this.http.mergeMachines(this.name, target, opts);
   }
 
   /** Stop + delete. Ignores errors (safe for cleanup). */

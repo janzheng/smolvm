@@ -116,7 +116,7 @@ export class SmolvmHttpClient {
   }
 
   // --------------------------------------------------------------------------
-  // Machinees
+  // Machines
   // --------------------------------------------------------------------------
 
   async createMachine(req: CreateMachineRequest): Promise<MachineInfo> {
@@ -184,12 +184,12 @@ export class SmolvmHttpClient {
     return this.json(resp);
   }
 
-  async diffMachinees(name: string, other: string): Promise<DiffResult> {
+  async diffMachines(name: string, other: string): Promise<DiffResult> {
     const resp = await this.request("GET", `/machines/${name}/diff/${other}`);
     return this.json(resp);
   }
 
-  async mergeMachinees(
+  async mergeMachines(
     sourceName: string,
     targetName: string,
     req?: MergeMachineRequest,
@@ -265,9 +265,11 @@ export class SmolvmHttpClient {
     form.append("file", blob);
     if (permissions) form.append("permissions", permissions);
 
+    const headers: Record<string, string> = {};
+    if (this.apiToken) headers["Authorization"] = `Bearer ${this.apiToken}`;
     const resp = await fetch(
       `${this.api}/machines/${machineName}/upload/${encodedPath}`,
-      { method: "POST", body: form },
+      { method: "POST", body: form, headers },
     );
     return this.json(resp);
   }
@@ -282,13 +284,11 @@ export class SmolvmHttpClient {
   ): Promise<{ extracted_to: string; archive_size: number }> {
     const qs = dir ? `?dir=${encodeURIComponent(dir)}` : "";
     const body = archive instanceof Blob ? archive : new Blob([archive.buffer as ArrayBuffer]);
+    const headers: Record<string, string> = { "Content-Type": "application/gzip" };
+    if (this.apiToken) headers["Authorization"] = `Bearer ${this.apiToken}`;
     const resp = await fetch(
       `${this.api}/machines/${machineName}/archive/upload${qs}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/gzip" },
-        body,
-      },
+      { method: "POST", headers, body },
     );
     return this.json(resp);
   }
@@ -301,8 +301,11 @@ export class SmolvmHttpClient {
     dir?: string,
   ): Promise<Uint8Array> {
     const qs = dir ? `?dir=${encodeURIComponent(dir)}` : "";
+    const headers: Record<string, string> = {};
+    if (this.apiToken) headers["Authorization"] = `Bearer ${this.apiToken}`;
     const resp = await fetch(
       `${this.api}/machines/${machineName}/archive${qs}`,
+      { headers },
     );
     if (!resp.ok) {
       const text = await resp.text();

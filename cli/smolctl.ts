@@ -787,14 +787,14 @@ async function cmdPoolStatus() {
     }),
   );
   const onlineCount = results.filter((r) => r.online).length;
-  const totalMachinees = results.reduce((sum, r) => sum + r.machine_count, 0);
+  const totalMachines = results.reduce((sum, r) => sum + r.machine_count, 0);
   const totalCapacity = config.nodes.reduce((sum, n) => {
     if (n.max_machines == null) return Infinity;
     return sum === Infinity ? Infinity : sum + n.max_machines;
   }, 0);
   console.log(`Pool strategy: ${config.strategy}`);
   console.log(`Nodes: ${onlineCount}/${config.nodes.length} online`);
-  console.log(`Machinees: ${totalMachinees}${totalCapacity === Infinity ? "" : `/${totalCapacity}`}`);
+  console.log(`Machines: ${totalMachines}${totalCapacity === Infinity ? "" : `/${totalCapacity}`}`);
   for (const r of results) {
     const icon = r.online ? "+" : "-";
     console.log(`  [${icon}] ${r.node.name} (${r.node.url}) — ${r.machine_count} machines`);
@@ -4753,7 +4753,7 @@ async function cmdAgentFleet(prefix: string, promptsFile: string, args: string[]
       }),
     );
   } else {
-    console.log(`\nMachinees kept alive. Cleanup: smolctl fleet down ${prefix}`);
+    console.log(`\nMachines kept alive. Cleanup: smolctl fleet down ${prefix}`);
   }
 }
 
@@ -5280,7 +5280,7 @@ async function cmdDashboard() {
     const serverStatus = serverUp
       ? `${ANSI.green}connected${ANSI.reset}`
       : `${ANSI.red}unreachable${ANSI.reset}`;
-    lines.push(boxLine(`Provider: ${ANSI.bold}${provider}${ANSI.reset} | Machinees: ${ANSI.green}${running} running${ANSI.reset}, ${stopped} stopped`, W));
+    lines.push(boxLine(`Provider: ${ANSI.bold}${provider}${ANSI.reset} | Machines: ${ANSI.green}${running} running${ANSI.reset}, ${stopped} stopped`, W));
     lines.push(boxLine(`Server: ${ANSI.cyan}${BASE_URL}${ANSI.reset} | ${serverStatus} | Session: ${sessionUp}`, W));
     lines.push(midBorder);
 
