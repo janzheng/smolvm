@@ -75,6 +75,16 @@ Key endpoints:
 - `PUT /api/v1/machines/:name/files/*path` -- write file
 - `POST /api/v1/machines/:name/snapshots` -- push snapshot
 
+## Changelog
+
+Maintain `CHANGELOG.md` at repo root using [keep-a-changelog](https://keepachangelog.com/) format. Sections: Added, Changed, Fixed, Removed.
+
+- Update CHANGELOG.md when shipping notable work (features, bug fixes, breaking changes)
+- Group under `## [Unreleased]` until a version is tagged
+- When tagging a release, move Unreleased entries under `## [vX.Y.Z] - YYYY-MM-DD`
+- Keep entries concise — one line per change, written for users not developers
+- The release workflow (`release.yml`) includes CHANGELOG content in the GitHub release body
+
 ## Known Issues
 
 - Port mapping connections refused (use tunnels instead)

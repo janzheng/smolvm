@@ -19,7 +19,7 @@
 .references/
 
 # Task files (local working docs)
-TASKS*.md
+# TASKS*.md
 
 # Deno / Node
 node_modules/
@@ -34,6 +34,12 @@ __pycache__/
 # Build artifacts
 *.so
 *.a
+
+# But keep bundled libraries (tracked via Git LFS)
+!lib/linux-x86_64/*.so
+!lib/linux-x86_64/*.so.*
+!lib/linux-aarch64/*.so
+!lib/linux-aarch64/*.so.*
 
 # Distribution build output
 /dist/smolvm-*/

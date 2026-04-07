@@ -68,7 +68,7 @@ done
 
 # Configuration
 VERSION="${VERSION:-$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)}"
-PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
+PLATFORM="${DIST_PLATFORM:-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)}"
 DIST_NAME="smolvm-${VERSION}-${PLATFORM}"
 DIST_DIR="dist/${DIST_NAME}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -219,7 +219,7 @@ if [[ ! -f "$WORK_LIB_DIR/libkrun.dylib" ]] && [[ ! -f "$WORK_LIB_DIR/libkrun.so
     echo "Set LIB_DIR to point to your libkrun library directory."
     exit 1
 fi
-if [[ ! -f "$WORK_LIB_DIR/libkrunfw.5.dylib" ]] && [[ ! -f "$WORK_LIB_DIR/libkrunfw.so" ]]; then
+if [[ ! -f "$WORK_LIB_DIR/libkrunfw.5.dylib" ]] && ! ls "$WORK_LIB_DIR"/libkrunfw.so* &>/dev/null; then
     echo "Error: libkrunfw not found in $WORK_LIB_DIR"
     echo "Set LIB_DIR to point to your libkrunfw library directory."
     exit 1
@@ -227,7 +227,15 @@ fi
 
 # Build release binaries
 echo "Building release binaries..."
-LIBKRUN_BUNDLE="$WORK_LIB_DIR" cargo build --release --bin smolvm
+if [[ -n "${CARGO_TARGET:-}" ]]; then
+    echo "Cross-compiling for target: $CARGO_TARGET"
+    LIBKRUN_BUNDLE="$WORK_LIB_DIR" cargo build --release --bin smolvm --target "$CARGO_TARGET"
+    # Copy to the standard path that the rest of the script expects
+    mkdir -p ./target/release
+    cp "./target/$CARGO_TARGET/release/smolvm" ./target/release/smolvm
+else
+    LIBKRUN_BUNDLE="$WORK_LIB_DIR" cargo build --release --bin smolvm
+fi
 
 # Build smolvm-agent for Linux (size-optimized)
 if [[ "$SKIP_AGENT_BUILD" == "1" ]]; then
