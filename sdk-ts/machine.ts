@@ -24,6 +24,23 @@ import type {
   MachineInfo,
 } from "./types.ts";
 
+// btoa/atob accept only Latin1 (chars ≤ 0xFF). UTF-8 file content with
+// non-Latin1 chars (em dashes, emoji, CJK, etc.) blows up. These helpers
+// round-trip via Uint8Array so any Unicode survives.
+function utf8ToBase64(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+function base64ToUtf8(b64: string): string {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
 export class Machine {
   private _info: MachineInfo | null = null;
 
@@ -158,7 +175,7 @@ export class Machine {
    * @param permissions - Optional Unix permissions string (e.g. "0644")
    */
   async writeFile(path: string, content: string, permissions?: string): Promise<void> {
-    const encoded = btoa(content);
+    const encoded = utf8ToBase64(content);
     await this.http.writeFile(this.name, path, encoded, permissions);
   }
 
@@ -168,7 +185,7 @@ export class Machine {
    */
   async readFile(path: string): Promise<string> {
     const response = await this.http.readFile(this.name, path);
-    return atob(response.content);
+    return base64ToUtf8(response.content);
   }
 
   /**

@@ -82,6 +82,13 @@ console.log("\nFile I/O:");
   const content = await machine.readFile("/tmp/test.txt");
   test("writeFile + readFile", content === "hello from SDK");
 
+  // UTF-8 round-trip — em dash, emoji, CJK. Pre-fix btoa() would throw
+  // "Cannot encode string: string contains characters outside of the Latin1 range".
+  const utf8 = "hello — world 🚀 你好";
+  await machine.writeFile("/tmp/utf8.txt", utf8);
+  const utf8Read = await machine.readFile("/tmp/utf8.txt");
+  test("writeFile + readFile UTF-8 round-trip", utf8Read === utf8, `got: ${JSON.stringify(utf8Read)}`);
+
   // writeFiles (batch)
   await machine.writeFiles({
     "/tmp/a.txt": "file-a",
